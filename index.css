@@ -1,0 +1,809 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   HAWKAMAH DESIGN SYSTEM v2.0
+   Tornix-quality • Emerald brand • Arabic-first
+   ============================================================ */
+
+/* ───────────────── CSS CUSTOM PROPERTIES ───────────────── */
+:root {
+  /* Brand — emerald */
+  --hw-brand:          #059669;
+  --hw-brand-hover:    #047857;
+  --hw-brand-pressed:  #065f46;
+  --hw-brand-50:       #ecfdf5;
+  --hw-brand-100:      #d1fae5;
+  --hw-brand-200:      #a7f3d0;
+  --hw-brand-300:      #6ee7b7;
+  --hw-brand-glow:     rgba(5, 150, 105, 0.24);
+  --hw-brand-focus:    rgba(5, 150, 105, 0.18);
+
+  /* Danger */
+  --hw-danger:         #e11d48;
+  --hw-danger-hover:   #be123c;
+  --hw-danger-glow:    rgba(225, 29, 72, 0.22);
+
+  /* Shadows */
+  --hw-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --hw-shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --hw-shadow-md: 0 4px 10px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04);
+  --hw-shadow-lg: 0 12px 28px rgba(15, 23, 42, 0.10), 0 4px 8px rgba(15, 23, 42, 0.05);
+  --hw-shadow-brand: 0 4px 16px rgba(5, 150, 105, 0.28);
+  --hw-shadow-focus:  0 0 0 3px rgba(5, 150, 105, 0.18);
+
+  /* Motion */
+  --hw-ease:     cubic-bezier(0.4, 0, 0.2, 1);
+  --hw-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --hw-fast:     150ms;
+  --hw-base:     210ms;
+  --hw-slow:     360ms;
+
+  /* Border radius */
+  --hw-r-xs:   4px;
+  --hw-r-sm:   7px;
+  --hw-r:      10px;
+  --hw-r-lg:   14px;
+  --hw-r-xl:   20px;
+  --hw-r-2xl:  28px;
+  --hw-r-full: 9999px;
+
+  /* Surfaces */
+  --hw-surface:        #ffffff;
+  --hw-surface-subtle: #f8fafc;
+  --hw-surface-muted:  #f1f5f9;
+  --hw-border:         #e2e8f0;
+  --hw-border-strong:  #cbd5e1;
+  --hw-text:           #0f172a;
+  --hw-text-muted:     #64748b;
+  --hw-text-subtle:    #94a3b8;
+}
+
+html.dark {
+  --hw-brand:         #34d399;
+  --hw-brand-hover:   #6ee7b7;
+  --hw-brand-50:      rgba(5, 150, 105, 0.10);
+  --hw-brand-100:     rgba(5, 150, 105, 0.18);
+  --hw-brand-200:     rgba(5, 150, 105, 0.28);
+  --hw-brand-glow:    rgba(52, 211, 153, 0.20);
+  --hw-brand-focus:   rgba(52, 211, 153, 0.18);
+
+  --hw-shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.22);
+  --hw-shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.30), 0 1px 2px rgba(0, 0, 0, 0.20);
+  --hw-shadow-md: 0 4px 14px rgba(0, 0, 0, 0.35), 0 2px 5px rgba(0, 0, 0, 0.20);
+  --hw-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.40), 0 4px 10px rgba(0, 0, 0, 0.25);
+  --hw-shadow-brand: 0 4px 16px rgba(52, 211, 153, 0.22);
+  --hw-shadow-focus:  0 0 0 3px rgba(52, 211, 153, 0.20);
+
+  --hw-surface:        #1e293b;
+  --hw-surface-subtle: #0f172a;
+  --hw-surface-muted:  #020617;
+  --hw-border:         #334155;
+  --hw-border-strong:  #475569;
+  --hw-text:           #f1f5f9;
+  --hw-text-muted:     #94a3b8;
+  --hw-text-subtle:    #64748b;
+}
+
+/* ───────────────── GLOBAL BASELINE ───────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: 'Alexandria', 'Tajawal', 'Inter', sans-serif;
+  background-color: #f9fafb;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+html.dark body { background-color: #0f172a; color: #e2e8f0; }
+
+::selection { background: rgba(5, 150, 105, 0.16); color: inherit; }
+
+/* Smooth scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+html.dark ::-webkit-scrollbar-thumb { background: #334155; }
+html.dark ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* ───────────────── BUTTON SYSTEM ───────────────── */
+
+/* Base */
+.hw-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 20px;
+  border: 1.5px solid transparent;
+  border-radius: var(--hw-r);
+  font-family: 'Tajawal', 'Inter', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background var(--hw-fast) var(--hw-ease),
+              box-shadow var(--hw-base) var(--hw-ease),
+              transform var(--hw-base) var(--hw-ease),
+              border-color var(--hw-fast) var(--hw-ease),
+              color var(--hw-fast) var(--hw-ease);
+  user-select: none;
+  white-space: nowrap;
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+.hw-btn:disabled, .hw-btn[disabled] {
+  opacity: 0.46;
+  cursor: not-allowed !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+.hw-btn:focus-visible {
+  outline: none;
+}
+
+/* Primary — emerald solid */
+.hw-btn-primary {
+  background: #059669;
+  color: #ffffff;
+  box-shadow: var(--hw-shadow-sm);
+}
+.hw-btn-primary:hover:not(:disabled) {
+  background: #047857;
+  box-shadow: var(--hw-shadow-brand);
+  transform: translateY(-1.5px);
+}
+.hw-btn-primary:active:not(:disabled) {
+  background: #065f46;
+  transform: translateY(0);
+  box-shadow: var(--hw-shadow-xs);
+  transition-duration: 80ms;
+}
+.hw-btn-primary:focus-visible {
+  box-shadow: var(--hw-shadow-brand), var(--hw-shadow-focus);
+}
+
+/* Ghost — neutral slate */
+.hw-btn-ghost {
+  background: #f1f5f9;
+  color: #475569;
+  border-color: #e2e8f0;
+}
+.hw-btn-ghost:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: #1e293b;
+  border-color: #cbd5e1;
+  transform: translateY(-1px);
+  box-shadow: var(--hw-shadow-sm);
+}
+.hw-btn-ghost:active:not(:disabled) {
+  background: #cbd5e1;
+  transform: translateY(0);
+  transition-duration: 80ms;
+}
+html.dark .hw-btn-ghost {
+  background: rgba(30, 41, 59, 0.80);
+  color: #94a3b8;
+  border-color: #334155;
+}
+html.dark .hw-btn-ghost:hover:not(:disabled) {
+  background: #334155;
+  color: #e2e8f0;
+  border-color: #475569;
+}
+
+/* Subtle — emerald tinted */
+.hw-btn-subtle {
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+.hw-btn-subtle:hover:not(:disabled) {
+  background: #d1fae5;
+  border-color: #6ee7b7;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.14);
+}
+.hw-btn-subtle:active:not(:disabled) {
+  background: #a7f3d0;
+  transform: translateY(0);
+  transition-duration: 80ms;
+}
+html.dark .hw-btn-subtle {
+  background: rgba(5, 150, 105, 0.10);
+  color: #6ee7b7;
+  border-color: rgba(5, 150, 105, 0.28);
+}
+html.dark .hw-btn-subtle:hover:not(:disabled) {
+  background: rgba(5, 150, 105, 0.18);
+  border-color: rgba(5, 150, 105, 0.40);
+}
+
+/* Danger */
+.hw-btn-danger {
+  background: #e11d48;
+  color: #ffffff;
+  box-shadow: var(--hw-shadow-sm);
+}
+.hw-btn-danger:hover:not(:disabled) {
+  background: #be123c;
+  transform: translateY(-1.5px);
+  box-shadow: 0 4px 16px rgba(225, 29, 72, 0.28);
+}
+.hw-btn-danger:active:not(:disabled) {
+  background: #9f1239;
+  transform: translateY(0);
+  transition-duration: 80ms;
+}
+
+/* Danger ghost */
+.hw-btn-danger-ghost {
+  background: #fff1f2;
+  color: #e11d48;
+  border-color: #fecdd3;
+}
+.hw-btn-danger-ghost:hover:not(:disabled) {
+  background: #ffe4e6;
+  border-color: #fda4af;
+  transform: translateY(-1px);
+}
+html.dark .hw-btn-danger-ghost {
+  background: rgba(225, 29, 72, 0.08);
+  color: #fb7185;
+  border-color: rgba(225, 29, 72, 0.22);
+}
+html.dark .hw-btn-danger-ghost:hover:not(:disabled) {
+  background: rgba(225, 29, 72, 0.14);
+}
+
+/* Sizes */
+.hw-btn-xs  { padding: 5px 11px;  font-size: 12px; border-radius: var(--hw-r-sm); gap: 5px; }
+.hw-btn-sm  { padding: 7px 15px;  font-size: 13px; border-radius: var(--hw-r-sm); gap: 6px; }
+.hw-btn-lg  { padding: 13px 28px; font-size: 15px; border-radius: var(--hw-r-lg); }
+.hw-btn-xl  { padding: 16px 36px; font-size: 16px; border-radius: var(--hw-r-lg); font-weight: 800; letter-spacing: -0.02em; }
+.hw-btn-w   { width: 100%; justify-content: center; }
+
+/* ───────────────── CARD SYSTEM ───────────────── */
+
+.hw-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--hw-r-lg);
+  box-shadow: var(--hw-shadow-sm);
+  transition: box-shadow var(--hw-base) var(--hw-ease),
+              transform var(--hw-base) var(--hw-ease),
+              border-color var(--hw-base) var(--hw-ease);
+}
+html.dark .hw-card {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+.hw-card-hover:hover {
+  box-shadow: var(--hw-shadow-md);
+  border-color: #a7f3d0;
+  transform: translateY(-2px);
+}
+html.dark .hw-card-hover:hover {
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.hw-card-interactive {
+  cursor: pointer;
+}
+.hw-card-interactive:hover {
+  box-shadow: var(--hw-shadow-md);
+  border-color: #6ee7b7;
+  transform: translateY(-2px);
+}
+.hw-card-interactive:active {
+  transform: translateY(0);
+  transition-duration: 80ms;
+}
+html.dark .hw-card-interactive:hover {
+  border-color: rgba(52, 211, 153, 0.40);
+}
+
+.hw-card-selected {
+  border: 2px solid #059669 !important;
+  background: #ecfdf5;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.12), var(--hw-shadow-sm) !important;
+}
+html.dark .hw-card-selected {
+  background: rgba(5, 150, 105, 0.08);
+  border-color: #34d399 !important;
+}
+
+.hw-card-section {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--hw-r-lg);
+}
+html.dark .hw-card-section {
+  background: rgba(15, 23, 42, 0.50);
+  border-color: #334155;
+}
+
+.hw-card-accent {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: var(--hw-r-lg);
+}
+html.dark .hw-card-accent {
+  background: rgba(5, 150, 105, 0.07);
+  border-color: rgba(5, 150, 105, 0.22);
+}
+
+/* Accent left/right stripe */
+.hw-card-stripe {
+  border-inline-start: 3px solid #059669;
+}
+html.dark .hw-card-stripe { border-inline-start-color: #34d399; }
+
+/* ───────────────── INPUT SYSTEM ───────────────── */
+
+.hw-input,
+.hw-textarea,
+.hw-select {
+  width: 100%;
+  padding: 9px 13px;
+  background: #ffffff;
+  border: 1.5px solid #cbd5e1;
+  border-radius: var(--hw-r);
+  color: #0f172a;
+  font-size: 14px;
+  font-family: 'Tajawal', 'Inter', sans-serif;
+  line-height: 1.5;
+  transition: border-color var(--hw-fast) var(--hw-ease),
+              box-shadow var(--hw-fast) var(--hw-ease),
+              background var(--hw-fast) var(--hw-ease);
+  outline: none;
+  -webkit-appearance: none;
+}
+.hw-input::placeholder,
+.hw-textarea::placeholder { color: #94a3b8; }
+.hw-input:hover:not(:focus),
+.hw-textarea:hover:not(:focus) { border-color: #94a3b8; }
+.hw-input:focus,
+.hw-textarea:focus,
+.hw-select:focus {
+  border-color: #059669;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.16);
+}
+
+html.dark .hw-input,
+html.dark .hw-textarea,
+html.dark .hw-select {
+  background: #0f172a;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+html.dark .hw-input::placeholder,
+html.dark .hw-textarea::placeholder { color: #475569; }
+html.dark .hw-input:hover:not(:focus),
+html.dark .hw-textarea:hover:not(:focus) { border-color: #475569; }
+html.dark .hw-input:focus,
+html.dark .hw-textarea:focus,
+html.dark .hw-select:focus {
+  border-color: #34d399;
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.14);
+}
+
+/* ───────────────── TAB SYSTEMS ───────────────── */
+
+/* Pill tabs — stage nav, top-level switchers */
+.hw-tabs-pill {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: #f1f5f9;
+  border-radius: var(--hw-r-full);
+  border: 1px solid #e2e8f0;
+  overflow-x: auto;
+}
+html.dark .hw-tabs-pill {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+.hw-tab-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--hw-r-full);
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all var(--hw-fast) var(--hw-ease);
+  white-space: nowrap;
+  font-family: 'Tajawal', 'Inter', sans-serif;
+}
+.hw-tab-pill:hover:not(:disabled):not(.hw-tab-active) {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+html.dark .hw-tab-pill { color: #94a3b8; }
+html.dark .hw-tab-pill:hover:not(:disabled):not(.hw-tab-active) {
+  background: #334155;
+  color: #e2e8f0;
+}
+.hw-tab-pill.hw-tab-active {
+  background: #059669;
+  color: #ffffff !important;
+  box-shadow: 0 2px 8px rgba(5, 150, 105, 0.30);
+  border-color: transparent;
+}
+html.dark .hw-tab-pill.hw-tab-active {
+  background: #065f46;
+  color: #6ee7b7 !important;
+  box-shadow: 0 2px 8px rgba(5, 150, 105, 0.20);
+}
+.hw-tab-pill:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+/* Underline tabs — content sub-tabs inside sections */
+.hw-tabs-line {
+  display: flex;
+  gap: 0;
+  border-bottom: 1.5px solid #e2e8f0;
+}
+html.dark .hw-tabs-line { border-bottom-color: #334155; }
+
+.hw-tab-line {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  border: none;
+  background: transparent;
+  border-bottom: 2.5px solid transparent;
+  margin-bottom: -1.5px;
+  cursor: pointer;
+  transition: color var(--hw-fast) var(--hw-ease),
+              border-color var(--hw-fast) var(--hw-ease);
+  white-space: nowrap;
+  font-family: 'Tajawal', 'Inter', sans-serif;
+}
+.hw-tab-line:hover { color: #0f172a; }
+.hw-tab-line.hw-tab-active {
+  color: #059669;
+  border-bottom-color: #059669;
+  font-weight: 700;
+}
+html.dark .hw-tab-line { color: #64748b; }
+html.dark .hw-tab-line:hover { color: #e2e8f0; }
+html.dark .hw-tab-line.hw-tab-active {
+  color: #34d399;
+  border-bottom-color: #34d399;
+}
+
+/* ───────────────── BADGE SYSTEM ───────────────── */
+
+.hw-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--hw-r-full);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.hw-badge-success { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+.hw-badge-warning { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+.hw-badge-danger  { background: #ffe4e6; color: #9f1239; border-color: #fecdd3; }
+.hw-badge-info    { background: #e0f2fe; color: #075985; border-color: #bae6fd; }
+.hw-badge-neutral { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+.hw-badge-brand   { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
+
+html.dark .hw-badge-success { background: rgba(5,150,105,0.14); color: #6ee7b7; border-color: rgba(5,150,105,0.28); }
+html.dark .hw-badge-warning { background: rgba(217,119,6,0.14); color: #fbbf24; border-color: rgba(217,119,6,0.24); }
+html.dark .hw-badge-danger  { background: rgba(225,29,72,0.14); color: #fb7185; border-color: rgba(225,29,72,0.24); }
+html.dark .hw-badge-info    { background: rgba(14,165,233,0.12); color: #38bdf8; border-color: rgba(14,165,233,0.20); }
+html.dark .hw-badge-neutral { background: rgba(30,41,59,0.80); color: #94a3b8; border-color: #334155; }
+html.dark .hw-badge-brand   { background: rgba(5,150,105,0.10); color: #34d399; border-color: rgba(5,150,105,0.24); }
+
+/* ───────────────── PROGRESS BAR ───────────────── */
+
+.hw-progress {
+  width: 100%;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: var(--hw-r-full);
+  overflow: hidden;
+}
+html.dark .hw-progress { background: #334155; }
+.hw-progress-bar {
+  height: 100%;
+  border-radius: var(--hw-r-full);
+  background: linear-gradient(90deg, #059669 0%, #10b981 100%);
+  transition: width var(--hw-slow) var(--hw-ease-out);
+  min-width: 4px;
+}
+
+/* ───────────────── SECTION CONTAINERS ───────────────── */
+
+.hw-section {
+  padding: 20px;
+  border-radius: var(--hw-r-lg);
+  background: var(--hw-surface);
+  border: 1px solid var(--hw-border);
+}
+.hw-section-accent {
+  padding: 16px 20px;
+  border-radius: var(--hw-r-lg);
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+}
+html.dark .hw-section-accent {
+  background: rgba(5,150,105,0.07);
+  border-color: rgba(5,150,105,0.20);
+}
+
+/* ───────────────── MODAL / DIALOG ───────────────── */
+
+.hw-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1040;
+  padding: 20px;
+  animation: hw-fade-in var(--hw-fast) var(--hw-ease);
+}
+@keyframes hw-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.hw-modal {
+  background: #ffffff;
+  border-radius: var(--hw-r-xl);
+  padding: 28px 32px;
+  max-width: 520px;
+  width: 100%;
+  box-shadow: var(--hw-shadow-lg);
+  animation: hw-modal-in var(--hw-base) var(--hw-ease-out);
+}
+html.dark .hw-modal { background: #1e293b; border: 1px solid #334155; }
+@keyframes hw-modal-in {
+  from { opacity: 0; transform: scale(0.96) translateY(10px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ───────────────── INTERACTIVE ROW ───────────────── */
+
+.hw-row-hover {
+  border-radius: var(--hw-r);
+  transition: background var(--hw-fast) var(--hw-ease);
+}
+.hw-row-hover:hover { background: #f8fafc; }
+html.dark .hw-row-hover:hover { background: rgba(30, 41, 59, 0.60); }
+
+/* ───────────────── ANIMATIONS ───────────────── */
+
+@keyframes hw-slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes hw-pulse-soft {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.65; }
+}
+@keyframes hw-spin { to { transform: rotate(360deg); } }
+
+.hw-anim-in { animation: hw-slide-in var(--hw-base) var(--hw-ease-out) both; }
+.hw-spin    { animation: hw-spin 0.9s linear infinite; }
+.hw-pulse   { animation: hw-pulse-soft 2s ease infinite; }
+
+/* ─── Re-export old animate-fade-in (still used in some components) ─── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fade-in 200ms var(--hw-ease-out) both; }
+
+/* ─────────────────────────────────────────────────────
+   DARK MODE OVERRIDES (html.dark)
+   Tailwind utility patches — unchanged from v1
+   ───────────────────────────────────────────────────── */
+
+html.dark body {
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
+
+/* Backgrounds */
+html.dark .bg-white          { background-color: #1e293b !important; }
+html.dark .bg-slate-50       { background-color: #1e293b !important; }
+html.dark .bg-slate-100      { background-color: #0f172a !important; }
+html.dark .bg-slate-200      { background-color: #1e293b !important; }
+html.dark .bg-slate-800      { background-color: #0f172a !important; }
+html.dark .bg-slate-900      { background-color: #020617 !important; }
+html.dark .bg-gray-50        { background-color: #1e293b !important; }
+html.dark .bg-gray-100       { background-color: #0f172a !important; }
+
+/* Text */
+html.dark .text-slate-900    { color: #f1f5f9 !important; }
+html.dark .text-slate-800    { color: #e2e8f0 !important; }
+html.dark .text-slate-700    { color: #cbd5e1 !important; }
+html.dark .text-slate-600    { color: #94a3b8 !important; }
+html.dark .text-slate-500    { color: #64748b !important; }
+html.dark .text-slate-400    { color: #475569 !important; }
+html.dark .text-gray-900     { color: #f1f5f9 !important; }
+html.dark .text-gray-800     { color: #e2e8f0 !important; }
+html.dark .text-gray-700     { color: #cbd5e1 !important; }
+html.dark .text-gray-600     { color: #94a3b8 !important; }
+html.dark .text-gray-500     { color: #64748b !important; }
+html.dark .text-black        { color: #f1f5f9 !important; }
+
+/* Borders */
+html.dark .border-slate-200  { border-color: #334155 !important; }
+html.dark .border-slate-300  { border-color: #475569 !important; }
+html.dark .border-slate-100  { border-color: #1e293b !important; }
+html.dark .border-gray-200   { border-color: #334155 !important; }
+html.dark .divide-slate-200  { border-color: #334155 !important; }
+
+/* Inputs — keep dark override but now emerald focus */
+html.dark input,
+html.dark textarea,
+html.dark select {
+  background-color: #0f172a !important;
+  border-color: #334155 !important;
+  color: #e2e8f0 !important;
+  transition: border-color 150ms, box-shadow 150ms !important;
+}
+html.dark input::placeholder,
+html.dark textarea::placeholder { color: #475569 !important; }
+html.dark input:focus,
+html.dark textarea:focus,
+html.dark select:focus {
+  border-color: #34d399 !important;
+  box-shadow: 0 0 0 3px rgba(52,211,153,0.14) !important;
+  outline: none !important;
+}
+
+/* Hover states */
+html.dark .hover\:bg-slate-50:hover  { background-color: #334155 !important; }
+html.dark .hover\:bg-slate-100:hover { background-color: #1e293b !important; }
+html.dark .hover\:bg-slate-200:hover { background-color: #334155 !important; }
+html.dark .hover\:bg-white:hover     { background-color: #334155 !important; }
+
+/* Shadows — subtler on dark */
+html.dark .shadow    { box-shadow: 0 1px 4px 0 rgba(0,0,0,0.35) !important; }
+html.dark .shadow-sm { box-shadow: 0 1px 3px 0 rgba(0,0,0,0.30) !important; }
+html.dark .shadow-md { box-shadow: 0 4px 10px 0 rgba(0,0,0,0.40) !important; }
+html.dark .shadow-lg { box-shadow: 0 8px 20px 0 rgba(0,0,0,0.50) !important; }
+html.dark .shadow-xl { box-shadow: 0 12px 32px 0 rgba(0,0,0,0.60) !important; }
+
+/* Component color patches */
+html.dark .bg-rose-50        { background-color: rgba(159,18,57,0.18) !important; }
+html.dark .bg-rose-100       { background-color: rgba(159,18,57,0.28) !important; }
+html.dark .border-rose-200   { border-color: #be123c !important; }
+html.dark .bg-teal-50        { background-color: rgba(13,148,136,0.14) !important; }
+html.dark .bg-indigo-50      { background-color: rgba(79,70,229,0.13) !important; }
+html.dark .bg-amber-50       { background-color: rgba(217,119,6,0.13) !important; }
+html.dark .bg-green-50       { background-color: rgba(22,163,74,0.13) !important; }
+html.dark .bg-blue-50        { background-color: rgba(37,99,235,0.13) !important; }
+html.dark .bg-purple-50      { background-color: rgba(147,51,234,0.13) !important; }
+html.dark .bg-emerald-50     { background-color: rgba(5,150,105,0.10) !important; }
+html.dark .bg-emerald-100    { background-color: rgba(5,150,105,0.16) !important; }
+
+html.dark .text-rose-600     { color: #fb7185 !important; }
+html.dark .text-teal-600     { color: #2dd4bf !important; }
+html.dark .text-indigo-600   { color: #818cf8 !important; }
+html.dark .text-indigo-700   { color: #6366f1 !important; }
+html.dark .text-amber-600    { color: #fbbf24 !important; }
+html.dark .text-green-600    { color: #4ade80 !important; }
+html.dark .text-blue-600     { color: #60a5fa !important; }
+html.dark .text-purple-600   { color: #c084fc !important; }
+
+html.dark .bg-indigo-600     { background-color: #4f46e5 !important; }
+html.dark .bg-teal-600       { background-color: #0d9488 !important; }
+
+/* Recharts */
+html.dark .recharts-cartesian-grid line { stroke: #334155 !important; }
+html.dark .recharts-text { fill: #94a3b8 !important; }
+
+/* ─────────────────────────────────────────────────────
+   GLOBAL INPUT & BUTTON UPGRADE
+   Applies even to Tailwind-styled elements
+   ───────────────────────────────────────────────────── */
+
+/* All buttons get smooth transition */
+button:not(.hw-btn) {
+  transition: background 150ms cubic-bezier(0.4,0,0.2,1),
+              box-shadow 200ms cubic-bezier(0.4,0,0.2,1),
+              color 150ms cubic-bezier(0.4,0,0.2,1),
+              opacity 150ms cubic-bezier(0.4,0,0.2,1);
+}
+
+/* All inputs get proper focus */
+input:not(.hw-input):focus,
+textarea:not(.hw-textarea):focus,
+select:not(.hw-select):focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(5,150,105,0.20);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   POWER LAYER v2.1 — real depth, hover-lift & glow for raw Tailwind
+   Every emerald action button + flat white card gets hw-* quality
+   WITHOUT editing component markup. !important beats Tailwind CDN.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ---- Solid emerald action buttons → depth + lift + brand glow ---- */
+button[class*="bg-emerald-6"]:not(.hw-btn):not(:disabled),
+button[class*="bg-emerald-500"]:not(.hw-btn):not(:disabled),
+a[class*="bg-emerald-6"][class*="text-white"] {
+  box-shadow: var(--hw-shadow-sm);
+  transition: background var(--hw-fast) var(--hw-ease),
+              box-shadow var(--hw-base) var(--hw-ease),
+              transform var(--hw-base) var(--hw-ease) !important;
+}
+button[class*="bg-emerald-6"]:not(.hw-btn):not(:disabled):hover,
+button[class*="bg-emerald-500"]:not(.hw-btn):not(:disabled):hover,
+a[class*="bg-emerald-6"][class*="text-white"]:hover {
+  transform: translateY(-1.5px);
+  box-shadow: var(--hw-shadow-brand) !important;
+}
+button[class*="bg-emerald-6"]:not(.hw-btn):not(:disabled):active {
+  transform: translateY(0);
+  box-shadow: var(--hw-shadow-xs) !important;
+  transition-duration: 80ms !important;
+}
+/* Fix broken hover: emerald button must NOT flip to dark slate on hover */
+button[class*="bg-emerald-6"][class*="hover:bg-slate-9"]:hover,
+button[class*="bg-emerald-6"][class*="hover:bg-slate-8"]:hover {
+  background-color: #047857 !important;
+}
+
+/* ---- Emerald-tinted (subtle) buttons → gentle lift ---- */
+button[class*="bg-emerald-50"]:not(.hw-btn):not(:disabled):hover,
+button[class*="bg-emerald-100"]:not(.hw-btn):not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(5,150,105,0.14) !important;
+}
+
+/* ---- Neutral white / slate buttons → subtle depth on hover ---- */
+button[class*="bg-white"]:not(.hw-btn):not(:disabled):hover,
+button[class*="bg-slate-100"]:not(.hw-btn):not(:disabled):hover,
+button[class*="bg-slate-50"]:not(.hw-btn):not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: var(--hw-shadow-sm) !important;
+}
+
+/* ---- Flat bordered white cards with no shadow → give them depth ---- */
+div[class*="bg-white"][class*="rounded-3xl"][class*="border"]:not([class*="shadow"]),
+div[class*="bg-white"][class*="rounded-2xl"][class*="border"]:not([class*="shadow"]),
+div[class*="bg-white"][class*="rounded-xl"][class*="border"]:not([class*="shadow"]) {
+  box-shadow: var(--hw-shadow-sm);
+}
+
+/* ---- Pressable cards (have cursor-pointer) → interactive hover-lift ---- */
+div[class*="cursor-pointer"][class*="bg-white"][class*="rounded-2xl"]:hover,
+div[class*="cursor-pointer"][class*="bg-white"][class*="rounded-xl"]:hover {
+  box-shadow: var(--hw-shadow-md) !important;
+  transform: translateY(-2px);
+  transition: box-shadow var(--hw-base) var(--hw-ease),
+              transform var(--hw-base) var(--hw-ease) !important;
+}
+
+/* ---- Richer, layered shadows replacing Tailwind's flat ones (light) ---- */
+.shadow-sm:not(.hw-card):not(.hw-btn):not([class*="bg-emerald"]) { box-shadow: var(--hw-shadow-sm); }
+.shadow:not(.hw-card):not(.hw-btn):not([class*="bg-emerald"])    { box-shadow: var(--hw-shadow-sm); }
+.shadow-md:not(.hw-card):not(.hw-btn):not([class*="bg-emerald"]) { box-shadow: var(--hw-shadow-md); }
+.shadow-lg:not(.hw-card):not(.hw-btn):not([class*="bg-emerald"]) { box-shadow: var(--hw-shadow-lg); }
+.shadow-xl:not(.hw-card):not(.hw-btn):not([class*="bg-emerald"]) { box-shadow: var(--hw-shadow-lg); }

@@ -1,0 +1,166 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---- Helper functions ----
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // SECURITY: a plain signed-in check is NOT admin — anonymous auth (used in dev and
+    // enablable on the project) yields request.auth != null for anyone. Real admin gating
+    // requires a verified email on the org allow-list. Keep this list in sync with
+    // ADMIN_EMAILS in App.tsx. (For stronger control, migrate to custom claims.)
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email in ['ahmed0ibrahim@gmail.com', 'karm92000@gmail.com', 'alsenosy15@gmail.com']
+        && (request.auth.token.email_verified == true
+            || request.auth.token.firebase.sign_in_provider == 'password');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Cap document payload to limit abuse from anonymous writers.
+    function sizeOk() {
+      return request.resource.data.size() < 60;
+    }
+
+    // ---- Organization knowledge base ----
+    // Public read (guests need branding/context). Writes require an org admin.
+    match /documents/{documentId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ---- Global platform settings / branding ----
+    // Public read (branding loads for guests). Only an org admin may write.
+    match /settings/{settingsId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---- Candidate assessments (contains PII / results) ----
+    // Guests may submit their own result. Reading/editing the full set is admin-only.
+    match /assessments/{assessmentId} {
+      allow create: if sizeOk();
+      allow read, update, delete: if isAdmin();
+    }
+
+    // ---- Consultation requests ----
+    // Anyone may submit a request. Only an admin can read/manage the pipeline.
+    match /consultation_requests/{requestId} {
+      allow create: if sizeOk();
+      allow read, update, delete: if isAdmin();
+    }
+
+    // ---- Login / audit trail ----
+    // Append-only for guests; admin reads the audit log.
+    match /user_logins/{loginId} {
+      allow create: if sizeOk();
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ---- Governance Center (Company Governance Model + RAG store) ----
+    // Sensitive org data, embeddings, knowledge graph. Admin-only.
+    // No size cap: chunks carry embedding vectors and long text.
+    match /gov_models/{tenantId} {
+      allow read, write: if isAdmin();
+    }
+    match /gov_chunks/{chunkId} {
+      allow read, write: if isAdmin();
+    }
+    match /gov_nodes/{nodeId} {
+      allow read, write: if isAdmin();
+    }
+    match /gov_edges/{edgeId} {
+      allow read, write: if isAdmin();
+    }
+    match /gov_projects/{projectId} {
+      allow read, write: if isAdmin();
+    }
+    match /gov_diagrams/{diagramId} {
+      allow read, write: if isAdmin();
+    }
+    match /gov_documents/{docId} {
+      allow read, write: if isAdmin();
+    }
+    match /gov_snapshots/{snapId} {
+      allow read, write: if isAdmin();
+    }
+
+    // ---- Survey tokens — public shareable links ----
+    // Any anonymous respondent reads the token to get company name/language.
+    // Only an admin may create/delete tokens.
+    match /survey_tokens/{tokenId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---- Public survey responses ----
+    // Anyone with a valid token URL may submit a response (create-only, size-capped).
+    // Admin reads/manages all responses.
+    match /survey_responses/{responseId} {
+      allow create: if sizeOk();
+      allow read, update, delete: if isAdmin();
+    }
+
+    // ---- Employee assessment portal tokens ----
+    // Any respondent reads the token to get company name/language.
+    // Only an admin may create/revoke tokens.
+    match /employee_tokens/{tokenId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---- Employee full assessment responses ----
+    // Anyone with a valid token URL may submit (create-only, size-capped).
+    // Admin reads/manages all responses.
+    match /employee_responses/{responseId} {
+      allow create: if sizeOk();
+      allow read, update, delete: if isAdmin();
+    }
+
+    // ---- Department governance packages ----
+    // AI-generated per-department packages (goal, policies, procedures, KPIs, JDs, RACI, risk register).
+    // Admin-only — no size cap (content can be large).
+    match /gov_department_packages/{pkgId} {
+      allow read, write: if isAdmin();
+    }
+
+    // ---- Paper assessment portal tokens ----
+    // External manager (recipient) reads the token to log in (email + password hash),
+    // configure the exam, and print the PDF. Only an admin may create/revoke tokens.
+    match /paper_assessment_tokens/{tokenId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---- Online proctored exam tokens ----
+    // Candidate reads the token to verify credentials + load exam config.
+    // Only an admin may create/revoke tokens.
+    match /exam_tokens/{tokenId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---- Online proctored exam results ----
+    // Candidate creates/updates their own result doc. Admin reads all results.
+    match /exam_results/{resultId} {
+      allow create, update: if true;
+      allow read, delete: if isAdmin();
+    }
+
+    // ---- Connectivity probe used by firebase.ts ----
+    match /test/{docId} {
+      allow read: if true;
+    }
+  }
+}

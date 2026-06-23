@@ -1,0 +1,8 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "hawkamah", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 3100, "autoPort": false },
+    { "name": "hawkamah-preview", "runtimeExecutable": "npm", "runtimeArgs": ["run", "preview", "--", "--port", "3101", "--strictPort"], "port": 3101, "autoPort": false },
+    { "name": "hawkamah-tmp", "runtimeExecutable": "bash", "runtimeArgs": ["-lc", "cd /tmp/hk_build_local && exec npx vite --port 3102 --strictPort"], "port": 3102, "autoPort": false }
+  ]
+}

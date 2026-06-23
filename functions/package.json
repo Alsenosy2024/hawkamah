@@ -1,0 +1,13 @@
+{
+  "name": "hawkamah-functions",
+  "description": "Ephemeral Gemini Live auth-token minter for Hawkamah",
+  "type": "module",
+  "engines": { "node": "22" },
+  "main": "index.js",
+  "dependencies": {
+    "@google/genai": "^2.8.0",
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.1.0"
+  },
+  "private": true
+}

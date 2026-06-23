@@ -1,0 +1,69 @@
+{
+  "entities": {
+    "organizationDocument": {
+      "title": "Organization Knowledge Document",
+      "description": "Organizational context files uploaded by Admin to align the assessment questions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "uploadedAt": { "type": "string", "format": "date-time" },
+        "content": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "uploadedAt", "content"]
+    },
+    "adminSettings": {
+      "title": "Assessment Methodology Controls",
+      "description": "Governance configurations for assessment scopes and scientific theories.",
+      "type": "object",
+      "properties": {
+        "questionCount": { "type": "integer" },
+        "theories": {
+          "type": "object",
+          "properties": {
+            "birkman": { "type": "boolean" },
+            "holland": { "type": "boolean" },
+            "psychTech": { "type": "boolean" },
+            "bloomTaxonomy": { "type": "boolean" }
+          }
+        }
+      },
+      "required": ["questionCount", "theories"]
+    },
+    "assessmentReport": {
+      "title": "Staff Competency & Work Environment Assessment Report",
+      "description": "Detailed answers and AI results for candidate assessments.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "jobTitle": { "type": "string" },
+        "numQuestions": { "type": "integer" },
+        "assessmentType": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "responses": { "type": "array" },
+        "workplaceAnswers": { "type": "object" },
+        "reportData": { "type": "object" }
+      },
+      "required": ["id", "userId", "userName", "userEmail", "jobTitle", "numQuestions", "assessmentType", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/documents/{documentId}": {
+      "schema": "organizationDocument",
+      "description": "Corporate identity and operational reality files."
+    },
+    "/settings/{settingsId}": {
+      "schema": "adminSettings",
+      "description": "Global methodology setup."
+    },
+    "/assessments/{assessmentId}": {
+      "schema": "assessmentReport",
+      "description": "Stored assessments, questionnaire responses, and AI reports."
+    }
+  }
+}

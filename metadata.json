@@ -1,0 +1,8 @@
+{
+  "name": "Hawkamah: Corporate Governance & Competency Platform",
+  "description": "An intelligent governance-focused assessment platform to measure corporate competencies, organizational alignment under EFQM/ISO 9001 frameworks, and staff readiness.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}
