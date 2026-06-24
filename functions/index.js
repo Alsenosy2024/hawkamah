@@ -12,6 +12,9 @@ import { GoogleGenAI, Modality } from '@google/genai';
 
 const GEMINI_LIVE_KEY = defineSecret('GEMINI_LIVE_KEY');
 const LIVE_MODEL = 'gemini-3.1-flash-live-preview';
+// Native-audio Live model — the only Live models this key can use are audio-out;
+// the proctor reads its verdict via outputAudioTranscription (see proctorService.ts).
+const PROCTOR_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
 
 // The app has no real user login in production (governance UI bypass, anonymous
 // provider disabled), so an Auth gate would block every legitimate caller.
@@ -55,6 +58,38 @@ export const liveToken = onCall(
         },
       });
       return { token: tok.name, model: LIVE_MODEL, expireTime };
+    } catch (e) {
+      throw new HttpsError('internal', `token mint failed: ${e?.message || e}`);
+    }
+  }
+);
+
+export const proctorToken = onCall(
+  { secrets: [GEMINI_LIVE_KEY], region: 'us-central1', cors: true },
+  async (request) => {
+    const hdr = request.rawRequest?.headers || {};
+    const origin = String(hdr.origin || hdr.referer || '').replace(/\/$/, '');
+    const ok = [...ALLOWED].some((a) => origin === a || origin.startsWith(a + '/'));
+    if (!ok) {
+      throw new HttpsError('permission-denied', 'Origin not allowed.');
+    }
+    const ai = new GoogleGenAI({
+      apiKey: GEMINI_LIVE_KEY.value(),
+      httpOptions: { apiVersion: 'v1alpha' },
+    });
+    try {
+      const expireTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      const tok = await ai.authTokens.create({
+        config: {
+          uses: 200,
+          expireTime,
+          liveConnectConstraints: {
+            model: PROCTOR_MODEL,
+            config: { responseModalities: [Modality.AUDIO], outputAudioTranscription: {} },
+          },
+        },
+      });
+      return { token: tok.name, model: PROCTOR_MODEL, expireTime };
     } catch (e) {
       throw new HttpsError('internal', `token mint failed: ${e?.message || e}`);
     }

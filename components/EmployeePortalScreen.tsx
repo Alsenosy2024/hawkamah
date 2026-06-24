@@ -29,7 +29,8 @@ interface Props {
 
 // W3: survey size now comes from the launch token (questionCount), not a constant.
 const DEFAULT_QUESTION_COUNT = 30;
-const BATCH_SIZE = 10; // first batch shown immediately; remainder fetched async
+const FIRST_BATCH = 3;   // tiny first batch → assessment starts in ~8s (mirrors App.tsx)
+const REFILL_CHUNK = 7;  // background refill chunk size (mirrors App.tsx)
 
 // W4: ground the generated scenarios in the company's real industry + name so the
 // questions read like the company's own domain (real-estate/construction, not a
@@ -98,22 +99,34 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
     setPhase('generating');
     const total = empToken?.questionCount || DEFAULT_QUESTION_COUNT;
     const orgContext = empToken ? buildOrgContext(empToken) : undefined;
-    const firstBatch = Math.min(total, BATCH_SIZE);
+    const firstBatch = Math.min(total, FIRST_BATCH);
     try {
-      // First batch shown immediately so the candidate isn't stuck on a long
-      // blocking call; remainder streams in while they read the briefing.
+      // Tiny first batch (fast LOW-thinking path) shown immediately so the candidate
+      // starts in ~8s; the rest refills in steady background chunks while they read
+      // the briefing — instead of one slow 20-question blocking call.
       const qs = await generateQuestions(jobTitle, firstBatch, language, true, undefined, orgContext);
       setQuestions(qs);
       setPhase('instructions');
 
-      const remaining = total - firstBatch;
-      if (remaining > 0) {
-        generateQuestions(
-          jobTitle, remaining, language, false, undefined, orgContext, undefined,
-          qs.map(q => q.questionText), // cross-batch dedup
-        )
-          .then(rest => setQuestions(prev => [...prev, ...rest]))
-          .catch(err => console.error('Failed to fetch remaining questions:', err));
+      if (total > firstBatch) {
+        let have = firstBatch;
+        const asked = qs.map(q => q.questionText);
+        (async () => {
+          while (have < total) {
+            const n = Math.min(REFILL_CHUNK, total - have);
+            let chunk;
+            try {
+              chunk = await generateQuestions(jobTitle, n, language, false, undefined, orgContext, undefined, asked);
+            } catch (err) {
+              console.error('background question chunk failed (keeping loaded questions):', err);
+              break;
+            }
+            if (!chunk.length) break;
+            setQuestions(prev => [...prev, ...chunk]);
+            asked.push(...chunk.map(q => q.questionText));
+            have += chunk.length;
+          }
+        })();
       }
     } catch (err: any) {
       toast.error(t('فشل توليد الأسئلة: ', 'Failed to generate questions: ') + (err?.message || err));

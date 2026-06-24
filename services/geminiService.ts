@@ -35,6 +35,61 @@ const withTimeout = <T>(promise: Promise<T>, ms = 90_000): Promise<T> =>
         ),
     ]);
 
+// Transient server/network failure → safe to retry. Hard client errors (400/401/
+// 403/404 — bad key, bad request) are NOT retryable and rethrow immediately.
+const isRetryableError = (e: any): boolean => {
+    const code = Number(e?.status ?? e?.code ?? e?.error?.code ?? NaN);
+    if ([408, 429, 500, 502, 503, 504].includes(code)) return true;
+    const msg = String(e?.message || e || '').toLowerCase();
+    return /unavailable|overloaded|deadline|timed?\s?out|timeout|exceeded|econnreset|etimedout|fetch failed|network|temporarily/.test(msg);
+};
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+// Resilient JSON generation. The old single blocking 90s call hard-failed on any
+// 503 overload spike or a too-slow thinking response. This retries across a
+// fast→robust ladder with exponential backoff + jitter (researched 2026-06-24):
+//   1) primary model, MEDIUM thinking, 90s   — best quality
+//   2) primary model, MEDIUM thinking, 70s   — recovers a transient 503/network blip
+//   3) FALLBACK model, thinking OFF, 50s      — fast, high-availability last resort
+// A 503 fails fast (server rejects early) so backoff+retry recovers; a genuine hang
+// hits the per-attempt timeout and the next, faster attempt almost always returns.
+async function generateJsonResilient(contents: any, responseSchema: any, fast = false): Promise<any> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+    const base = { responseMimeType: "application/json", responseSchema };
+    // `fast` (the latency-critical FIRST batch the candidate waits on) uses light
+    // thinking so the test starts in seconds. Background refills (fast=false) keep
+    // MEDIUM thinking — their latency is hidden while the candidate answers.
+    const ladder = fast
+        ? [
+            { model: MODELS.TEXT,          config: { ...base, thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },     ms: 45_000 },
+            { model: MODELS.TEXT,          config: { ...base, thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } }, ms: 35_000 },
+            { model: MODELS.TEXT_FALLBACK, config: { ...base, thinkingConfig: { thinkingBudget: 0 } },                    ms: 35_000 },
+        ]
+        : [
+            { model: MODELS.TEXT,          config: { ...base, thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM } }, ms: 90_000 },
+            { model: MODELS.TEXT,          config: { ...base, thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM } }, ms: 70_000 },
+            { model: MODELS.TEXT_FALLBACK, config: { ...base, thinkingConfig: { thinkingBudget: 0 } },                   ms: 50_000 },
+        ];
+    let lastErr: any;
+    for (let i = 0; i < ladder.length; i++) {
+        try {
+            return await withTimeout(
+                ai.models.generateContent({ model: ladder[i].model, contents, config: ladder[i].config }),
+                ladder[i].ms,
+            );
+        } catch (e) {
+            lastErr = e;
+            const timedOut = /timeout|timed out/i.test(String((e as any)?.message || ''));
+            if (!isRetryableError(e) && !timedOut) throw e;          // hard client error → don't retry
+            if (i < ladder.length - 1) {
+                await sleep(Math.min(1000 * 2 ** i + Math.random() * 1000, 12_000)); // backoff + full jitter
+            }
+        }
+    }
+    throw lastErr;
+}
+
 // Robust STT — replaces the browser's webkitSpeechRecognition (silent failures,
 // weak Arabic) on BOTH the verbal-interview and workplace-survey screens. Takes a
 // base64 WAV (from MicRecorder) and returns a verbatim transcript. Gemini handles
@@ -159,15 +214,10 @@ export const generateQuestions = async (
     `;
 
     try {
-        const response = await withTimeout(ai.models.generateContent({
-            model: MODELS.TEXT,
-            contents: [{ parts: [{ text: prompt }] }],
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: questionSchema,
-                thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM },
-            },
-        }));
+        // Resilient generation: retries with backoff + a fast fallback model so a
+        // transient 503/overload or a slow thinking call no longer hard-fails and
+        // blocks the exam/interview from starting.
+        const response = await generateJsonResilient([{ parts: [{ text: prompt }] }], questionSchema, isFirstBatch);
 
         const jsonText = responseText(response);
         if (!jsonText) throw new Error("Empty response from Gemini API");

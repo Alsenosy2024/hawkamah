@@ -4,6 +4,8 @@ import {
   scoreAttempt, type ExamToken, type ExamAttempt, type ExamResult,
 } from '../services/onlineAssessmentService';
 import { generatePaperQuestions } from '../services/paperAssessmentService';
+import { createLiveProctor, type LiveProctorHandle } from '../services/proctorService';
+import type { ProctorAlert, ProctorState, ProctorSummary } from '../services/proctorCore';
 import type { PaperQuestion } from '../types';
 
 interface Props { token: string; }
@@ -98,14 +100,24 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
   const [startedAt, setStartedAt]         = useState('');
   const [attempts, setAttempts]           = useState<ExamAttempt[]>([]);
 
-  const videoRef     = useRef<HTMLVideoElement>(null);
-  const streamRef    = useRef<MediaStream | null>(null);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const violationRef = useRef(0);
-  const answersRef   = useRef<Record<number, string>>({});
-  const chosenRef    = useRef('');
-  const qIndexRef    = useRef(0);
-  const questionsRef = useRef<PaperQuestion[]>([]);
+  // ── Proctor state ──────────────────────────────────────────────────────────
+  const [proctorStatus, setProctorStatus] = useState<'connecting' | 'live' | 'unavailable' | 'closed' | null>(null);
+  const [proctorState,  setProctorState]  = useState<ProctorState | null>(null);
+  const [latestAlert,   setLatestAlert]   = useState<ProctorAlert | null>(null);
+  const [showConsent,   setShowConsent]   = useState(false);
+
+  const videoRef        = useRef<HTMLVideoElement>(null);
+  const screenVideoRef  = useRef<HTMLVideoElement>(null);
+  const streamRef       = useRef<MediaStream | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const violationRef    = useRef(0);
+  const answersRef      = useRef<Record<number, string>>({});
+  const chosenRef       = useRef('');
+  const qIndexRef       = useRef(0);
+  const questionsRef    = useRef<PaperQuestion[]>([]);
+  const proctorRef      = useRef<LiveProctorHandle | null>(null);
+  const proctorSummaryRef = useRef<ProctorSummary | null>(null);
 
   // ── Load token ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -139,15 +151,55 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     setLoginLoading(false);
   };
 
-  // ── Camera + fullscreen ────────────────────────────────────────────────
-  const requestPermissions = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      streamRef.current = stream;
-      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play().catch(() => {}); }
-    } catch {
-      setErrMsg('يجب السماح بالكاميرا لإجراء الاختبار.'); setScreen('error'); return;
+  // ── Proctor stream + handle teardown ─────────────────────────────────────
+  const stopProctor = useCallback(() => {
+    if (proctorRef.current) {
+      proctorSummaryRef.current = proctorRef.current.stop();
+      proctorRef.current = null;
     }
+    screenStreamRef.current?.getTracks().forEach(t => t.stop());
+    screenStreamRef.current = null;
+  }, []);
+
+  // ── Camera + fullscreen + proctor init ────────────────────────────────────
+  const requestPermissions = async () => {
+    // Show Arabic consent line; proceed regardless (non-blocking UI state)
+    setShowConsent(true);
+
+    // 1. Acquire camera (required — abort on denial)
+    let cameraStream: MediaStream | null = null;
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      streamRef.current = cameraStream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = cameraStream;
+        videoRef.current.play().catch(() => {});
+      }
+    } catch {
+      // Camera-only denial → events-only mode (no cameraStream, no PiP)
+      // We still proceed; proctor will run without video frames.
+    }
+
+    // 2. Acquire screen (optional — if denied → camera-only or events-only)
+    let screenStream: MediaStream | null = null;
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      screenStreamRef.current = screenStream;
+      if (screenVideoRef.current) {
+        screenVideoRef.current.srcObject = screenStream;
+        screenVideoRef.current.play().catch(() => {});
+      }
+    } catch {
+      // Screen denied → camera-only (or events-only if camera also denied)
+    }
+
+    // 3. Enforce camera requirement after graceful tries
+    if (!cameraStream && !screenStream) {
+      // Events-only mode — allowed; proctor will work without frames.
+      // (No hard block; exam continues with degraded monitoring.)
+    }
+
+    setShowConsent(false);
     try { await document.documentElement.requestFullscreen(); } catch { /* optional */ }
     setScreen('generating');
     generateQuestionsNow();
@@ -166,7 +218,34 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
       setViolations(0); violationRef.current = 0;
       setStartedAt(new Date().toISOString());
       setSecondsLeft(tok.secondsPerQuestion);
+
+      // Stop any existing proctor before starting a fresh one for this attempt.
+      if (proctorRef.current) { proctorRef.current.stop(); proctorRef.current = null; }
+      proctorSummaryRef.current = null;
+      setProctorStatus(null);
+      setProctorState(null);
+      setLatestAlert(null);
+
+      // Build proctor handle.  cameraEl / screenEl may have no srcObject if
+      // permissions were denied; createLiveProctor / compositeFrame handle that.
+      const cameraEl = videoRef.current ?? document.createElement('video');
+      const screenEl = screenVideoRef.current;
+      const handle = createLiveProctor({
+        cameraEl,
+        screenEl,
+        onAlert: (alert) => {
+          setLatestAlert(alert);
+          setTimeout(() => setLatestAlert(a => (a === alert ? null : a)), 6000);
+        },
+        onState: (s) => setProctorState(s),
+        onStatus: (st) => setProctorStatus(st),
+      });
+      proctorRef.current = handle;
+
       setScreen('exam');
+
+      // Start async — never blocks rendering.
+      handle.start().catch(() => {});
     } catch (e: unknown) {
       setErrMsg(`فشل توليد الأسئلة: ${e instanceof Error ? e.message : String(e)}`);
       setScreen('error');
@@ -200,15 +279,33 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
 
   useEffect(() => {
     if (screen !== 'exam') return;
-    const onVis  = () => { if (document.visibilityState === 'hidden') addViolation('مغادرة التبويب محظورة'); };
-    const onBlur = () => addViolation('التبديل لنافذة أخرى محظور');
-    const onFS   = () => { if (!document.fullscreenElement) addViolation('الخروج من ملء الشاشة'); };
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') {
+        proctorRef.current?.pushEvent('tab_switch', 'مغادرة التبويب محظورة');
+        addViolation('مغادرة التبويب محظورة');
+      }
+    };
+    const onBlur = () => {
+      proctorRef.current?.pushEvent('window_blur', 'التبديل لنافذة أخرى محظور');
+      addViolation('التبديل لنافذة أخرى محظور');
+    };
+    const onFS = () => {
+      if (!document.fullscreenElement) {
+        proctorRef.current?.pushEvent('fullscreen_exit', 'الخروج من ملء الشاشة');
+        addViolation('الخروج من ملء الشاشة');
+      }
+    };
     const onKey  = (e: KeyboardEvent) => {
       const b = e.key === 'F12' || (e.ctrlKey && 'uUsScCpPiIaA'.includes(e.key)) || (e.altKey && e.key === 'Tab');
       if (b) { e.preventDefault(); e.stopPropagation(); }
     };
     const noMenu = (e: MouseEvent) => e.preventDefault();
-    const noCopy = (e: ClipboardEvent) => e.preventDefault();
+    const noCopy = (e: ClipboardEvent) => {
+      e.preventDefault();
+      // Feed the unified integrity score (don't escalate to a hard violation —
+      // a stray copy shouldn't trip the MAX_VIOLATIONS auto-finish).
+      proctorRef.current?.pushEvent('copy_paste', 'محاولة نسخ المحتوى محظورة');
+    };
     document.addEventListener('visibilitychange', onVis);
     window.addEventListener('blur', onBlur);
     document.addEventListener('fullscreenchange', onFS);
@@ -236,7 +333,10 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
       const d = ctx.getImageData(0, 0, 80, 60).data;
       let sum = 0;
       for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i+1] + d[i+2];
-      if (sum / (d.length / 4 * 3) < 8) addViolation('الكاميرا مغطّاة');
+      if (sum / (d.length / 4 * 3) < 8) {
+        proctorRef.current?.pushEvent('no_face', 'الكاميرا مغطّاة أو الوجه غير ظاهر');
+        addViolation('الكاميرا مغطّاة');
+      }
     }, 4000);
     return () => clearInterval(iv);
   }, [screen, addViolation]);
@@ -245,17 +345,37 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
   const doFinish = useCallback((forced: boolean) => {
     void forced;
     if (timerRef.current) clearInterval(timerRef.current);
+
+    // Stop proctor and collect summary before building the attempt record.
+    stopProctor();
+    const summary = proctorSummaryRef.current;
+
     const finalAnswers = { ...answersRef.current };
     if (chosenRef.current) finalAnswers[qIndexRef.current] = chosenRef.current;
     const score = scoreAttempt(questionsRef.current, finalAnswers);
-    const attempt: ExamAttempt = {
+
+    const attempt: ExamAttempt & {
+      integrity?: number;
+      verdict?: 'clear' | 'review' | 'fail';
+      topSignals?: Array<{ type: string; count: number }>;
+      alerts?: unknown[];
+    } = {
       attemptNumber,
       answers: finalAnswers,
       score,
-      violations: violationRef.current,
+      // Keep old `violations` for back-compat; use summary.totalAlerts when available.
+      violations: summary ? summary.totalAlerts : violationRef.current,
       startedAt,
       finishedAt: new Date().toISOString(),
+      // Merge proctor integrity data when available.
+      ...(summary ? {
+        integrity:  summary.integrity,
+        verdict:    summary.verdict,
+        topSignals: summary.topSignals,
+        alerts:     [],   // individual alerts not stored here (summary sufficient)
+      } : {}),
     };
+
     setAttempts(prev => {
       const updated = [...prev, attempt];
       const best = Math.max(...updated.map(a => a.score));
@@ -272,7 +392,7 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
       return updated;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attemptNumber, startedAt, result, tokenId, tok, email]);
+  }, [attemptNumber, startedAt, result, tokenId, tok, email, stopProctor]);
 
   const doAdvance = useCallback(() => {
     const cur = qIndexRef.current;
@@ -295,12 +415,24 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     generateQuestionsNow();
   };
 
+  // Cleanup on exam end / error
   useEffect(() => {
     if (screen === 'all_done' || screen === 'error') {
+      stopProctor();
       streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     }
-  }, [screen]);
+  }, [screen, stopProctor]);
+
+  // Cleanup on component unmount
+  useEffect(() => {
+    return () => {
+      stopProctor();
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ═══════════════════════════ RENDER ══════════════════════════════════════
 
@@ -353,8 +485,13 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
             </div>
           ))}
         </div>
-        <button style={{ ...S.btnPrimary, marginTop: 4 }} onClick={requestPermissions}>
-          أوافق وأبدأ الاختبار
+        {/* Arabic consent line for media permissions */}
+        <p style={{ margin: '8px 0 0', fontSize: 12, color: '#888', textAlign: 'center', lineHeight: 1.6 }}>
+          بالمتابعة، توافق على تسجيل الكاميرا والميكروفون وبث الشاشة خلال جلسة الاختبار لأغراض المراقبة الحية.
+        </p>
+        <button style={{ ...S.btnPrimary, marginTop: 4 }}
+          onClick={requestPermissions} disabled={showConsent}>
+          {showConsent ? 'جارٍ طلب الأذونات...' : 'أوافق وأبدأ الاختبار'}
         </button>
       </div>
     </div>
@@ -382,6 +519,10 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     return (
       <div style={{ minHeight: '100vh', background: '#F0F3F7', fontFamily: FONT, direction: 'rtl' }}>
 
+        {/* Hidden screen capture video (feeds compositeFrame in proctorService) */}
+        <video ref={screenVideoRef} autoPlay muted playsInline
+          style={{ position: 'fixed', width: 1, height: 1, opacity: 0, pointerEvents: 'none', top: 0, left: 0 }} />
+
         {/* Camera corner */}
         <div style={{
           position: 'fixed', top: 12, left: 12, zIndex: 9999,
@@ -395,6 +536,49 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
             background: `rgba(27,79,114,.7)`, color: '#fff', fontSize: 10, textAlign: 'center', padding: '2px 0',
           }}>مراقبة مباشرة</div>
         </div>
+
+        {/* Live proctor status chip (bottom-left, fixed) */}
+        {proctorStatus !== null && (
+          <div style={{
+            position: 'fixed', bottom: 16, left: 16, zIndex: 9999,
+            background: proctorStatus === 'live' ? 'rgba(27,79,114,.92)' : 'rgba(60,60,60,.82)',
+            color: '#fff', borderRadius: 24, padding: '6px 14px',
+            fontSize: 12, fontFamily: FONT, display: 'flex', alignItems: 'center', gap: 8,
+            boxShadow: '0 2px 10px rgba(0,0,0,.22)', direction: 'rtl',
+            maxWidth: 280,
+          }}>
+            {/* Connection dot */}
+            <span style={{
+              width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+              background: proctorStatus === 'live' ? '#2ECC71'
+                : proctorStatus === 'connecting' ? '#F39C12'
+                : '#95A5A6',
+              display: 'inline-block',
+            }} />
+            <span style={{ fontWeight: 600 }}>
+              {proctorStatus === 'live'        ? 'مراقبة مباشرة'
+                : proctorStatus === 'connecting' ? 'جارٍ الاتصال…'
+                : proctorStatus === 'unavailable' ? 'مراقبة محدودة'
+                : 'منتهية'}
+            </span>
+            {/* Integrity score */}
+            {proctorState && (
+              <span style={{
+                background: proctorState.integrity >= 85 ? '#1E8449'
+                  : proctorState.integrity >= 70 ? '#E67E22' : '#C0392B',
+                borderRadius: 12, padding: '1px 8px', fontSize: 11, fontWeight: 700,
+              }}>
+                {proctorState.integrity}%
+              </span>
+            )}
+            {/* Latest alert */}
+            {latestAlert && (
+              <span style={{ fontSize: 10, opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                ⚠ {latestAlert.message}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Violation banner */}
         {violationMsg && (

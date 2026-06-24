@@ -41,6 +41,43 @@ const ADMIN_EMAILS = ['ahmed0ibrahim@gmail.com', 'karm92000@gmail.com', 'alsenos
 import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
 
 const BATCH_SIZE = 10;
+// Start the test FAST: generate a tiny first batch (shown immediately), then refill
+// the remaining questions in steady background chunks while the candidate answers —
+// instead of waiting on one big 10-question (or 30-question) call up front.
+const FIRST_BATCH = 3;     // tiny first batch → interview/exam starts in ~15-20s
+const REFILL_CHUNK = 7;    // background refill size (fewer calls vs. steady supply)
+
+// Progressively fetch the remaining questions in REFILL_CHUNK-sized pieces, appending
+// each as it arrives so the question feed keeps flowing. Stops on error/empty (the
+// candidate simply keeps whatever loaded). Cross-batch dedup avoids repeated scenarios.
+async function fetchRemainingInChunks(
+  params: {
+    jobTitle: string; total: number; firstBatchTexts: string[];
+    language: Language; jobDescription?: string; orgContext?: string;
+    theories?: { birkman: boolean; holland: boolean; psychTech: boolean; bloomTaxonomy: boolean };
+  },
+  onChunk: (qs: Question[]) => void,
+): Promise<void> {
+  const asked = [...params.firstBatchTexts];
+  let have = params.firstBatchTexts.length;
+  while (have < params.total) {
+    const n = Math.min(REFILL_CHUNK, params.total - have);
+    let chunk: Question[];
+    try {
+      chunk = await generateQuestions(
+        params.jobTitle, n, params.language, false,
+        params.jobDescription, params.orgContext, params.theories, asked,
+      );
+    } catch (err) {
+      console.error('background question chunk failed (keeping loaded questions):', err);
+      break;
+    }
+    if (!chunk.length) break;        // guard against a 0-length response (no spin)
+    onChunk(chunk);
+    asked.push(...chunk.map(q => q.questionText));
+    have += chunk.length;
+  }
+}
 
 // Effect-bridge: App owns the `error` state but cannot call useToast in its own
 // body (it renders the provider). This child lives under <ToastProvider> and
@@ -416,7 +453,7 @@ const App: React.FC = () => {
       // batching strategy as the text path (first BATCH_SIZE questions → show
       // screen immediately → fetch remaining async) so a 30-question interview
       // doesn't hit the 90s API timeout in a single blocking call.
-      const verbalFirstBatch = Math.min(numQuestions, BATCH_SIZE);
+      const verbalFirstBatch = Math.min(numQuestions, FIRST_BATCH);
       try {
         const firstBatch = await generateQuestions(
           jobTitle, verbalFirstBatch, language, true, jobDescription, orgContext, projSurvey.theories
@@ -425,16 +462,14 @@ const App: React.FC = () => {
         setCurrentScreen(Screen.ONBOARDING);
         setIsLoading(false);
 
-        // Fetch remaining questions in the background while the candidate is
-        // in the onboarding / answering the first questions.
-        const remaining = numQuestions - verbalFirstBatch;
-        if (remaining > 0) {
-          generateQuestions(
-            jobTitle, remaining, language, false, jobDescription, orgContext, projSurvey.theories,
-            firstBatch.map(q => q.questionText),   // cross-batch dedup: never repeat first-batch scenarios
-          )
-            .then(rest => setQuestions(prev => [...prev, ...rest]))
-            .catch(err => console.error('Failed to fetch remaining verbal questions:', err));
+        // Refill the rest in steady background chunks while the candidate answers the
+        // first questions — so the interview starts fast and questions keep arriving.
+        if (numQuestions > verbalFirstBatch) {
+          void fetchRemainingInChunks(
+            { jobTitle, total: numQuestions, firstBatchTexts: firstBatch.map(q => q.questionText),
+              language, jobDescription, orgContext, theories: projSurvey.theories },
+            (chunk) => setQuestions(prev => [...prev, ...chunk]),
+          );
         }
       } catch (err) {
         setError(language === 'ar' ? 'فشل بناء أسئلة المقابلة الصوتية. حاول مرة أخرى.' : 'Failed to build the verbal interview questions. Please retry.');
@@ -444,15 +479,15 @@ const App: React.FC = () => {
       return;
     }
 
-    // Load first batch from Gemini
-    const firstBatchSize = Math.min(numQuestions, BATCH_SIZE);
+    // Load a tiny first batch from Gemini so the assessment starts fast.
+    const firstBatchSize = Math.min(numQuestions, FIRST_BATCH);
 
     try {
       const firstBatchQuestions = await generateQuestions(
-        jobTitle, 
-        firstBatchSize, 
-        language, 
-        true, 
+        jobTitle,
+        firstBatchSize,
+        language,
+        true,
         jobDescription,
         orgContext,
         projSurvey.theories
@@ -461,25 +496,13 @@ const App: React.FC = () => {
       setCurrentScreen(Screen.ONBOARDING);
       setIsLoading(false);
 
-      // Fetch outstanding questions asynchronously
-      const remainingQuestionsCount = numQuestions - firstBatchSize;
-      if (remainingQuestionsCount > 0) {
-        generateQuestions(
-          jobTitle, 
-          remainingQuestionsCount, 
-          language, 
-          false, 
-          jobDescription,
-          orgContext,
-          projSurvey.theories,
-          firstBatchQuestions.map(q => q.questionText),   // cross-batch dedup
-        )
-          .then(remainingQuestions => {
-            setQuestions(prevQuestions => [...prevQuestions, ...remainingQuestions]);
-          })
-          .catch(err => {
-            console.error("Failed to fetch subsequent assessment questions:", err);
-          });
+      // Refill outstanding questions progressively in background chunks.
+      if (numQuestions > firstBatchSize) {
+        void fetchRemainingInChunks(
+          { jobTitle, total: numQuestions, firstBatchTexts: firstBatchQuestions.map(q => q.questionText),
+            language, jobDescription, orgContext, theories: projSurvey.theories },
+          (chunk) => setQuestions(prevQuestions => [...prevQuestions, ...chunk]),
+        );
       }
     } catch (err) {
       setError(language === 'ar' ? 'فشل إطعام نظام الذكاء الاصطناعي وبناء الأسئلة. الرجاء محاولة تشغيل التكوينات ثانية.' : 'Failed to generate tailored competency assessment. Try configuring settings again.');

@@ -4,6 +4,8 @@ import { TRANSLATIONS } from '../constants';
 import { speak as ttsSpeak, cancelSpeech, prefetch as ttsPrefetch, unlockAudio } from '../services/ttsService';
 import { scoreAnswer, ScoredAnswer, transcribeAudio } from '../services/geminiService';
 import { MicRecorder, MicRecordError } from '../lib/audioRecorder';
+import { createLiveProctor, type LiveProctorHandle } from '../services/proctorService';
+import { type ProctorSummary } from '../services/proctorCore';
 
 // Speech-to-Text now runs through MicRecorder (raw PCM → 16 kHz WAV) + Gemini
 // transcription — NOT the browser's webkitSpeechRecognition, which failed
@@ -143,6 +145,16 @@ const VerbalAssessmentScreen: React.FC<VerbalAssessmentScreenProps> = ({ onFinis
     const videoRef = useRef<HTMLVideoElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const timerIntervalRef = useRef<number | null>(null);
+
+    // --- Live AI proctoring (Gemini Live: camera + screen → cheating signals) ---
+    const proctorRef        = useRef<LiveProctorHandle | null>(null);
+    const screenStreamRef   = useRef<MediaStream | null>(null);
+    const screenPreviewRef  = useRef<HTMLVideoElement>(null);   // VISIBLE screen-share preview tile
+    const proctorElsRef     = useRef<HTMLVideoElement[]>([]);   // hidden <video>s feeding the proctor
+    const proctorSummaryRef = useRef<ProctorSummary | null>(null);
+    const [proctorStatus, setProctorStatus]       = useState<'off' | 'connecting' | 'live' | 'unavailable' | 'closed'>('off');
+    const [proctorIntegrity, setProctorIntegrity] = useState(100);
+    const [proctorAlert, setProctorAlert]         = useState<{ type: string; severity: string } | null>(null);
     const transcriptRef = useRef<string>('');
     const spokenForIndexRef = useRef<number>(-1);  // guard against double-speak (StrictMode / re-render)
 
@@ -182,6 +194,13 @@ const VerbalAssessmentScreen: React.FC<VerbalAssessmentScreenProps> = ({ onFinis
         listeningRef.current = false;
         try { micRef.current?.abort(); } catch { /* noop */ }
         micRef.current = null;
+        // Backstop: release proctor + screen if the component unmounts without finish().
+        try { proctorRef.current?.stop(); } catch { /* noop */ }
+        proctorRef.current = null;
+        screenStreamRef.current?.getTracks().forEach(t => t.stop());
+        screenStreamRef.current = null;
+        proctorElsRef.current.forEach(v => { try { v.pause(); v.srcObject = null; v.remove(); } catch { /* noop */ } });
+        proctorElsRef.current = [];
     }, []);
 
     // Speak a phrase fully (real neural audio); resolve on natural end.
@@ -651,7 +670,14 @@ const VerbalAssessmentScreen: React.FC<VerbalAssessmentScreenProps> = ({ onFinis
             v.srcObject = s;
             v.play().catch(() => { /* autoplay guard — muted video, should pass */ });
         }
-    }, [step, isCamOn]);
+        // Bind the visible screen-share preview now that the meeting view (and its ref) exist.
+        const sp = screenPreviewRef.current;
+        const ss = screenStreamRef.current;
+        if (sp && ss && sp.srcObject !== ss) {
+            sp.srcObject = ss;
+            sp.play().catch(() => { /* autoplay guard */ });
+        }
+    }, [step, isCamOn, proctorStatus]);
 
     // Apply mic/cam toggles to real tracks.
     useEffect(() => {
@@ -688,9 +714,20 @@ const VerbalAssessmentScreen: React.FC<VerbalAssessmentScreenProps> = ({ onFinis
         listeningRef.current = false;
         try { micRef.current?.abort(); } catch { /* noop */ }
         micRef.current = null;
+        // Stop the live proctor, capture its integrity summary, release screen + hidden els.
+        try { proctorSummaryRef.current = proctorRef.current?.stop() ?? proctorSummaryRef.current; } catch { /* noop */ }
+        proctorRef.current = null;
+        screenStreamRef.current?.getTracks().forEach(t => t.stop());
+        screenStreamRef.current = null;
+        proctorElsRef.current.forEach(v => { try { v.pause(); v.srcObject = null; v.remove(); } catch { /* noop */ } });
+        proctorElsRef.current = [];
         streamRef.current?.getTracks().forEach(t => t.stop());
-        onFinish(transcriptRef.current.trim() + buildScoreBlock(), affect);
-    }, [onFinish, currentIndex, stopAffectCapture, buildAffectSignal, teardownAffect, buildScoreBlock]);
+        const sum = proctorSummaryRef.current;
+        const proctorBlock = sum
+            ? `\n\n${language === 'ar' ? 'مراقبة النزاهة المباشرة' : 'LIVE INTEGRITY MONITORING'}: ${language === 'ar' ? 'الدرجة' : 'score'} ${sum.integrity}/100 — ${sum.verdict.toUpperCase()}${sum.topSignals.length ? ' · ' + sum.topSignals.map(s => `${s.type}×${s.count}`).join(', ') : ''}\n`
+            : '';
+        onFinish(transcriptRef.current.trim() + buildScoreBlock() + proctorBlock, affect);
+    }, [onFinish, currentIndex, stopAffectCapture, buildAffectSignal, teardownAffect, buildScoreBlock, language]);
 
     // --- Deterministic driver: speak each question when it becomes current ---
     useEffect(() => {
@@ -739,10 +776,64 @@ const VerbalAssessmentScreen: React.FC<VerbalAssessmentScreenProps> = ({ onFinis
         }
     }, [step, currentIndex, questions, voicePrompt, isVoiceQ, speak, startAffectCapture, finish, language, totalExpected]);
 
+    // Spin up the live AI proctor: hidden <video>s feed the candidate's camera +
+    // shared screen to the Gemini Live engine, which streams back scored cheating
+    // signals. Graceful: camera-only if screen denied; never throws.
+    const startProctor = useCallback(async (screenStream: MediaStream | null) => {
+        try {
+            const camStream = streamRef.current;
+            const mkHidden = (s: MediaStream) => {
+                const v = document.createElement('video');
+                v.muted = true; v.playsInline = true; v.srcObject = s;
+                v.style.cssText = 'position:fixed;left:-99999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+                document.body.appendChild(v);
+                v.play().catch(() => { /* autoplay guard */ });
+                proctorElsRef.current.push(v);
+                return v;
+            };
+            const camEl = (camStream && camStream.getVideoTracks().length) ? mkHidden(camStream) : document.createElement('video');
+            const scrEl = screenStream ? mkHidden(screenStream) : null;
+            const handle = createLiveProctor({
+                cameraEl: camEl,
+                screenEl: scrEl,
+                intervalMs: 4000,                       // ~1 frame / 4s — cost-efficient
+                onAlert: (a) => {
+                    // Surface a visible warning (the engine only forwards real, non-'none' alerts).
+                    setProctorAlert({ type: a.type, severity: a.severity });
+                    window.setTimeout(() => setProctorAlert(null), 6000);
+                },
+                onState: (s) => setProctorIntegrity(s.integrity),
+                onStatus: (st) => setProctorStatus(st),
+            });
+            proctorRef.current = handle;
+            await handle.start();
+        } catch {
+            setProctorStatus('unavailable');
+        }
+    }, []);
+
     const joinMeeting = () => {
         // NOTE: media denial is a soft warning, not a gate — the interview is mostly
         // written/MCQ and voice questions fall back to typing. Never block the join.
         unlockAudio();  // bless an audio element NOW (user gesture) so the delayed neural blob can play
+        // Request SCREEN SHARE here: getDisplayMedia REQUIRES a user gesture, and this
+        // click is it. Must be called before any await so the gesture isn't consumed.
+        setProctorStatus('connecting');
+        try {
+            navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+                .then(scr => {
+                    screenStreamRef.current = scr;
+                    // Show the shared screen back to the candidate (bound once the meeting renders below).
+                    if (screenPreviewRef.current) {
+                        screenPreviewRef.current.srcObject = scr;
+                        screenPreviewRef.current.play().catch(() => { /* autoplay guard */ });
+                    }
+                    startProctor(scr);
+                })
+                .catch(() => { startProctor(null); });   // denied/cancelled → camera-only proctoring
+        } catch {
+            startProctor(null);
+        }
         if (lobbyVideoRef.current) { try { lobbyVideoRef.current.pause(); lobbyVideoRef.current.srcObject = null; } catch { /* noop */ } }
         setStep('meeting');
         timerIntervalRef.current = window.setInterval(() => setMeetingTime(p => p + 1), 1000);
@@ -997,9 +1088,45 @@ const VerbalAssessmentScreen: React.FC<VerbalAssessmentScreenProps> = ({ onFinis
             <div className="lg:col-span-7 bg-slate-950 p-6 flex flex-col relative">
                 <div className="absolute top-4 right-4 w-32 aspect-video bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 shadow-xl z-20">
                     <video ref={videoRef} muted playsInline className={`w-full h-full object-cover transform scale-x-[-1] ${!isCamOn ? 'hidden' : ''}`} />
+                    {proctorStatus !== 'off' && (
+                        <div className={`absolute bottom-1 left-1 right-1 flex items-center justify-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold tracking-wide ${
+                            proctorStatus === 'live'
+                                ? (proctorIntegrity >= 85 ? 'bg-emerald-600/90 text-white' : proctorIntegrity >= 70 ? 'bg-amber-500/90 text-slate-900' : 'bg-rose-600/90 text-white')
+                                : proctorStatus === 'unavailable' ? 'bg-slate-700/90 text-slate-200' : 'bg-slate-800/90 text-slate-300'
+                        }`}>
+                            <span className={`inline-block w-1.5 h-1.5 rounded-full ${proctorStatus === 'live' ? 'bg-white animate-pulse' : 'bg-slate-400'}`} />
+                            {proctorStatus === 'live'
+                                ? `${language === 'ar' ? 'مراقبة' : 'PROCTORED'} ${proctorIntegrity}`
+                                : proctorStatus === 'connecting' ? (language === 'ar' ? 'جارٍ التوصيل' : 'CONNECTING')
+                                : proctorStatus === 'unavailable' ? (language === 'ar' ? 'كاميرا فقط' : 'CAMERA-ONLY')
+                                : (language === 'ar' ? 'انتهت' : 'ENDED')}
+                        </div>
+                    )}
                     {!isCamOn && <div className="absolute inset-0 flex items-center justify-center text-[10px] text-slate-500 font-bold">Cam Off</div>}
                     <div className="absolute bottom-1 left-2 bg-black/60 px-1.5 py-0.5 rounded text-[8px] font-bold text-slate-200 uppercase tracking-widest">You</div>
                 </div>
+
+                {/* Visible preview of the shared screen (what the proctor is monitoring). */}
+                {screenStreamRef.current && (
+                    <div className="absolute top-4 right-40 w-40 aspect-video bg-slate-900 rounded-2xl overflow-hidden border border-amber-600/60 shadow-xl z-20">
+                        <video ref={screenPreviewRef} muted playsInline className="w-full h-full object-contain" />
+                        <div className="absolute bottom-1 left-2 bg-black/60 px-1.5 py-0.5 rounded text-[8px] font-bold text-amber-200 uppercase tracking-widest">
+                            {language === 'ar' ? 'شاشتك المُراقَبة' : 'Your screen'}
+                        </div>
+                    </div>
+                )}
+
+                {/* Live cheating-alert banner — surfaces a real (non-'none') proctor violation. */}
+                {proctorAlert && (
+                    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 rounded-xl shadow-lg border bg-rose-600/95 text-white border-rose-400">
+                        <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                        <span className="text-xs font-black tracking-wide">
+                            {language === 'ar' ? '⚠️ رُصد سلوك مُريب' : '⚠️ Integrity alert'}
+                        </span>
+                        <span className="text-[11px] font-bold opacity-90">{proctorAlert.type} · {proctorAlert.severity}</span>
+                        <button onClick={() => setProctorAlert(null)} className="ms-1 text-white/80 hover:text-white text-xs">✕</button>
+                    </div>
+                )}
 
                 <div className="border-b border-slate-800 pb-3 text-start mb-4">
                     <span className="text-[10px] font-bold tracking-widest text-teal-400 block mb-1 uppercase">{language === 'ar' ? 'مسار المقابلة' : 'INTERVIEW THREAD'}</span>
