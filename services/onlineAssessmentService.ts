@@ -1,4 +1,4 @@
-// Online Assessment Service — proctored online exam with 3-attempt system.
+// Online Assessment Service — proctored online exam with multi-attempt system.
 // Token stored in Firestore `exam_tokens` collection.
 
 import { db } from '../firebase';
@@ -17,7 +17,11 @@ export interface ExamToken {
   companyLogoUrl?: string;
   accessEmail: string;
   accessPasswordHash: string;
-  jobTitle: string;
+  /** @deprecated use allowedJobTitles */
+  jobTitle?: string;
+  allowedJobTitles?: string[];     // employee picks one at login
+  voiceQuestionCount?: number;     // how many questions are spoken (TTS + record)
+  passingScore?: number;           // 0–100, default 60
   questionCount: number;
   difficulty: PaperDifficulty;
   behavioralPct: number;
@@ -29,10 +33,13 @@ export interface ExamToken {
 }
 
 export interface ExamAttempt {
-  attemptNumber: number;           // 1, 2, or 3
-  answers: Record<number, string>; // questionIndex → chosen option ("أ"|"ب"|"ج"|"د")
-  score: number;                   // 0–100
-  violations: number;              // tab-switch + camera violations counted
+  attemptNumber: number;
+  answers: Record<number, string>;        // qIndex → "أ"|"ب"|"ج"|"د"
+  voiceAnswers?: Record<number, string>;  // qIndex → transcribed text
+  score: number;                          // 0–100, MCQ only
+  violations: number;
+  cancelled?: boolean;                    // true = terminated by violations
+  jobTitle: string;                       // title selected by employee
   startedAt: string;
   finishedAt: string;
 }
@@ -44,7 +51,8 @@ export interface ExamResult {
   projectId: string;
   companyName: string;
   accessEmail: string;
-  jobTitle: string;
+  employeeName?: string;
+  selectedJobTitle?: string;
   attempts: ExamAttempt[];
   bestScore: number;
   submittedAt: string;
@@ -60,7 +68,7 @@ export async function createExamToken(
   companyName: string,
   accessEmail: string,
   accessPassword: string,
-  jobTitle: string,
+  allowedJobTitles: string[],
   opts: {
     questionCount?: number;
     difficulty?: PaperDifficulty;
@@ -69,6 +77,8 @@ export async function createExamToken(
     maxAttempts?: number;
     companyLogoUrl?: string;
     theories?: PaperTheories;
+    voiceQuestionCount?: number;
+    passingScore?: number;
   } = {},
 ): Promise<{ token: string; url: string }> {
   const id = genToken();
@@ -79,12 +89,14 @@ export async function createExamToken(
     companyName,
     accessEmail: accessEmail.trim().toLowerCase(),
     accessPasswordHash: await hashPassword(accessPassword),
-    jobTitle,
+    allowedJobTitles,
     questionCount:      opts.questionCount      ?? 20,
     difficulty:         opts.difficulty          ?? 'medium',
     behavioralPct:      opts.behavioralPct       ?? 50,
     secondsPerQuestion: opts.secondsPerQuestion  ?? 90,
     maxAttempts:        opts.maxAttempts         ?? 3,
+    voiceQuestionCount: opts.voiceQuestionCount  ?? 0,
+    passingScore:       opts.passingScore        ?? 60,
     createdAt: new Date().toISOString(),
     active: true,
     ...(opts.companyLogoUrl ? { companyLogoUrl: opts.companyLogoUrl } : {}),
@@ -126,12 +138,20 @@ export async function saveExamResult(result: ExamResult): Promise<void> {
   }
 }
 
+/** Score MCQ questions only; skip isVoice questions */
 export function scoreAttempt(questions: PaperQuestion[], answers: Record<number, string>): number {
-  if (!questions.length) return 0;
-  const correct = questions.filter((q, i) => {
+  const mcq = questions.map((q, i) => ({ q, i })).filter(({ q }) => !q.isVoice);
+  if (!mcq.length) return 0;
+  const correct = mcq.filter(({ q, i }) => {
     const chosen = answers[i] ?? '';
-    // correctAnswer is "أ" | "ب" | "ج" | "د" — match against first char of chosen option
     return chosen.trim().startsWith(q.correctAnswer);
   }).length;
-  return Math.round((correct / questions.length) * 100);
+  return Math.round((correct / mcq.length) * 100);
+}
+
+/** Resolve the effective job titles list from a token (handles legacy single-title tokens) */
+export function getEffectiveTitles(tok: ExamToken): string[] {
+  if (tok.allowedJobTitles && tok.allowedJobTitles.length > 0) return tok.allowedJobTitles;
+  if (tok.jobTitle) return [tok.jobTitle];
+  return [];
 }

@@ -27,6 +27,7 @@ import PublicSurveyScreen from './components/PublicSurveyScreen';
 import EmployeePortalScreen from './components/EmployeePortalScreen';
 import { PaperAssessmentPortal } from './components/PaperAssessmentPortal';
 import { OnlineAssessmentPortal } from './components/OnlineAssessmentPortal';
+import UnifiedAssessmentPortal from './components/UnifiedAssessmentPortal';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider, useToast } from './components/ToastProvider';
 import { buildFontCss } from './services/designTokens';
@@ -823,6 +824,12 @@ const App: React.FC = () => {
   const onlineToken = new URLSearchParams(window.location.search).get('online');
   if (onlineToken) {
     return <OnlineAssessmentPortal token={onlineToken} />;
+  }
+
+  // Unified assessment portal — ?assess=TOKEN
+  const assessToken = new URLSearchParams(window.location.search).get('assess');
+  if (assessToken) {
+    return <UnifiedAssessmentPortal token={assessToken} />;
   }
 
   return (
