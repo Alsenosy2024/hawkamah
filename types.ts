@@ -435,6 +435,7 @@ export interface PaperQuestion {
   correctAnswer: string; // "أ" | "ب" | "ج" | "د"
   theory?: string;      // which framework drove it: "Birkman" | "Holland" | "Bloom" | ...
   rationale?: string;   // short why-correct note for the model-answer sheet
+  isVoice?: boolean;    // if true: TTS reads question + employee records spoken answer
 }
 
 export interface EmployeeResponse {
@@ -1037,4 +1038,82 @@ export interface GovProgress {
   current: number;
   total: number;
   label: string;
+}
+
+// ============================================================================
+// === UNIFIED ASSESSMENT SYSTEM (نظام التقييم الموحد) ===
+// One shareable link per project → employees self-identify → questions auto-
+// generated per job title → optional camera proctoring → results + AI analysis.
+// ============================================================================
+
+export interface UnifiedAssessmentToken {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  companyName: string;
+  companyLogoUrl?: string;
+
+  // --- Field 1-4: Questions ---
+  questionCount: number;          // 10 | 15 | 20 | 25 | 30
+  behavioralPct: number;          // 20 | 30 | 40 | 50 | 60 | 70
+  difficulty: PaperDifficulty;    // 'easy' | 'medium' | 'hard'
+  theories?: PaperTheories;       // Birkman / Holland / PsychTech / Bloom
+
+  // --- Field 5-8: Exam settings ---
+  secondsPerQuestion: number;     // 45 | 60 | 90 | 120 | 180
+  maxAttempts: number;            // 1 | 2 | 3
+  passingScore: number;           // 50 | 60 | 70 | 80
+  voiceQuestionCount: number;     // 0 | 1 | 2 | 3
+
+  // --- Field 9: Proctoring ---
+  cameraProctoring: boolean;
+
+  // --- Field 10: Job titles the employee can pick from ---
+  allowedJobTitles: string[];
+
+  // --- Field 11-12: Optional access control ---
+  accessCode?: string;            // shared code all employees enter
+  expiresAt?: string;             // ISO expiry (optional)
+
+  createdAt: string;
+  active: boolean;
+}
+
+export interface UnifiedAttempt {
+  attemptNumber: number;
+  answers: Record<number, string>;        // qIndex → "أ"|"ب"|"ج"|"د"
+  voiceAnswers?: Record<number, string>;  // qIndex → transcribed text
+  score: number;                          // 0-100 MCQ score
+  violations: number;
+  cancelled?: boolean;
+  jobTitle: string;
+  startedAt: string;
+  finishedAt: string;
+}
+
+export interface UnifiedEmployeeAnalysis {
+  overallScore: number;
+  passed: boolean;
+  strengths: string[];
+  weaknesses: string[];
+  behavioralInsights: string;
+  recommendations: string;
+  competencyScores: { name: string; score: number }[];
+}
+
+export interface UnifiedAssessmentResult {
+  id?: string;
+  tokenId: string;
+  tenantId: string;
+  projectId: string;
+  companyName: string;
+  employeeName: string;
+  employeeEmail: string;
+  jobTitle: string;
+  attempts: UnifiedAttempt[];
+  bestScore: number;
+  passed: boolean;
+  analysis?: UnifiedEmployeeAnalysis;
+  analysisGeneratedAt?: string;
+  submittedAt: string;
 }

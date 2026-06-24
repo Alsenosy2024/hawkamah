@@ -5,15 +5,15 @@
 // Each new project gets default survey settings seeded from defaultSurveyTemplate.
 
 import React, { useRef, useState } from 'react';
-import type { Language, AdminSettings, GovProject } from '../types';
+import type { Language, AdminSettings, GovProject, PaperDifficulty, PaperTheories } from '../types';
 import { seedProjectSurvey } from '../services/governanceService';
 import { createSurveyToken } from '../services/surveyTokenService';
 import { createEmployeeToken } from '../services/employeePortalService';
-import { createPaperToken } from '../services/paperAssessmentService';
-import { createExamToken } from '../services/onlineAssessmentService';
+import { createUnifiedToken } from '../services/unifiedAssessmentService';
 import { extractProjectFromFiles, draftToProject, type ProjectDraft } from '../services/projectExtraction';
 import { UI, badge } from '../services/designTokens';
 import { useToast } from './ToastProvider';
+import ResponsesPanel from './ResponsesPanel';
 
 interface Props {
   settings: AdminSettings;
@@ -42,26 +42,30 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
   const [draft, setDraft] = useState<ProjectDraft>(EMPTY);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [extracting, setExtracting] = useState(false);
-  const [launchModal, setLaunchModal] = useState<{ url: string; projectName: string; type: 'survey' | 'employee' | 'paper' | 'online' } | null>(null);
+  const [launchModal, setLaunchModal] = useState<{ url: string; projectName: string; type: 'survey' | 'employee' | 'unified' } | null>(null);
   const [launching, setLaunching] = useState<string | null>(null); // projectId being launched
   // W3: employee-portal launch config — pick survey size before minting the token.
   const [empCfg, setEmpCfg] = useState<{ project: GovProject; questionCount: number; voiceCount: number } | null>(null);
 
-  // Paper assessment config — only email+password; all question settings live in the portal
-  const [paperCfg, setPaperCfg] = useState<{
+  // Unified assessment (replaces separate paper + online) — 15-field config
+  const [unifiedCfg, setUnifiedCfg] = useState<{
     project: GovProject;
-    accessEmail: string;
-    accessPassword: string;
+    questionCount: number;
+    behavioralPct: number;
+    difficulty: PaperDifficulty;
+    secondsPerQuestion: number;
+    maxAttempts: number;
+    passingScore: number;
+    voiceQuestionCount: number;
+    cameraProctoring: boolean;
+    theories: PaperTheories;
+    allowedJobTitles: string;  // newline-separated in textarea
+    accessCode: string;
+    expiresAt: string;
   } | null>(null);
 
-  // Online proctored exam config
-  const [onlineCfg, setOnlineCfg] = useState<{
-    project: GovProject;
-    accessEmail: string;
-    accessPassword: string;
-    jobTitle: string;
-    secondsPerQuestion: number;
-  } | null>(null);
+  // Responses panel — show per-project unified results
+  const [responseProjectId, setResponseProjectId] = useState<string | null>(null);
 
   const launchSurvey = async (p: GovProject) => {
     setLaunching(p.id);
@@ -97,53 +101,57 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
     }
   };
 
-  const launchPaperAssessment = (p: GovProject) => {
-    setPaperCfg({ project: p, accessEmail: '', accessPassword: '' });
+  const launchUnifiedAssessment = (p: GovProject) => {
+    const jobTitles = (p.jobRoles ?? []).map(r => (language === 'ar' ? r.title_ar : r.title_en)).filter(Boolean);
+    setUnifiedCfg({
+      project: p,
+      questionCount: 20,
+      behavioralPct: 40,
+      difficulty: 'medium',
+      secondsPerQuestion: 90,
+      maxAttempts: 2,
+      passingScore: 60,
+      voiceQuestionCount: 0,
+      cameraProctoring: false,
+      theories: { birkman: false, holland: true, psychTech: false, bloom: false },
+      allowedJobTitles: jobTitles.join('\n'),
+      accessCode: '',
+      expiresAt: '',
+    });
   };
 
-  const launchOnlineAssessment = (p: GovProject) => {
-    setOnlineCfg({ project: p, accessEmail: '', accessPassword: '', jobTitle: '', secondsPerQuestion: 90 });
-  };
-
-  const confirmOnlineLaunch = async () => {
-    if (!onlineCfg) return;
-    const { project: p, accessEmail, accessPassword, jobTitle, secondsPerQuestion } = onlineCfg;
-    if (!accessEmail.trim() || !accessPassword.trim() || !jobTitle.trim()) {
-      toast.error(t('يرجى ملء جميع الحقول.', 'Please fill all fields.'));
+  const confirmUnifiedLaunch = async () => {
+    if (!unifiedCfg) return;
+    const { project: p } = unifiedCfg;
+    const titles = unifiedCfg.allowedJobTitles.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!titles.length) {
+      toast.error(t('أضف مسمىً وظيفياً واحداً على الأقل.', 'Add at least one job title.'));
       return;
     }
-    setLaunching(`online_${p.id}`);
-    setOnlineCfg(null);
+    setLaunching(`unified_${p.id}`);
+    setUnifiedCfg(null);
     try {
-      const { url } = await createExamToken(
-        p.id, p.id, p.name, accessEmail, accessPassword, jobTitle,
-        { secondsPerQuestion },
-      );
-      setLaunchModal({ url, projectName: p.name, type: 'online' });
+      const { url } = await createUnifiedToken({
+        tenantId: p.id,
+        projectId: p.id,
+        companyName: p.name,
+        companyLogoUrl: p.logoUrl,
+        questionCount: unifiedCfg.questionCount,
+        behavioralPct: unifiedCfg.behavioralPct,
+        difficulty: unifiedCfg.difficulty,
+        secondsPerQuestion: unifiedCfg.secondsPerQuestion,
+        maxAttempts: unifiedCfg.maxAttempts,
+        passingScore: unifiedCfg.passingScore,
+        voiceQuestionCount: unifiedCfg.voiceQuestionCount,
+        cameraProctoring: unifiedCfg.cameraProctoring,
+        theories: unifiedCfg.theories,
+        allowedJobTitles: titles,
+        ...(unifiedCfg.accessCode.trim() ? { accessCode: unifiedCfg.accessCode.trim() } : {}),
+        ...(unifiedCfg.expiresAt.trim() ? { expiresAt: new Date(unifiedCfg.expiresAt).toISOString() } : {}),
+      });
+      setLaunchModal({ url, projectName: p.name, type: 'unified' });
     } catch (err: any) {
-      toast.error(t('فشل إنشاء رابط الاختبار الإلكتروني: ', 'Failed to create online exam link: ') + (err?.message || err));
-    } finally {
-      setLaunching(null);
-    }
-  };
-
-  const confirmPaperLaunch = async () => {
-    if (!paperCfg) return;
-    const { project: p, accessEmail, accessPassword } = paperCfg;
-    if (!accessEmail.trim() || !accessPassword.trim()) {
-      toast.error(t('يرجى ملء البريد الإلكتروني وكلمة المرور.', 'Please fill email and password.'));
-      return;
-    }
-    setLaunching(`paper_${p.id}`);
-    setPaperCfg(null);
-    try {
-      const logoUrl = (p as any).logoUrl as string | undefined;
-      const { url } = await createPaperToken(
-        p.id, p.id, p.name, logoUrl, language, accessEmail, accessPassword,
-      );
-      setLaunchModal({ url, projectName: p.name, type: 'paper' });
-    } catch (err: any) {
-      toast.error(t('فشل إنشاء رابط التقييم الورقي: ', 'Failed to create paper assessment link: ') + (err?.message || err));
+      toast.error(t('فشل إنشاء الرابط الموحد: ', 'Failed to create unified link: ') + (err?.message || err));
     } finally {
       setLaunching(null);
     }
@@ -322,19 +330,18 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                   </button>
                   <button
                     className={`${UI.btnSubtle} !px-3 !py-1.5 text-xs`}
-                    disabled={launching === `paper_${p.id}`}
-                    onClick={() => launchPaperAssessment(p)}
-                    title={t('إنشاء رابط تقييم ورقي مع PDF', 'Create paper assessment link with printable PDF')}
+                    disabled={launching === `unified_${p.id}`}
+                    onClick={() => launchUnifiedAssessment(p)}
+                    title={t('اختبار/تقييم موحد — رابط واحد لجميع الموظفين', 'Unified exam — one link for all employees')}
                   >
-                    {launching === `paper_${p.id}` ? '…' : `📄 ${t('تقييم ورقي', 'Paper Assessment')}`}
+                    {launching === `unified_${p.id}` ? '…' : `📋 ${t('اختبار موحّد', 'Unified Exam')}`}
                   </button>
                   <button
-                    className={`${UI.btnSubtle} !px-3 !py-1.5 text-xs`}
-                    disabled={launching === `online_${p.id}`}
-                    onClick={() => launchOnlineAssessment(p)}
-                    title={t('إنشاء رابط اختبار إلكتروني محمي', 'Create proctored online exam link')}
+                    className={`${UI.btnGhost} !px-3 !py-1.5 text-xs`}
+                    onClick={() => setResponseProjectId(responseProjectId === p.id ? null : p.id)}
+                    title={t('عرض ردود الموظفين على الاختبار الموحد', 'View employee responses')}
                   >
-                    {launching === `online_${p.id}` ? '…' : `🖥️ ${t('اختبار إلكتروني', 'Online Exam')}`}
+                    📊 {t('الردود', 'Responses')}
                   </button>
                   <button className="ms-auto text-xs text-rose-600 hover:text-rose-700 px-2 py-1.5"
                     onClick={() => deleteProject(p.id)}>
@@ -404,131 +411,230 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
         </div>
       )}
 
-      {/* Paper assessment config modal — email+password only; all question settings in the portal */}
-      {paperCfg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className={`${UI.card} rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl`}>
+      {/* Unified assessment 15-field config modal */}
+      {unifiedCfg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
+          <div className={`${UI.card} rounded-2xl p-6 max-w-lg w-full space-y-5 shadow-2xl my-4`}>
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-slate-800 dark:text-slate-100">
-                📄 {t('إنشاء رابط التقييم الورقي', 'Create Paper Assessment Link')}
+                📋 {t('إعداد الاختبار الموحد', 'Unified Assessment Setup')}
               </h4>
-              <button className="text-slate-400 hover:text-slate-700" onClick={() => setPaperCfg(null)}>✕</button>
+              <button className="text-slate-400 hover:text-slate-700" onClick={() => setUnifiedCfg(null)}>✕</button>
             </div>
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              {t(
-                `المشروع: "${paperCfg.project.name}". سيختار المدير الوظيفة والأسئلة بعد الدخول للرابط.`,
-                `Project: "${paperCfg.project.name}". The manager configures questions after opening the link.`,
-              )}
+              {t(`المشروع: "${unifiedCfg.project.name}". رابط واحد يُشارَك مع جميع الموظفين.`,
+                 `Project: "${unifiedCfg.project.name}". One link shared with all employees.`)}
             </p>
 
-            {/* Access credentials */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                {t('البريد الإلكتروني للمدير', 'Manager email')}
-              </label>
-              <input
-                className={UI.input} type="email" dir="ltr"
-                value={paperCfg.accessEmail}
-                onChange={e => setPaperCfg({ ...paperCfg, accessEmail: e.target.value })}
-                placeholder="manager@company.com"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                {t('كلمة المرور', 'Password')}
-              </label>
-              <input
-                className={UI.input} type="text" dir="ltr"
-                value={paperCfg.accessPassword}
-                onChange={e => setPaperCfg({ ...paperCfg, accessPassword: e.target.value })}
-                placeholder={t('كلمة مرور للمدير', 'Access password')}
-              />
+            {/* Row 1 — Questions */}
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                  {t('عدد الأسئلة', 'Questions')}
+                </label>
+                <div className="flex flex-wrap gap-1">
+                  {[10, 15, 20, 25, 30].map(n => (
+                    <button key={n}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition border ${
+                        unifiedCfg.questionCount === n
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
+                      onClick={() => setUnifiedCfg({ ...unifiedCfg, questionCount: n })}>{n}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                  {t('% السلوكي', 'Behavioral %')}
+                </label>
+                <div className="flex flex-wrap gap-1">
+                  {[20, 30, 40, 50, 60].map(n => (
+                    <button key={n}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition border ${
+                        unifiedCfg.behavioralPct === n
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
+                      onClick={() => setUnifiedCfg({ ...unifiedCfg, behavioralPct: n })}>{n}%</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                  {t('الصعوبة', 'Difficulty')}
+                </label>
+                <div className="flex gap-1">
+                  {(['easy', 'medium', 'hard'] as PaperDifficulty[]).map(d => (
+                    <button key={d}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition border ${
+                        unifiedCfg.difficulty === d
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
+                      onClick={() => setUnifiedCfg({ ...unifiedCfg, difficulty: d })}>
+                      {d === 'easy' ? t('سهل', 'Easy') : d === 'medium' ? t('متوسط', 'Med') : t('صعب', 'Hard')}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-1">
-              <button className={UI.btnGhost} onClick={() => setPaperCfg(null)}>{t('إلغاء', 'Cancel')}</button>
+            {/* Row 2 — Exam settings */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                  {t('ثواني/سؤال', 'Secs/question')}
+                </label>
+                <div className="flex gap-1">
+                  {[45, 60, 90, 120, 180].map(n => (
+                    <button key={n}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition border ${
+                        unifiedCfg.secondsPerQuestion === n
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-blue-400'}`}
+                      onClick={() => setUnifiedCfg({ ...unifiedCfg, secondsPerQuestion: n })}>{n}s</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                  {t('المحاولات القصوى', 'Max attempts')}
+                </label>
+                <div className="flex gap-1">
+                  {[1, 2, 3].map(n => (
+                    <button key={n}
+                      className={`flex-1 py-1.5 rounded-lg text-sm font-bold transition border ${
+                        unifiedCfg.maxAttempts === n
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-blue-400'}`}
+                      onClick={() => setUnifiedCfg({ ...unifiedCfg, maxAttempts: n })}>{n}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                  {t('درجة النجاح %', 'Passing score %')}
+                </label>
+                <div className="flex gap-1">
+                  {[50, 60, 70, 80].map(n => (
+                    <button key={n}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition border ${
+                        unifiedCfg.passingScore === n
+                          ? 'bg-amber-600 text-white border-amber-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-amber-400'}`}
+                      onClick={() => setUnifiedCfg({ ...unifiedCfg, passingScore: n })}>{n}%</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                  {t('أسئلة صوتية', 'Voice questions')}
+                </label>
+                <div className="flex gap-1">
+                  {[0, 1, 2, 3].map(n => (
+                    <button key={n}
+                      className={`flex-1 py-1.5 rounded-lg text-sm font-bold transition border ${
+                        unifiedCfg.voiceQuestionCount === n
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
+                      onClick={() => setUnifiedCfg({ ...unifiedCfg, voiceQuestionCount: n })}>{n}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Row 3 — Camera proctoring */}
+            <div className="flex items-center gap-3">
               <button
-                className={UI.btnPrimary}
-                disabled={!paperCfg.accessEmail.trim() || !paperCfg.accessPassword.trim()}
-                onClick={confirmPaperLaunch}
+                className={`relative w-11 h-6 rounded-full transition-colors ${unifiedCfg.cameraProctoring ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                onClick={() => setUnifiedCfg({ ...unifiedCfg, cameraProctoring: !unifiedCfg.cameraProctoring })}
+                role="switch" aria-checked={unifiedCfg.cameraProctoring}
               >
-                {t('إنشاء الرابط', 'Create link')}
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${unifiedCfg.cameraProctoring ? 'translate-x-5' : ''}`} />
               </button>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                📷 {t('مراقبة بالكاميرا', 'Camera proctoring')}
+              </span>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* Online exam config modal */}
-      {onlineCfg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className={`${UI.card} rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl`}>
-            <div className="flex items-center justify-between">
-              <h4 className="font-bold text-slate-800 dark:text-slate-100">
-                🖥️ {t('إنشاء رابط الاختبار الإلكتروني', 'Create Online Exam Link')}
-              </h4>
-              <button className="text-slate-400 hover:text-slate-700" onClick={() => setOnlineCfg(null)}>✕</button>
-            </div>
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              {t(`المشروع: "${onlineCfg.project.name}". اختبار محمي بكاميرا + مراقبة التبويبات + 3 محاولات.`,
-                 `Project: "${onlineCfg.project.name}". Proctored with camera + tab monitoring + 3 attempts.`)}
-            </p>
+            {/* Row 4 — Theories */}
             <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                {t('المسمى الوظيفي للمُختبَر', 'Job title for the candidate')}
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2">
+                {t('النظريات المعتمدة', 'Frameworks')}
               </label>
-              <input
-                className={UI.input} type="text" dir="rtl"
-                value={onlineCfg.jobTitle}
-                onChange={e => setOnlineCfg({ ...onlineCfg, jobTitle: e.target.value })}
-                placeholder={t('مثال: مدير مشاريع', 'e.g. Project Manager')}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                {t('البريد الإلكتروني للمُختبَر', 'Candidate email')}
-              </label>
-              <input
-                className={UI.input} type="email" dir="ltr"
-                value={onlineCfg.accessEmail}
-                onChange={e => setOnlineCfg({ ...onlineCfg, accessEmail: e.target.value })}
-                placeholder="candidate@company.com"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                {t('كلمة المرور', 'Password')}
-              </label>
-              <input
-                className={UI.input} type="text" dir="ltr"
-                value={onlineCfg.accessPassword}
-                onChange={e => setOnlineCfg({ ...onlineCfg, accessPassword: e.target.value })}
-                placeholder={t('كلمة مرور للمُختبَر', 'Access password')}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                {t('ثواني لكل سؤال', 'Seconds per question')}
-              </label>
-              <div className="flex gap-2">
-                {[60, 90, 120].map(n => (
-                  <button key={n}
-                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition border ${
-                      onlineCfg.secondsPerQuestion === n
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-blue-400'}`}
-                    onClick={() => setOnlineCfg({ ...onlineCfg, secondsPerQuestion: n })}>{n}s</button>
+              <div className="flex flex-wrap gap-2">
+                {([
+                  ['birkman', t('بيركمان', 'Birkman')],
+                  ['holland', t('هولاند', 'Holland')],
+                  ['psychTech', t('سيك-تك', 'PsychTech')],
+                  ['bloom', t('بلوم', "Bloom's")],
+                ] as [keyof PaperTheories, string][]).map(([key, label]) => (
+                  <button key={key}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition border ${
+                      unifiedCfg.theories[key]
+                        ? 'bg-purple-600 text-white border-purple-600'
+                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-purple-400'}`}
+                    onClick={() => setUnifiedCfg({ ...unifiedCfg, theories: { ...unifiedCfg.theories, [key]: !unifiedCfg.theories[key] } })}>
+                    {label}
+                  </button>
                 ))}
               </div>
             </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <button className={UI.btnGhost} onClick={() => setOnlineCfg(null)}>{t('إلغاء', 'Cancel')}</button>
+
+            {/* Row 5 — Job titles */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                {t('المسميات الوظيفية (سطر لكل مسمى)', 'Job titles (one per line)')}
+              </label>
+              <textarea
+                className={`${UI.input} text-sm font-mono min-h-[80px]`}
+                rows={4}
+                dir="rtl"
+                placeholder={t('مدير مشاريع\nمحاسب\nمهندس برمجيات', 'Project Manager\nAccountant\nSoftware Engineer')}
+                value={unifiedCfg.allowedJobTitles}
+                onChange={e => setUnifiedCfg({ ...unifiedCfg, allowedJobTitles: e.target.value })}
+              />
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+                {unifiedCfg.allowedJobTitles.split('\n').filter(s => s.trim()).length} {t('مسمى', 'titles')}
+              </p>
+            </div>
+
+            {/* Row 6-7 — Optional: access code + expiry */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                  {t('رمز وصول (اختياري)', 'Access code (optional)')}
+                </label>
+                <input
+                  className={`${UI.input} text-sm font-mono`}
+                  dir="ltr"
+                  placeholder="ABC123"
+                  value={unifiedCfg.accessCode}
+                  onChange={e => setUnifiedCfg({ ...unifiedCfg, accessCode: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                  {t('تاريخ انتهاء (اختياري)', 'Expiry date (optional)')}
+                </label>
+                <input
+                  className={`${UI.input} text-sm`}
+                  type="date"
+                  value={unifiedCfg.expiresAt}
+                  onChange={e => setUnifiedCfg({ ...unifiedCfg, expiresAt: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-700/60">
+              <button className={UI.btnGhost} onClick={() => setUnifiedCfg(null)}>{t('إلغاء', 'Cancel')}</button>
               <button
                 className={UI.btnPrimary}
-                disabled={!onlineCfg.accessEmail.trim() || !onlineCfg.accessPassword.trim() || !onlineCfg.jobTitle.trim()}
-                onClick={confirmOnlineLaunch}
+                disabled={!unifiedCfg.allowedJobTitles.trim()}
+                onClick={confirmUnifiedLaunch}
               >
-                {t('إنشاء الرابط', 'Create link')}
+                {t('إنشاء الرابط الموحد', 'Create unified link')}
               </button>
             </div>
           </div>
@@ -541,13 +647,11 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
           <div className={`${UI.card} rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl`}>
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-slate-800 dark:text-slate-100">
-                {launchModal.type === 'employee' ? '🎯' : launchModal.type === 'paper' ? '📄' : launchModal.type === 'online' ? '🖥️' : '🔗'}{' '}
+                {launchModal.type === 'employee' ? '🎯' : launchModal.type === 'unified' ? '📋' : '🔗'}{' '}
                 {launchModal.type === 'employee'
                   ? t('رابط بوابة تقييم الموظفين', 'Employee Assessment Portal Link')
-                  : launchModal.type === 'paper'
-                  ? t('رابط التقييم الورقي', 'Paper Assessment Link')
-                  : launchModal.type === 'online'
-                  ? t('رابط الاختبار الإلكتروني المحمي', 'Proctored Online Exam Link')
+                  : launchModal.type === 'unified'
+                  ? t('رابط الاختبار الموحد', 'Unified Assessment Link')
                   : t('رابط استبيان البيئة', 'Environment Survey Link')}
               </h4>
               <button className="text-slate-400 hover:text-slate-700" onClick={() => setLaunchModal(null)}>✕</button>
@@ -558,15 +662,10 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                     `شارك هذا الرابط مع موظفي "${launchModal.projectName}". سيمرّون بتقييم الجدارات + استبيان بيئة العمل.`,
                     `Share with "${launchModal.projectName}" employees for full assessment (competency + work environment).`,
                   )
-                : launchModal.type === 'paper'
+                : launchModal.type === 'unified'
                 ? t(
-                    `شارك هذا الرابط مع المدير المعيّن. سيتمكن من توليد عدد غير محدود من اختبارات PDF.`,
-                    `Share this link with the designated manager. They can generate unlimited PDF exams.`,
-                  )
-                : launchModal.type === 'online'
-                ? t(
-                    `شارك هذا الرابط مع المُختبَر. الاختبار محمي بكاميرا + مراقبة التبويبات + 3 محاولات.`,
-                    `Share this link with the candidate. Exam is proctored with camera + tab monitoring + 3 attempts.`,
+                    `شارك هذا الرابط مع جميع موظفي "${launchModal.projectName}". كل موظف يدخل اسمه ومسماه ويبدأ الاختبار مباشرةً.`,
+                    `Share this link with all "${launchModal.projectName}" employees. Each enters their name and job title, then starts the exam.`,
                   )
                 : t(
                     `شارك هذا الرابط مع موظفي "${launchModal.projectName}" لاستبيان بيئة العمل فقط.`,
@@ -595,6 +694,15 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
             </p>
           </div>
         </div>
+      )}
+
+      {/* Responses panel — unified assessment results for a project */}
+      {responseProjectId && (
+        <ResponsesPanel
+          tenantId={responseProjectId}
+          language={language}
+          onClose={() => setResponseProjectId(null)}
+        />
       )}
 
       {/* Create / review form */}
