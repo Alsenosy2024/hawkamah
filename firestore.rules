@@ -153,8 +153,23 @@ service cloud.firestore {
 
     // ---- Online proctored exam results ----
     // Candidate creates/updates their own result doc. Admin reads all results.
+    // Size-capped to limit anonymous-write storage abuse (DoS).
     match /exam_results/{resultId} {
-      allow create, update: if true;
+      allow create, update: if sizeOk();
+      allow read, delete: if isAdmin();
+    }
+
+    // ---- Unified assessment tokens (one-link, self-identify) ----
+    // Candidate reads the token to load exam config. Only an admin creates/revokes.
+    match /unified_tokens/{tokenId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---- Unified assessment results ----
+    // Candidate creates/updates their own result doc (size-capped). Admin reads all.
+    match /unified_results/{resultId} {
+      allow create, update: if sizeOk();
       allow read, delete: if isAdmin();
     }
 
