@@ -66,8 +66,8 @@ describe('parseSpokenVerdict / spoken-format parseProctorMessage', () => {
 
   it('ai_tool_visible defaults to critical severity via eventAlert', () => {
     expect(DEFAULT_SEVERITY.ai_tool_visible).toBe('critical');
-    expect(eventAlert('ai_tool_visible').severity).toBe('critical');
-    expect(eventAlert('screen_other_content').severity).toBe('high');
+    expect(eventAlert('ai_tool_visible', 'ChatGPT on screen').severity).toBe('critical');
+    expect(eventAlert('screen_other_content', 'other app').severity).toBe('high');
   });
 });
 
