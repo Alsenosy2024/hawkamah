@@ -19,7 +19,7 @@ import io
 import json
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -49,6 +49,17 @@ api.add_middleware(
     allow_headers=["*"],
 )
 
+# The service is publicly invokable (Firebase Hosting → Cloud Run requires
+# allUsers), and it's backed by a paid Gemini key, so the expensive/mutating
+# endpoints are gated by an Origin/Referer allowlist — the same defense the
+# project's Cloud Functions use. It stops casual/non-browser abuse; pair with
+# Firebase App Check for stronger guarantees.
+def require_allowed_origin(request: Request) -> None:
+    o = (request.headers.get("origin") or request.headers.get("referer") or "").rstrip("/")
+    if not any(o == a or o.startswith(a + "/") for a in ALLOWED_ORIGINS):
+        raise HTTPException(status_code=403, detail="origin not allowed")
+
+
 # Cheap agent cache keyed by corpus so we don't reload vectors every request.
 _agents: dict[str, HawkamaAgent] = {}
 
@@ -72,7 +83,7 @@ def health() -> dict[str, Any]:
     }
 
 
-@api.post("/ingest")
+@api.post("/ingest", dependencies=[Depends(require_allowed_origin)])
 async def ingest(corpus: str = Form("default"), files: list[UploadFile] = File(...)) -> dict[str, Any]:
     agent = get_agent(corpus)
     payload = [(f.filename or "file", await f.read()) for f in files]
@@ -89,7 +100,7 @@ def stats(corpus: str = "default") -> dict[str, Any]:
     return get_agent(corpus).stats()
 
 
-@api.post("/ask")
+@api.post("/ask", dependencies=[Depends(require_allowed_origin)])
 async def ask(body: dict[str, Any]) -> StreamingResponse:
     corpus = body.get("corpus", "default")
     question = (body.get("message") or body.get("question") or "").strip()
@@ -105,7 +116,7 @@ async def ask(body: dict[str, Any]) -> StreamingResponse:
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@api.post("/draft")
+@api.post("/draft", dependencies=[Depends(require_allowed_origin)])
 def draft(body: dict[str, Any]) -> dict[str, Any]:
     corpus = body.get("corpus", "default")
     request = (body.get("request") or body.get("message") or "").strip()
@@ -120,7 +131,7 @@ def draft(body: dict[str, Any]) -> dict[str, Any]:
     return _doc_payload(doc)
 
 
-@api.post("/build_full")
+@api.post("/build_full", dependencies=[Depends(require_allowed_origin)])
 def build_full(body: dict[str, Any]) -> dict[str, Any]:
     corpus = body.get("corpus", "default")
     agent = get_agent(corpus)
@@ -136,7 +147,7 @@ def build_full(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@api.post("/export")
+@api.post("/export", dependencies=[Depends(require_allowed_origin)])
 def export_endpoint(body: dict[str, Any]) -> StreamingResponse:
     markdown = body.get("markdown") or ""
     title = body.get("title") or "document"
