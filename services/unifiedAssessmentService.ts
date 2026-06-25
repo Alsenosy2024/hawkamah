@@ -15,6 +15,13 @@ function genId(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 }
 
+// Firestore rejects `undefined` field values; strip them (and deep-clone) before
+// every write — the project-wide convention (see governanceService `clean`).
+// Optional fields that happen to be undefined — e.g. companyLogoUrl on a project
+// created via file extraction (no logo), or analysis before it's generated — are
+// simply omitted instead of crashing the write.
+const clean = <T extends object>(o: T): T => JSON.parse(JSON.stringify(o));
+
 export async function createUnifiedToken(tok: Omit<UnifiedAssessmentToken, 'id' | 'createdAt' | 'active'>): Promise<{ token: string; url: string }> {
   const id = genId();
   const full: UnifiedAssessmentToken = {
@@ -23,7 +30,7 @@ export async function createUnifiedToken(tok: Omit<UnifiedAssessmentToken, 'id' 
     createdAt: new Date().toISOString(),
     active: true,
   };
-  await setDoc(doc(db, C_TOKEN, id), full);
+  await setDoc(doc(db, C_TOKEN, id), clean(full));
   const url = `${window.location.origin}/?assess=${id}`;
   return { token: id, url };
 }
@@ -48,10 +55,10 @@ export async function getTokenResults(tokenId: string): Promise<UnifiedAssessmen
 export async function saveUnifiedResult(result: UnifiedAssessmentResult): Promise<string> {
   if (result.id) {
     const { id, ...data } = result;
-    await updateDoc(doc(db, C_RESULT, id), data as Record<string, unknown>);
+    await updateDoc(doc(db, C_RESULT, id), clean(data) as Record<string, unknown>);
     return id;
   }
-  const ref = await addDoc(collection(db, C_RESULT), result);
+  const ref = await addDoc(collection(db, C_RESULT), clean(result));
   return ref.id;
 }
 
