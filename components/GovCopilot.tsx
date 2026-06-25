@@ -5,7 +5,7 @@ import type { ChatTurn } from '../services/agentOrchestrator';
 import { loadChunks, retrieve } from '../services/governanceService';
 import { exportMessageDocx, exportMessageXlsx, exportMessagePdfDirect, exportMessageHtml } from '../services/exportService';
 import { exportMessagePptx } from '../services/pptxExport';
-import { copilotEnabled, askStream as copilotAsk, draft as copilotDraft, exportDoc as copilotExport, stats as copilotStats, ingestFiles as copilotIngest } from '../services/copilotClient';
+import { copilotEnabled, askStream as copilotAsk, draft as copilotDraft, exportDoc as copilotExport, stats as copilotStats, ingestFiles as copilotIngest, listConversations, getConversation, saveConversation, deleteConversation, type CopilotConvSummary } from '../services/copilotClient';
 import { generateGroundedDocument } from '../services/geminiService';
 import ThinkingTrace from './ThinkingTrace';
 import Markdown, { type CiteRef } from './Markdown';
@@ -136,6 +136,27 @@ const IconDownload: React.FC = () => (
 const IconAttach: React.FC = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
 );
+const IconHistory: React.FC = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l4 2" /></svg>
+);
+const IconNewChat: React.FC = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+);
+const IconTrash: React.FC = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>
+);
+
+// Compact relative-time label (Arabic/English) for the history list.
+const relTime = (sec: number, ar: boolean): string => {
+  if (!sec) return '';
+  const d = Math.max(0, Date.now() / 1000 - sec);
+  const m = Math.floor(d / 60), h = Math.floor(d / 3600), dd = Math.floor(d / 86400);
+  if (d < 60) return ar ? 'الآن' : 'now';
+  if (m < 60) return ar ? `قبل ${m} د` : `${m}m`;
+  if (h < 24) return ar ? `قبل ${h} س` : `${h}h`;
+  if (dd < 30) return ar ? `قبل ${dd} ي` : `${dd}d`;
+  return new Date(sec * 1000).toLocaleDateString(ar ? 'ar' : 'en');
+};
 
 // Gemini "thinking" placeholder — breathing spark + shimmering skeleton bars.
 const GcThinking: React.FC<{ label: string }> = ({ label }) => (
@@ -199,7 +220,7 @@ const detectExportIntent = (text: string): { kind: 'pdf' | 'docx' | 'xlsx' | 'pp
 };
 
 const FORMAT_HINT =
-  '\n\n[تعليمات التنسيق — لا تذكرها في الرد: إذا تطلّب الجواب رسمًا بيانيًا أو هيكلاً تنظيميًا أو مخطط تدفّق أو علاقات، فأخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (graph TD / flowchart). لا ترسم المخططات بالحروف أو ASCII أبداً. قدّم البيانات الجدولية كجداول Markdown.]';
+  '\n\n[تعليمات التنسيق — لا تذكرها في الرد: إذا تطلّب الجواب رسمًا بيانيًا أو هيكلاً تنظيميًا أو مخطط تدفّق أو علاقات، فأخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (graph TD / flowchart). لا ترسم المخططات بالحروف أو ASCII أبداً. لا تضع وسوم [مصدر N] أو أقواس مربّعة داخل تسميات عُقد mermaid (تُفسد الرسم)؛ ضع الاستشهادات في النص خارج المخطط فقط. قدّم البيانات الجدولية كجداول Markdown.]';
 
 const GovCopilot: React.FC<Props> = (props) => {
   const { stageKey, stageLabel, model, language, extraContext, logoUrl, tenantId, seedChunks, stateSnapshot, onOpenSource } = props;
@@ -225,8 +246,117 @@ const GovCopilot: React.FC<Props> = (props) => {
   // corpus (see ensureCorpus). Reset when the tenant changes.
   const corpusReadyRef = useRef<Promise<void> | null>(null);
 
-  // Invalidate cached chunks when tenant changes (BUG-15 fix).
-  useEffect(() => { chunksRef.current = null; corpusReadyRef.current = null; }, [tenantId]);
+  // ── Durable chat history (backend-backed conversation threads) ──
+  const [convs, setConvs] = useState<CopilotConvSummary[]>([]);   // history list, newest first
+  const [convId, setConvId] = useState<string>('');               // active thread id ('' = fresh)
+  const [histOpen, setHistOpen] = useState(false);                // history drawer toggle
+  const convIdRef = useRef<string>('');                           // stable read in async/effects
+  const convCreatedRef = useRef<number | undefined>(undefined);   // preserve created_at across saves
+  const suppressSaveRef = useRef(false);                          // skip autosave right after hydration
+  const historyOn = copilotEnabled() && !!tenantId;              // history needs the Python backend
+
+  // Invalidate cached chunks AND reset the chat when the tenant changes.
+  useEffect(() => {
+    chunksRef.current = null; corpusReadyRef.current = null;
+    convIdRef.current = ''; convCreatedRef.current = undefined;
+    setConvId(''); setConvs([]); setMsgs([]); setHistOpen(false);
+  }, [tenantId]);
+
+  const lsKey = (tid: string) => `gc_conv:${tid}`;
+
+  // Serialize the live messages to the durable shape (drop transient fields).
+  const serializeMsgs = (ms: Msg[]) => ms
+    .filter(m => !(m.sender === 'agent' && !m.text.trim()))   // skip empty streaming placeholder
+    .map(m => ({
+      id: m.id, sender: m.sender, text: m.text,
+      sources: m.sources, srcRefs: m.srcRefs, webSources: m.webSources, searchHtml: m.searchHtml,
+    }));
+
+  // Mint a thread id on first turn of a fresh conversation (idempotent).
+  const ensureConvId = (): string => {
+    if (convIdRef.current) return convIdRef.current;
+    const id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+      ? crypto.randomUUID()
+      : `c_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e9).toString(36)}`;
+    convIdRef.current = id; setConvId(id);
+    convCreatedRef.current = Date.now() / 1000;
+    try { if (tenantId) localStorage.setItem(lsKey(tenantId), id); } catch { /* ignore */ }
+    return id;
+  };
+
+  const refreshConvs = async () => {
+    if (!historyOn) return;
+    try { setConvs(await listConversations(tenantId!)); } catch { /* offline → keep current */ }
+  };
+
+  // Persist the current thread (debounced via the autosave effect). Captures every
+  // turn type uniformly — grounded Q&A, full drafts, web-researched docs, exports.
+  const persistConversation = async (ms: Msg[]) => {
+    if (!historyOn) return;
+    const messages = serializeMsgs(ms);
+    if (!messages.length) return;
+    const id = ensureConvId();
+    try {
+      const summary = await saveConversation(tenantId!, { id, messages, created_at: convCreatedRef.current });
+      setConvs(cs => [summary, ...cs.filter(c => c.id !== summary.id)]);
+    } catch { /* offline → will retry on the next turn */ }
+  };
+
+  // Load a saved thread into the chat (hydrate, without re-saving it).
+  const loadConversation = async (id: string) => {
+    if (!historyOn || !id) return;
+    try {
+      const conv = await getConversation(tenantId!, id);
+      if (!conv) { setConvs(cs => cs.filter(c => c.id !== id)); return; }
+      suppressSaveRef.current = true;
+      setMsgs((conv.messages || []).map((m: any): Msg => ({
+        id: m.id || nid(),
+        sender: m.sender === 'user' ? 'user' : 'agent',
+        text: m.text || '',
+        thoughts: [], thinking: false, streaming: false,
+        sources: m.sources, srcRefs: m.srcRefs, webSources: m.webSources, searchHtml: m.searchHtml,
+      })));
+      convIdRef.current = conv.id; setConvId(conv.id);
+      convCreatedRef.current = conv.created_at;
+      try { localStorage.setItem(lsKey(tenantId!), conv.id); } catch { /* ignore */ }
+      setHistOpen(false);
+      scrollDown();
+    } catch { /* keep current view */ }
+  };
+
+  const newChat = () => {
+    setMsgs([]); convIdRef.current = ''; setConvId(''); convCreatedRef.current = undefined;
+    try { if (tenantId) localStorage.removeItem(lsKey(tenantId)); } catch { /* ignore */ }
+    setHistOpen(false); setInput('');
+    setAttachments(a => { a.forEach(x => URL.revokeObjectURL(x.url)); return []; });
+  };
+
+  const removeConv = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConvs(cs => cs.filter(c => c.id !== id));
+    try { await deleteConversation(tenantId!, id); } catch { /* best effort */ }
+    if (convIdRef.current === id) newChat();
+  };
+
+  // On open: load the history list and resume the last thread (if any).
+  useEffect(() => {
+    if (!open || !historyOn) return;
+    refreshConvs();
+    if (!convIdRef.current && !msgs.length) {
+      let saved = ''; try { saved = localStorage.getItem(lsKey(tenantId!)) || ''; } catch { /* ignore */ }
+      if (saved) loadConversation(saved);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, tenantId]);
+
+  // Autosave the thread once a turn settles (not mid-stream). Debounced.
+  useEffect(() => {
+    if (!historyOn || busy || !msgs.length) return;
+    if (suppressSaveRef.current) { suppressSaveRef.current = false; return; }  // skip the hydration echo
+    const h = window.setTimeout(() => { persistConversation(msgs); }, 700);
+    return () => window.clearTimeout(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [msgs, busy]);
 
   // Lazily load the tenant's chunks once the panel opens (RAG corpus).
   useEffect(() => {
@@ -378,6 +508,7 @@ const GovCopilot: React.FC<Props> = (props) => {
     const agentId = nid();
     const agentMsg: Msg = { id: agentId, sender: 'agent', text: '', thoughts: [], thinking: true, streaming: true };
     const history: ChatTurn[] = msgs.map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text }] }));
+    ensureConvId();   // stable thread id for this turn (and durable autosave)
     setMsgs(m => [...m, userMsg, agentMsg]);
     setBusy(true);
     scrollDown();
@@ -427,7 +558,7 @@ const GovCopilot: React.FC<Props> = (props) => {
           patch(m => ({ ...m, thinking: false, streaming: false, text: doc.markdown, sources: docs, srcRefs: toCiteRefs(doc.sources) }));
         } else {
           await copilotAsk(
-            { corpus, message: q + FORMAT_HINT, history: history.map(h => ({ role: h.role, content: h.parts?.[0]?.text || '' })) },
+            { corpus, message: q + FORMAT_HINT, history: history.map(h => ({ role: h.role, content: h.parts?.[0]?.text || '' })), conversation_id: convIdRef.current },
             {
               onSources: ss => { const d = [...new Set(ss.map(s => s.doc).filter(Boolean))]; const refs = toCiteRefs(ss); patch(m => ({ ...m, sources: d.length ? d : m.sources, srcRefs: refs.length ? refs : m.srcRefs })); },
               onAnswer: chunk => { patch(m => ({ ...m, thinking: false, text: m.text + chunk })); scrollDown(); },
@@ -496,21 +627,23 @@ const GovCopilot: React.FC<Props> = (props) => {
   const exportAs = async (kind: 'docx' | 'xlsx' | 'pdf' | 'pptx' | 'html', md: string) => {
     const title = (md.match(/^#+\s*(.+)$/m)?.[1] || stageLabel || 'governance').slice(0, 60).trim();
     setExporting(kind + md.slice(0, 8));
+    const o = {
+      language: (language || 'ar') as Language,
+      fontFamily: 'Tajawal',
+      companyName: model?.companyName || undefined,
+      logoUrl: logoUrl || undefined,
+    };
     try {
-      // Server-side rendering via the Python agent when enabled (Arabic RTL
-      // DOCX/PDF/XLSX/PPTX/HTML), else the in-app exporters.
+      // PDF always renders in-app (brand-styled: teal + Thmanyah via html2canvas),
+      // even when the Python backend is enabled — it's the brand document surface.
+      if (kind === 'pdf') { await exportMessagePdfDirect(md, title, o); return; }
+      // Other formats: server-side rendering via the Python agent when enabled
+      // (Arabic RTL DOCX/XLSX/PPTX/HTML), else the in-app exporters.
       if (copilotEnabled()) {
         await copilotExport(md, title, kind, { company: model?.companyName || undefined });
         return;
       }
-      const o = {
-        language: (language || 'ar') as Language,
-        fontFamily: 'Tajawal',
-        companyName: model?.companyName || undefined,
-        logoUrl: logoUrl || undefined,
-      };
       if (kind === 'docx') await exportMessageDocx(md, title, o);
-      else if (kind === 'pdf') await exportMessagePdfDirect(md, title, o);
       else if (kind === 'html') await exportMessageHtml(md, title, o);
       else if (kind === 'xlsx') exportMessageXlsx(md, title);
       else await exportMessagePptx(md, title, { companyName: model?.companyName || undefined, logoUrl: logoUrl || undefined });
@@ -591,6 +724,18 @@ const GovCopilot: React.FC<Props> = (props) => {
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0 ms-2">
+          {historyOn && (
+            <>
+              <button onClick={newChat} title={t('محادثة جديدة', 'New chat')} aria-label={t('محادثة جديدة', 'New chat')} className="gc-icon-btn">
+                <IconNewChat />
+              </button>
+              <button onClick={() => { setHistOpen(o => !o); if (!histOpen) refreshConvs(); }}
+                title={t('السجل', 'History')} aria-label={t('السجل', 'History')}
+                className={`gc-icon-btn ${histOpen ? 'text-[color:var(--hw-accent,#11a8bc)]' : ''}`}>
+                <IconHistory />
+              </button>
+            </>
+          )}
           <button onClick={() => setFull(f => !f)} title={full ? t('تصغير', 'Restore') : t('ملء الشاشة', 'Full screen')} className="gc-icon-btn">
             {full ? <IconRestore /> : <IconExpand />}
           </button>
@@ -599,6 +744,44 @@ const GovCopilot: React.FC<Props> = (props) => {
           </button>
         </div>
       </div>
+
+      {/* history drawer — saved conversation threads (durable, backend-backed) */}
+      {historyOn && histOpen && (
+        <div className="absolute inset-0 z-30 flex flex-col bg-white dark:bg-slate-900 gc-panel-in" dir={ar ? 'rtl' : 'ltr'}>
+          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--hw-border)] shrink-0">
+            <span className="text-[14px] font-bold text-slate-900 dark:text-slate-100">{t('سجل المحادثات', 'Chat history')}</span>
+            <div className="flex items-center gap-1.5">
+              <button onClick={newChat} className="hw-btn hw-btn-subtle hw-btn-xs !rounded-full"><IconNewChat />{t('جديدة', 'New')}</button>
+              <button onClick={() => setHistOpen(false)} title={t('إغلاق', 'Close')} className="gc-icon-btn"><IconClose /></button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+            {convs.length === 0 ? (
+              <div className="flex flex-col items-center text-center gap-2 py-14 px-6">
+                <IconHistory />
+                <p className="text-[12.5px] text-slate-400">{t('لا توجد محادثات محفوظة بعد', 'No saved conversations yet')}</p>
+              </div>
+            ) : convs.map(c => (
+              <div key={c.id} role="button" tabIndex={0}
+                onClick={() => loadConversation(c.id)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadConversation(c.id); } }}
+                className={`group w-full text-start rounded-xl px-3 py-2.5 cursor-pointer flex items-start gap-2 transition ${c.id === convId ? 'bg-[var(--hw-accent-soft,rgba(17,168,188,0.12))] ring-1 ring-[var(--hw-accent,#11a8bc)]/30' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">{c.title || t('محادثة', 'Conversation')}</span>
+                    <span className="ms-auto text-[10px] text-slate-400 shrink-0">{relTime(c.updated_at, ar)}</span>
+                  </div>
+                  {c.preview && <div className="text-[11.5px] text-slate-500 dark:text-slate-400 truncate mt-0.5">{c.preview}</div>}
+                </div>
+                <button onClick={e => removeConv(c.id, e)} title={t('حذف', 'Delete')} aria-label={t('حذف', 'Delete')}
+                  className="gc-icon-btn shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 text-slate-400 hover:text-rose-500">
+                  <IconTrash />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* mode tabs */}
       <div className="flex items-center gap-1.5 px-4 py-2 border-b border-[var(--hw-border)] shrink-0">

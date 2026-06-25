@@ -9,8 +9,10 @@ client / credentials are unavailable (e.g. local dev without ADC), so nothing
 here can break ingestion.
 
 Layout in the bucket:
-    corpora/<corpus_id>.json          # the persisted vector store
-    originals/<corpus_id>/<filename>  # original uploaded bytes
+    corpora/<corpus_id>.json               # the persisted vector store
+    originals/<corpus_id>/<filename>       # original uploaded bytes
+    conversations/<corpus_id>/<id>.json    # one chat thread (history)
+    conversations/<corpus_id>/_index.json  # thread summaries for fast listing
 """
 
 from __future__ import annotations
@@ -97,3 +99,54 @@ def get_original(corpus_id: str, name: str) -> bytes | None:
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Generic blob I/O (used by the conversation store for chat history)           #
+# --------------------------------------------------------------------------- #
+def put_blob(path: str, data: bytes, content_type: str = "application/json") -> bool:
+    b = _bucket()
+    if b is None:
+        return False
+    try:
+        b.blob(path).upload_from_string(data, content_type=content_type)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def get_blob(path: str) -> bytes | None:
+    b = _bucket()
+    if b is None:
+        return None
+    try:
+        blob = b.blob(path)
+        if blob.exists():
+            return blob.download_as_bytes()
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def delete_blob(path: str) -> bool:
+    b = _bucket()
+    if b is None:
+        return False
+    try:
+        blob = b.blob(path)
+        if blob.exists():
+            blob.delete()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def list_blob_names(prefix: str) -> list[str]:
+    """Return blob names (full paths) under a prefix; [] when GCS is disabled."""
+    b = _bucket()
+    if b is None:
+        return []
+    try:
+        return [bl.name for bl in b.list_blobs(prefix=prefix)]
+    except Exception:  # noqa: BLE001
+        return []

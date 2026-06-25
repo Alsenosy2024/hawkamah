@@ -43,10 +43,30 @@ export interface CopilotDoc {
 
 export type CopilotFormat = 'md' | 'txt' | 'html' | 'docx' | 'pdf' | 'xlsx' | 'pptx' | 'json';
 
+// Durable chat history — a saved conversation thread and its lightweight summary
+// (the shape the history sidebar lists). Messages are stored verbatim, so we keep
+// the type loose (the front-end's own Msg shape minus transient fields).
+export interface CopilotConvSummary {
+  id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  message_count: number;
+  preview: string;
+}
+export interface CopilotConversation {
+  id: string;
+  corpus?: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  messages: any[];
+}
+
 /** Stream a grounded answer from the Python agent (SSE). Maps server events to
  *  the same callback shape GovCopilot already uses for stageChat. */
 export async function askStream(
-  params: { corpus: string; message: string; history?: { role: string; content: string }[] },
+  params: { corpus: string; message: string; history?: { role: string; content: string }[]; conversation_id?: string },
   cb: AskCallbacks,
   signal?: AbortSignal,
 ): Promise<string> {
@@ -171,4 +191,48 @@ export async function health(): Promise<any> {
   const res = await fetch(`${BASE}/health`);
   if (!res.ok) throw new Error(`copilot /health failed: ${res.status}`);
   return res.json();
+}
+
+// --------------------------------------------------------------------------- //
+// Chat history (durable conversation threads)                                 //
+// --------------------------------------------------------------------------- //
+/** List saved chat threads for a tenant, newest first. */
+export async function listConversations(corpus: string): Promise<CopilotConvSummary[]> {
+  const res = await fetch(`${BASE}/conversations?corpus=${encodeURIComponent(corpus)}`);
+  if (!res.ok) throw new Error(`copilot /conversations failed: ${res.status}`);
+  const data = await res.json();
+  return (data?.conversations || []) as CopilotConvSummary[];
+}
+
+/** Load one full chat thread (its messages). Returns null if it no longer exists. */
+export async function getConversation(corpus: string, id: string): Promise<CopilotConversation | null> {
+  const res = await fetch(`${BASE}/conversation?corpus=${encodeURIComponent(corpus)}&id=${encodeURIComponent(id)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`copilot /conversation failed: ${res.status}`);
+  return res.json();
+}
+
+/** Upsert a chat thread (durable). Returns the refreshed summary. */
+export async function saveConversation(
+  corpus: string,
+  conversation: { id: string; title?: string; messages: any[]; created_at?: number },
+): Promise<CopilotConvSummary> {
+  const res = await fetch(`${BASE}/conversations/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ corpus, conversation }),
+  });
+  if (!res.ok) throw new Error(`copilot /conversations/save failed: ${res.status}`);
+  const data = await res.json();
+  return data?.summary as CopilotConvSummary;
+}
+
+/** Delete a chat thread. */
+export async function deleteConversation(corpus: string, id: string): Promise<void> {
+  const res = await fetch(`${BASE}/conversations/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ corpus, id }),
+  });
+  if (!res.ok) throw new Error(`copilot /conversations/delete failed: ${res.status}`);
 }

@@ -71,37 +71,79 @@ class HawkamaAgent:
     # ------------------------------------------------------------------ ask
     def ask(self, question: str, history: list[dict] | None = None) -> AskResult:
         evidence = self.rag.retrieve(question)
-        prompt = self._ask_prompt(question, evidence, history)
-        answer = genai_client.generate(prompt, system=system_prompt(), temperature=0.3)
+        contents = self._build_contents(question, evidence, history)
+        answer = genai_client.generate(contents, system=system_prompt(), temperature=0.3)
         return AskResult(answer=answer, sources=evidence)
 
     def ask_stream(self, question: str, history: list[dict] | None = None) -> Iterator[dict]:
         """Yield {'type': 'sources'|'delta'|'done', ...} events for SSE."""
         evidence = self.rag.retrieve(question)
         yield {"type": "sources", "sources": [self._ev_dict(e) for e in evidence]}
-        prompt = self._ask_prompt(question, evidence, history)
+        contents = self._build_contents(question, evidence, history)
         full = []
-        for piece in genai_client.generate_stream(prompt, system=system_prompt(), temperature=0.3):
+        for piece in genai_client.generate_stream(contents, system=system_prompt(), temperature=0.3):
             full.append(piece)
             yield {"type": "delta", "text": piece}
         yield {"type": "done", "text": "".join(full)}
 
-    def _ask_prompt(self, question: str, evidence: list[Evidence], history: list[dict] | None) -> str:
+    def _build_contents(self, question: str, evidence: list[Evidence], history: list[dict] | None) -> list[types.Content]:
+        """Prior turns as TYPED multi-turn Content + a final user turn carrying the
+        instructions, question and freshly-retrieved evidence.
+
+        Feeding genuine Content objects (not a flattened "user: …\\nassistant: …"
+        transcript collapsed into one prompt) is what gives the model real
+        multi-turn memory of its own earlier answers. Evidence is re-retrieved every
+        turn and placed in the LAST user turn so it never lands "lost in the middle".
+        We build the contents list ourselves and stream via generate_content_stream
+        rather than the SDK Chat object, sidestepping its streaming-history bug."""
+        contents = [
+            types.Content(role=role, parts=[types.Part.from_text(text=text)])
+            for role, text in self._history_window(history)
+        ]
+        contents.append(
+            types.Content(role="user", parts=[types.Part.from_text(text=self._ask_prompt(question, evidence))])
+        )
+        return contents
+
+    def _ask_prompt(self, question: str, evidence: list[Evidence]) -> str:
         ev_block = self.rag.format_evidence(evidence)
-        hist = ""
-        if history:
-            hist = "\n".join(
-                f"{'المستخدم' if h.get('role') == 'user' else 'المساعد'}: {h.get('content','')}"
-                for h in history[-6:]
-            )
-            hist = f"== سياق المحادثة ==\n{hist}\n\n"
         return (
-            f"{hist}"
             f"السؤال: {question}\n\n"
             "أجب بدقة واستنادًا إلى الأدلة أدناه فقط فيما يخص وقائع المنظمة، مع الاستشهاد "
-            "بـ [مصدر N]. إن لم تكفِ الأدلة فاذكر ذلك واقترح ما يلزم من ملفات.\n\n"
+            "بـ [مصدر N]. إن لم تكفِ الأدلة فاذكر ذلك واقترح ما يلزم من ملفات. استعن بسياق "
+            "المحادثة السابق لفهم الإحالات (مثل «وسّع ذلك» أو «والإدارة الأخرى؟») دون تكراره.\n\n"
             f"== الأدلة ==\n{ev_block or 'لا توجد ملفات مفهرسة بعد.'}"
         )
+
+    @staticmethod
+    def _history_window(history: list[dict] | None) -> list[tuple[str, str]]:
+        """Char-budgeted recent-turn window → [(role, text)].
+
+        Roles are normalized to the SDK's only accepted values, 'user' / 'model'
+        (never 'agent'/'assistant', which raise ValueError when wrapped in Content).
+        Walks newest→oldest, drops empty turns, truncates any single oversized turn
+        (e.g. a pasted full draft), then restores chronological order."""
+        if not history:
+            return []
+        per_msg = SETTINGS.history_per_msg_chars
+        budget = SETTINGS.history_max_chars
+        considered = history[-SETTINGS.history_max_messages:]
+        out: list[tuple[str, str]] = []
+        used = 0
+        for h in reversed(considered):
+            text = (h.get("content") or h.get("text") or "").strip()
+            if not text:
+                continue
+            if len(text) > per_msg:
+                text = text[:per_msg].rstrip() + " …"
+            raw_role = h.get("role") or h.get("sender")
+            role = "user" if raw_role == "user" else "model"
+            if used + len(text) > budget:
+                break
+            out.append((role, text))
+            used += len(text)
+        out.reverse()
+        return out
 
     # ---------------------------------------------------------------- draft
     def detect_deliverable(self, request: str) -> str | None:

@@ -106,6 +106,16 @@ class Settings:
     rerank_heading_weight: float = 0.08
     retrieve_rel_cutoff: float = 0.45  # keep cands >= cutoff * best score
 
+    # --- Chat history --------------------------------------------------------
+    # Multi-turn memory window fed back into each grounded answer. gemini-3.5-flash
+    # has a 1M-token context, so a recent-turn sliding window is plenty — we cap by
+    # message count AND total chars (and truncate any single very long turn, e.g. a
+    # pasted draft) so history never crowds out the retrieved evidence. RAG evidence
+    # is re-retrieved fresh every turn rather than carried in history.
+    history_max_messages: int = int(_get("HAWKAMA_HISTORY_MAX_MESSAGES", "20"))
+    history_max_chars: int = int(_get("HAWKAMA_HISTORY_MAX_CHARS", "8000"))
+    history_per_msg_chars: int = int(_get("HAWKAMA_HISTORY_PER_MSG_CHARS", "2000"))
+
     # --- Generation ----------------------------------------------------------
     # Gemini flash/pro cap output at 65,536 tokens. We size per-section ceilings
     # under that and stitch sections to exceed it across a whole document.

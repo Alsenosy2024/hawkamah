@@ -8,6 +8,10 @@ Endpoints:
   POST /draft          (json)           → draft one large document → markdown + html
   POST /build_full     (json)           → run the whole skill → docs + HTML manual
   POST /export         (json)           → render markdown to any format (download)
+  GET  /conversations?corpus=           → list saved chat threads (summaries)
+  GET  /conversation?corpus=&id=        → one full chat thread (history)
+  POST /conversations/save  (json)      → upsert a chat thread (durable)
+  POST /conversations/delete (json)     → delete a chat thread
 
 CORS is locked to the same origins the Firebase functions allow. Corpus IDs map
 1:1 to the front-end tenantId so the same uploaded files back both stacks.
@@ -26,6 +30,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from . import __version__
 from .agent import HawkamaAgent
 from .config import MODELS, SETTINGS
+from .conversations import ConversationStore
 from .exporters import FORMATS, export
 from .generation import GeneratedDoc
 
@@ -62,6 +67,7 @@ def require_allowed_origin(request: Request) -> None:
 
 # Cheap agent cache keyed by corpus so we don't reload vectors every request.
 _agents: dict[str, HawkamaAgent] = {}
+_conversations: dict[str, ConversationStore] = {}
 
 
 def get_agent(corpus: str) -> HawkamaAgent:
@@ -69,6 +75,13 @@ def get_agent(corpus: str) -> HawkamaAgent:
     if corpus not in _agents:
         _agents[corpus] = HawkamaAgent(corpus)
     return _agents[corpus]
+
+
+def get_conversations(corpus: str) -> ConversationStore:
+    corpus = corpus or "default"
+    if corpus not in _conversations:
+        _conversations[corpus] = ConversationStore(corpus)
+    return _conversations[corpus]
 
 
 @api.get("/health")
@@ -172,6 +185,43 @@ def export_endpoint(body: dict[str, Any]) -> StreamingResponse:
         media_type=out.mime,
         headers={"Content-Disposition": disposition},
     )
+
+
+# --------------------------------------------------------------------------- #
+# Chat history (durable conversation threads)                                  #
+# --------------------------------------------------------------------------- #
+@api.get("/conversations", dependencies=[Depends(require_allowed_origin)])
+def list_conversations(corpus: str = "default") -> dict[str, Any]:
+    return {"corpus": corpus, "conversations": get_conversations(corpus).list()}
+
+
+@api.get("/conversation", dependencies=[Depends(require_allowed_origin)])
+def get_conversation(corpus: str = "default", id: str = "") -> dict[str, Any]:
+    if not id:
+        raise HTTPException(400, "id is required")
+    conv = get_conversations(corpus).get(id)
+    if conv is None:
+        raise HTTPException(404, "conversation not found")
+    return conv
+
+
+@api.post("/conversations/save", dependencies=[Depends(require_allowed_origin)])
+def save_conversation(body: dict[str, Any]) -> dict[str, Any]:
+    corpus = body.get("corpus", "default")
+    conv = body.get("conversation") or body
+    if not isinstance(conv.get("messages"), list):
+        raise HTTPException(400, "conversation.messages (list) is required")
+    return {"summary": get_conversations(corpus).save(conv)}
+
+
+@api.post("/conversations/delete", dependencies=[Depends(require_allowed_origin)])
+def delete_conversation(body: dict[str, Any]) -> dict[str, Any]:
+    corpus = body.get("corpus", "default")
+    conv_id = body.get("id") or ""
+    if not conv_id:
+        raise HTTPException(400, "id is required")
+    get_conversations(corpus).delete(conv_id)
+    return {"ok": True, "id": conv_id}
 
 
 def _doc_payload(doc: GeneratedDoc, with_html: bool = True) -> dict[str, Any]:
