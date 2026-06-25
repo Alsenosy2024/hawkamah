@@ -1,0 +1,54 @@
+from hawkama_copilot.agent import HawkamaAgent
+from hawkama_copilot.generation import generate_document
+from hawkama_copilot.rag import RagEngine
+
+
+HR_TEXT = """# لائحة الموارد البشرية
+## الباب الأول: التعيين
+يتم التعيين وفق حاجة العمل والكفاءة وتخضع فترة التجربة لثلاثة أشهر.
+## الباب الثاني: الإجازات
+يستحق الموظف إجازة سنوية مدتها ثلاثون يومًا.
+"""
+
+
+def test_ingest_and_retrieve(fake_gemini, tmp_corpus):
+    rag = RagEngine("c1")
+    reports = rag.ingest_bytes([("HR.md", HR_TEXT.encode("utf-8"))])
+    assert sum(r.chunks for r in reports) >= 2
+    assert rag.stats()["embedded"] >= 1
+
+    hits = rag.retrieve("ما مدة الإجازة السنوية؟")
+    assert hits, "should retrieve evidence"
+    assert all(h.label.startswith("مصدر") for h in hits)
+
+
+def test_generate_document_pipeline(fake_gemini, tmp_corpus):
+    rag = RagEngine("c2")
+    rag.ingest_bytes([("HR.md", HR_TEXT.encode("utf-8"))])
+    doc = generate_document("سياسة تعارض المصالح", "صياغة سياسة كاملة", rag, parallel_sections=False)
+    assert doc.markdown.startswith("# سياسة تعارض المصالح")
+    assert "## الفهرس" in doc.markdown
+    assert "قائمة المصادر" in doc.markdown
+    assert len(doc.sections) >= 1
+    assert doc.word_count > 0
+
+
+def test_agent_ask_and_draft(fake_gemini, tmp_corpus):
+    agent = HawkamaAgent("c3")
+    agent.ingest_bytes([("HR.md", HR_TEXT.encode("utf-8"))])
+
+    ans = agent.ask("ما سياسة التعيين؟")
+    assert ans.answer
+    assert ans.sources
+
+    # Router: a "write a full policy" message must route to draft().
+    out = agent.respond("اكتب سياسة تعارض المصالح كاملة")
+    from hawkama_copilot.generation import GeneratedDoc
+    assert isinstance(out, GeneratedDoc)
+
+
+def test_detect_deliverable():
+    agent = HawkamaAgent("c4")
+    assert agent.detect_deliverable("اكتب تقرير الواقع الراهن") == "current_state"
+    assert agent.detect_deliverable("صمم الهيكل التنظيمي") == "org_structure"
+    assert agent.detect_deliverable("سجل المخاطر") == "risk_register"

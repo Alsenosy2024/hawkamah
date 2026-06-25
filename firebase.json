@@ -9,6 +9,10 @@
     ],
     "rewrites": [
       {
+        "source": "/copilot/**",
+        "run": { "serviceId": "hawkama-copilot", "region": "us-central1" }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

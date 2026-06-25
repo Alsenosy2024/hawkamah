@@ -1,0 +1,245 @@
+"""The Hawkama Copilot agent.
+
+Three layers, smallest to largest:
+
+  • ask()        — grounded RAG Q&A with [مصدر N] citations (the copilot's "اسأل").
+  • draft()      — large multi-page document drafting (the "اطلب صياغة كاملة" path);
+                   routes to a prescribed skill deliverable when the request maps
+                   to one, else free-form outline→sections→stitch.
+  • run_agent()  — a real Gemini function-calling loop: the model chooses tools
+                   (retrieve / draft / list deliverables / build full manual) and
+                   we execute them, capturing artifacts on the side.
+
+build_full_model() runs the whole skill end-to-end (all deliverables → one RTL
+HTML governance manual), honoring the quality-gate ordering.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from typing import Callable, Iterator
+
+from google.genai import types
+
+from . import genai_client
+from .config import SETTINGS
+from .exporters import Exported, ManualDoc, export, render_manual
+from .generation import GeneratedDoc, generate_deliverable, generate_document
+from .rag import Evidence, RagEngine
+from .skill import DELIVERABLES, DELIVERABLES_BY_KEY, system_prompt
+
+
+# Phrases that signal "draft a full document" rather than "answer a question"
+# (mirrors the JS longForm heuristic).
+_LONGFORM = re.compile(
+    r"اكتب|صغ|صياغة|أنشئ|انشئ|جهّز|جهز|أعدّ|اعد|سياسة|لائحة|ميثاق|دليل|إجراء|اجراء|"
+    r"حزمة|تقرير|استراتيج|كامل|مفصّل|مفصل|وثيقة|draft|write|generate|full|policy|charter|manual",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class AskResult:
+    answer: str
+    sources: list[Evidence] = field(default_factory=list)
+
+
+@dataclass
+class AgentResult:
+    answer: str
+    documents: list[GeneratedDoc] = field(default_factory=list)
+    trace: list[str] = field(default_factory=list)
+
+
+class HawkamaAgent:
+    def __init__(self, corpus_id: str = "default"):
+        self.corpus_id = corpus_id
+        self.rag = RagEngine(corpus_id)
+
+    # --------------------------------------------------------------- ingest
+    def ingest_paths(self, paths, on_progress=None):
+        return self.rag.ingest_paths(paths, on_progress)
+
+    def ingest_bytes(self, files, on_progress=None):
+        return self.rag.ingest_bytes(files, on_progress)
+
+    def stats(self) -> dict:
+        return self.rag.stats()
+
+    # ------------------------------------------------------------------ ask
+    def ask(self, question: str, history: list[dict] | None = None) -> AskResult:
+        evidence = self.rag.retrieve(question)
+        prompt = self._ask_prompt(question, evidence, history)
+        answer = genai_client.generate(prompt, system=system_prompt(), temperature=0.3)
+        return AskResult(answer=answer, sources=evidence)
+
+    def ask_stream(self, question: str, history: list[dict] | None = None) -> Iterator[dict]:
+        """Yield {'type': 'sources'|'delta'|'done', ...} events for SSE."""
+        evidence = self.rag.retrieve(question)
+        yield {"type": "sources", "sources": [self._ev_dict(e) for e in evidence]}
+        prompt = self._ask_prompt(question, evidence, history)
+        full = []
+        for piece in genai_client.generate_stream(prompt, system=system_prompt(), temperature=0.3):
+            full.append(piece)
+            yield {"type": "delta", "text": piece}
+        yield {"type": "done", "text": "".join(full)}
+
+    def _ask_prompt(self, question: str, evidence: list[Evidence], history: list[dict] | None) -> str:
+        ev_block = self.rag.format_evidence(evidence)
+        hist = ""
+        if history:
+            hist = "\n".join(
+                f"{'المستخدم' if h.get('role') == 'user' else 'المساعد'}: {h.get('content','')}"
+                for h in history[-6:]
+            )
+            hist = f"== سياق المحادثة ==\n{hist}\n\n"
+        return (
+            f"{hist}"
+            f"السؤال: {question}\n\n"
+            "أجب بدقة واستنادًا إلى الأدلة أدناه فقط فيما يخص وقائع المنظمة، مع الاستشهاد "
+            "بـ [مصدر N]. إن لم تكفِ الأدلة فاذكر ذلك واقترح ما يلزم من ملفات.\n\n"
+            f"== الأدلة ==\n{ev_block or 'لا توجد ملفات مفهرسة بعد.'}"
+        )
+
+    # ---------------------------------------------------------------- draft
+    def detect_deliverable(self, request: str) -> str | None:
+        """Map a free-text request to a prescribed skill deliverable, if any."""
+        # Keys are matched as substrings, so include the ال-prefixed forms that
+        # appear in natural requests ("تقرير الواقع الراهن", "الهيكل التنظيمي").
+        keymap = {
+            "current_state": ("واقع راهن", "الواقع الراهن", "الراهن", "تقييم", "current state", "assessment"),
+            "org_structure": ("هيكل تنظيمي", "الهيكل التنظيمي", "هيكل", "org structure", "organization"),
+            "strategy": ("استراتيج", "الرؤية", "رؤية", "رسالة", "strategy"),
+            "governance": ("منظومة الحوكمة", "إطار الحوكمة", "governance framework", "حوكمة"),
+            "committees": ("لجنة", "لجان", "ميثاق", "committee", "charter"),
+            "department_pack": ("حزمة تشغيل", "حزمة الإدارة", "department pack", "إدارة "),
+            "raci_doa": ("raci", "صلاحيات", "تفويض", "delegation"),
+            "kpis": ("مؤشرات", "kpi", "أداء"),
+            "risk_register": ("مخاطر", "risk", "سجل المخاطر"),
+        }
+        low = request.lower()
+        for key, keys in keymap.items():
+            if any(k in low for k in keys):
+                return key
+        return None
+
+    def draft(
+        self,
+        request: str,
+        *,
+        language: str = "ar",
+        target_pages: int | None = None,
+        on_progress: Callable[[str, int, int], None] | None = None,
+    ) -> GeneratedDoc:
+        key = self.detect_deliverable(request)
+        if key:
+            department = None
+            if key == "department_pack":
+                m = re.search(r"إدارة\s+([^\.،\n]+)", request)
+                department = m.group(1).strip() if m else None
+            return generate_deliverable(
+                key, self.rag, department=department, language=language,
+                target_pages=target_pages, on_progress=on_progress,
+            )
+        # Free-form: derive a title/goal then generate.
+        title = re.sub(r"^\s*(اكتب|صغ|أنشئ|انشئ|جهّز|أعدّ|write|generate|draft)\s*", "", request).strip()
+        title = title[:120] or "وثيقة حوكمة"
+        return generate_document(
+            title, f"إنتاج وثيقة كاملة احترافية تلبي الطلب: {request}", self.rag,
+            language=language, target_pages=target_pages, on_progress=on_progress,
+        )
+
+    def respond(self, message: str, history: list[dict] | None = None, **kw) -> AskResult | GeneratedDoc:
+        """Copilot router: long-form request → draft(); else → ask()."""
+        if _LONGFORM.search(message) and len(message) > 12:
+            return self.draft(message, **kw)
+        return self.ask(message, history)
+
+    # ----------------------------------------------------- full skill model
+    def build_full_model(
+        self,
+        *,
+        company: str = "",
+        department_list: list[str] | None = None,
+        language: str = "ar",
+        on_progress: Callable[[str, int, int], None] | None = None,
+    ) -> tuple[list[GeneratedDoc], str]:
+        """Run every skill deliverable in gate order → one RTL HTML manual."""
+        docs: list[GeneratedDoc] = []
+        # Deliverables in their canonical (gate) order; department_pack expanded.
+        order = [d for d in DELIVERABLES if d.key != "department_pack"]
+        total = len(order) + len(department_list or [])
+        done = 0
+        for d in order:
+            if on_progress:
+                on_progress(f"deliverable:{d.key}", done, total)
+            docs.append(generate_deliverable(d.key, self.rag, language=language))
+            done += 1
+        for dept in department_list or []:
+            if on_progress:
+                on_progress(f"department:{dept}", done, total)
+            docs.append(generate_deliverable("department_pack", self.rag, department=dept, language=language))
+            done += 1
+
+        manual = render_manual(
+            [ManualDoc(doc_id=f"d{i}", title=doc.title, markdown=doc.markdown) for i, doc in enumerate(docs)],
+            manual_title=f"دليل الحوكمة والنموذج التشغيلي{(' — ' + company) if company else ''}",
+            subtitle=company,
+        )
+        if on_progress:
+            on_progress("done", total, total)
+        return docs, manual
+
+    # ------------------------------------------------------------- export
+    def export_doc(self, doc: GeneratedDoc, fmt: str, *, company: str = "") -> Exported:
+        return export(doc.markdown, doc.title, fmt, company=company)
+
+    # ----------------------------------------------- function-calling agent
+    def run_agent(self, instruction: str, max_steps: int = 6) -> AgentResult:
+        """A real Gemini function-calling loop. The model selects tools; we run
+        them and feed compact receipts back (large artifacts are kept aside)."""
+        client = genai_client.get_client()
+        artifacts: list[GeneratedDoc] = []
+        trace: list[str] = []
+
+        def retrieve_evidence(query: str) -> str:
+            """Retrieve grounded evidence snippets from the organization's files."""
+            ev = self.rag.retrieve(query)
+            trace.append(f"retrieve_evidence({query!r}) → {len(ev)} hits")
+            return self.rag.format_evidence(ev, max_chars=6000) or "لا توجد أدلة."
+
+        def list_deliverables() -> str:
+            """List the prescribed governance deliverables the agent can produce."""
+            trace.append("list_deliverables()")
+            return json.dumps({d.key: d.title_ar for d in DELIVERABLES}, ensure_ascii=False)
+
+        def draft_document(request: str) -> str:
+            """Draft a complete multi-page governance document for the request."""
+            doc = self.draft(request)
+            artifacts.append(doc)
+            trace.append(f"draft_document({request!r}) → '{doc.title}' (~{doc.page_estimate}p)")
+            return f"تم إنشاء «{doc.title}» (~{doc.page_estimate} صفحة، {len(doc.sections)} أقسام)."
+
+        tools = [retrieve_evidence, list_deliverables, draft_document]
+        cfg = types.GenerateContentConfig(
+            system_instruction=system_prompt(
+                "أنت في وضع الوكيل: استخدم الأدوات المتاحة عند الحاجة لإنجاز طلب المستخدم، "
+                "ثم قدّم ملخصًا تنفيذيًا لما أنجزته."
+            ),
+            tools=tools,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=max_steps),
+        )
+        resp = client.models.generate_content(
+            model=SETTINGS.models.text, contents=instruction, config=cfg
+        )
+        return AgentResult(answer=(resp.text or "").strip(), documents=artifacts, trace=trace)
+
+    # ------------------------------------------------------------- helpers
+    @staticmethod
+    def _ev_dict(e: Evidence) -> dict:
+        return {
+            "label": e.label, "doc": e.doc_name, "heading": e.heading_path,
+            "score": e.score, "text": e.text[:300],
+        }
