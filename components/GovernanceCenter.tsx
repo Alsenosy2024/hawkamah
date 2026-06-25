@@ -12,6 +12,7 @@ import type {
 } from '../types';
 import { ingestDocument, summarizeSentiment } from '../services/ingestionService';
 import { extractFileText } from '../services/fileExtraction';
+import { maybeIngestMedia } from '../services/mediaIngest';
 import { buildAggregatedContext } from '../services/assessmentAggregatorService';
 import {
   extractReferenceProjects, draftToReferenceProject, artifactKindLabel,
@@ -1052,6 +1053,9 @@ ${content.slice(0, 8000)}`;
   ): Promise<{ name: string; content: string; size: string; type: string; error?: string }> => {
     const sizeKB = Math.round(file.size / 1024);
     const baseName = file.name.replace(/\.[^/.]+$/, '');
+    // Also embed image/video originals into the copilot's multimodal RAG (durable
+    // GCS store) — fire-and-forget, no-op for non-media / backend disabled.
+    maybeIngestMedia(tenantId, file);
     const res = await extractFileText(file, signal);
     return {
       name: baseName,
