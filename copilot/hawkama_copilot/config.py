@@ -116,6 +116,9 @@ class Settings:
 
     # --- Storage -------------------------------------------------------------
     data_dir: Path = field(default_factory=lambda: Path(_get("HAWKAMA_DATA_DIR", str(_COPILOT_ROOT / "data"))))
+    # Durable persistence: GCS bucket for the corpus + original files. When set,
+    # the corpus survives Cloud Run cold starts (ephemeral /tmp). Empty = local-only.
+    gcs_bucket: str = _get("HAWKAMA_GCS_BUCKET", "")
 
     # --- Skill ---------------------------------------------------------------
     # The governance operating-model skill spec (Arabic). Read at runtime so the

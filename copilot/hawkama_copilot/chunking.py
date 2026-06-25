@@ -41,8 +41,9 @@ class Chunk:
     doc_id: str = ""
     doc_name: str = ""
     doc_kind: str = "other"
-    kind: str = "text"          # "text" | "image" — image chunks carry a visual embedding
+    kind: str = "text"          # "text" | "image" | "video" — media carry a visual embedding
     media_mime: str = ""        # mime type for image/media chunks
+    media_path: str = ""        # durable GCS path of the original (originals/<corpus>/<name>)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     embedding: list[float] = field(default_factory=list)
 

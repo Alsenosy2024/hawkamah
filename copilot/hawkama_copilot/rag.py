@@ -81,12 +81,19 @@ class RagEngine:
         # Images take the MULTIMODAL path (embed the image itself into the shared
         # vector space, with a caption as readable evidence); everything else is
         # extracted to text and chunked.
+        from . import storage as gcs
+
         media_chunks: list[Chunk] = []
         media_reports: list[IngestReport] = []
         text_items: list[tuple[str, ExtractResult]] = []
         for name, data in files:
+            # Durable original-file store: keep every uploaded original in GCS
+            # (no-op when GCS is disabled). Media chunks record the path.
+            orig_path = gcs.put_original(
+                self.store.corpus_id, name, data, content_type=mimetypes.guess_type(name)[0]
+            )
             if is_image(name):
-                ch = self._image_chunk(name, data)
+                ch = self._image_chunk(name, data, orig_path)
                 if ch:
                     media_chunks.append(ch)
                     media_reports.append(IngestReport(name, "image-embed", 1))
@@ -96,7 +103,7 @@ class RagEngine:
                 if len(data) > _VIDEO_INLINE_LIMIT:
                     media_reports.append(IngestReport(name, "video", 0, error="video too large (trim to a shorter clip)"))
                     continue
-                chs = self._video_chunks(name, data)
+                chs = self._video_chunks(name, data, orig_path)
                 if chs:
                     media_chunks.extend(chs)
                     media_reports.append(IngestReport(name, "video-embed", len(chs)))
@@ -108,11 +115,10 @@ class RagEngine:
         reports = self._ingest_extracted(text_items, on_progress, extra_chunks=media_chunks)
         return media_reports + reports
 
-    def _image_chunk(self, name: str, data: bytes) -> Chunk | None:
+    def _image_chunk(self, name: str, data: bytes, media_path: str = "") -> Chunk | None:
         """Build one image chunk: multimodal embedding of the image + a caption."""
-        vec = genai_client.embed_image(
-            data, mime_type=mimetypes.guess_type(name)[0] or "image/png"
-        )
+        mime = mimetypes.guess_type(name)[0] or "image/png"
+        vec = genai_client.embed_image(data, mime_type=mime)
         if not vec:
             return None
         caption = caption_image(data, name) or f"صورة: {name}"
@@ -125,12 +131,13 @@ class RagEngine:
             doc_name=name,
             doc_kind="image",
             kind="image",
-            media_mime=mimetypes.guess_type(name)[0] or "image/png",
+            media_mime=mime,
+            media_path=media_path,
         )
         ch.embedding = vec
         return ch
 
-    def _video_chunks(self, name: str, data: bytes) -> list[Chunk]:
+    def _video_chunks(self, name: str, data: bytes, media_path: str = "") -> list[Chunk]:
         """Build one chunk per video segment: multimodal embedding + a caption."""
         mime = mimetypes.guess_type(name)[0] or "video/mp4"
         vecs = genai_client.embed_video(data, mime_type=mime)
@@ -150,6 +157,7 @@ class RagEngine:
                 doc_kind="video",
                 kind="video",
                 media_mime=mime,
+                media_path=media_path,
             )
             ch.embedding = v
             out.append(ch)

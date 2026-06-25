@@ -79,6 +79,7 @@ def health() -> dict[str, Any]:
         "models": {"text": MODELS.text, "embed": MODELS.embed},
         "embed_dim": SETTINGS.embed_dim,
         "api_key_present": bool(SETTINGS.api_key),
+        "durable": bool(SETTINGS.gcs_bucket),
         "formats": list(FORMATS),
     }
 

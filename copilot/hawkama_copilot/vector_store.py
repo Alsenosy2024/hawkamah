@@ -35,13 +35,24 @@ class VectorStore:
 
     # ----------------------------------------------------------------- io --
     def _load(self) -> None:
-        if not self.path.is_file():
+        # Durable GCS copy first (survives Cloud Run cold starts), then local cache.
+        from . import storage as gcs
+
+        raw: bytes | None = gcs.load_corpus(self.corpus_id)
+        if raw is None and self.path.is_file():
+            raw = self.path.read_bytes()
+        if not raw:
             return
-        data = json.loads(self.path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(raw)
+        except (ValueError, json.JSONDecodeError):
+            return
         self.chunks = [Chunk.from_dict(c) for c in data.get("chunks", [])]
         self._rebuild_matrix()
 
     def save(self) -> None:
+        from . import storage as gcs
+
         with self._lock:
             payload = {
                 "corpus_id": self.corpus_id,
@@ -49,9 +60,11 @@ class VectorStore:
                 "count": len(self.chunks),
                 "chunks": [c.to_dict() for c in self.chunks],
             }
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            blob = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            tmp = self.path.with_suffix(".tmp")     # local cache
+            tmp.write_bytes(blob)
             tmp.replace(self.path)
+            gcs.save_corpus(self.corpus_id, blob)   # durable copy (no-op if disabled)
 
     def _rebuild_matrix(self) -> None:
         vecs = [c.embedding for c in self.chunks]
