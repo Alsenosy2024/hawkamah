@@ -25,7 +25,7 @@ const responseText = (r: any): string => {
 };
 
 // Race any promise against a 90s deadline so the UI never hangs silently.
-const withTimeout = <T>(promise: Promise<T>, ms = 90_000): Promise<T> =>
+const withTimeout = <T>(promise: Promise<T>, ms = 90_000, signal?: AbortSignal): Promise<T> =>
     Promise.race([
         promise,
         new Promise<never>((_, reject) =>
@@ -33,6 +33,12 @@ const withTimeout = <T>(promise: Promise<T>, ms = 90_000): Promise<T> =>
                 'TIMEOUT: استغرق الذكاء الاصطناعي وقتاً أطول من المتوقع. يُرجى المحاولة مرة أخرى. | AI response timed out. Please retry.'
             )), ms)
         ),
+        // Reject promptly when the caller aborts (e.g. user hits Stop) so the UI
+        // never waits on an in-flight request it no longer wants.
+        ...(signal ? [new Promise<never>((_, reject) => {
+            if (signal.aborted) return reject(new DOMException('Aborted', 'AbortError'));
+            signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        })] : []),
     ]);
 
 // Transient server/network failure → safe to retry. Hard client errors (400/401/
@@ -113,6 +119,67 @@ export const transcribeAudio = async (
         config: { thinkingConfig: { thinkingBudget: 0 } },
     });
     return responseText(response);
+};
+
+// ── Web-grounded document generation (the "google skill") ──────────────────
+// Creates a full Markdown document grounded in BOTH the user's uploaded files
+// (fileContext) and LIVE Google Search — for documents that need current or
+// external facts. Uses the @google/genai Google Search tool ({ googleSearch: {} }).
+// Grounding can't be combined with JSON schema, so we generate Markdown directly
+// and read citations from candidates[0].groundingMetadata. Falls back to the
+// secondary model on a transient failure; otherwise throws so the caller can
+// degrade to an internal-only draft.
+export interface GroundedDoc {
+    markdown: string;
+    webSources: { title: string; uri: string }[];
+    searchSuggestionsHtml?: string;   // groundingMetadata.searchEntryPoint.renderedContent (Google asks to display)
+}
+
+export const generateGroundedDocument = async (
+    request: string,
+    fileContext: string,
+    language: Language,
+    signal?: AbortSignal,
+): Promise<GroundedDoc> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+    const ar = language === 'ar';
+    const system = ar
+        ? 'أنت كاتب وثائق حوكمة ومحلّل خبير. تكتب وثيقة احترافية كاملة ومنسّقة بصيغة Markdown بالعربية. استخدم بحث Google للحقائق الحديثة أو الخارجية واذكر الأرقام بدقّة ولا تختلق. للمخططات استخدم كتلة ```mermaid``` صحيحة (لا ASCII)، والجداول بصيغة Markdown، وابدأ بعنوان H1.'
+        : 'You are an expert governance document writer. Produce a complete, professionally formatted Markdown document. Use Google Search for any current or external facts and cite them precisely; never fabricate. Render diagrams as valid ```mermaid``` blocks (no ASCII) and tabular data as Markdown tables. Start with an H1 title.';
+    const prompt = [
+        request,
+        fileContext ? `\n\n=== ${ar ? 'مقتطفات من ملفات المستخدم — استند إليها أولاً' : 'Excerpts from the user files — rely on these first'} ===\n${fileContext}` : '',
+        `\n\n${ar ? 'اكتب الوثيقة كاملةً الآن.' : 'Write the full document now.'}`,
+    ].join('');
+
+    const models = [MODELS.TEXT, MODELS.TEXT_FALLBACK];
+    let lastErr: any;
+    for (let i = 0; i < models.length; i++) {
+        try {
+            const response: any = await withTimeout(ai.models.generateContent({
+                model: models[i],
+                contents: prompt,
+                config: { tools: [{ googleSearch: {} }], systemInstruction: system },
+            }), 120_000, signal);
+            const markdown = responseText(response);
+            if (!markdown) throw new Error('EMPTY: grounded generation returned no text');
+            const gm = response?.candidates?.[0]?.groundingMetadata;
+            const seen = new Set<string>();
+            const webSources = (gm?.groundingChunks || [])
+                .map((c: any) => ({ title: c?.web?.title || c?.web?.uri || '', uri: c?.web?.uri || '' }))
+                .filter((s: { title: string; uri: string }) => s.uri && !seen.has(s.uri) && seen.add(s.uri));
+            return { markdown, webSources, searchSuggestionsHtml: gm?.searchEntryPoint?.renderedContent };
+        } catch (e) {
+            // Caller aborted (user hit Stop) → bail immediately, don't try model 2.
+            if ((e as any)?.name === 'AbortError' || signal?.aborted) throw e;
+            // Try the next model on ANY other error: a model that doesn't support
+            // the googleSearch tool returns a non-retryable 400, so we must still
+            // fall through to the secondary model before giving up.
+            lastErr = e;
+            if (i < models.length - 1) await sleep(800);
+        }
+    }
+    throw lastErr;
 };
 
 const questionSchema = {

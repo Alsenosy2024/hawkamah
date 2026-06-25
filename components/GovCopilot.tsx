@@ -3,9 +3,10 @@ import type { CompanyGovernanceModel, DocChunk, Language, ThinkingStep } from '.
 import { stageChat, type GovStageKey, type GovCopilotMode, type GovStateSnapshot } from '../services/governanceChat';
 import type { ChatTurn } from '../services/agentOrchestrator';
 import { loadChunks, retrieve } from '../services/governanceService';
-import { exportMessageDocx, exportMessageXlsx, exportMessagePdfDirect, exportMessageHtml, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual } from '../services/exportService';
+import { exportMessageDocx, exportMessageXlsx, exportMessagePdfDirect, exportMessageHtml } from '../services/exportService';
 import { exportMessagePptx } from '../services/pptxExport';
 import { copilotEnabled, askStream as copilotAsk, draft as copilotDraft, exportDoc as copilotExport, stats as copilotStats, ingestFiles as copilotIngest } from '../services/copilotClient';
+import { generateGroundedDocument } from '../services/geminiService';
 import ThinkingTrace from './ThinkingTrace';
 import Markdown, { type CiteRef } from './Markdown';
 
@@ -41,6 +42,8 @@ interface Msg {
   streaming: boolean;
   sources?: string[];   // doc names grounded this answer (deduped, for the footer)
   srcRefs?: CiteRef[];  // ordered [مصدر N] → {doc, heading} for inline citations
+  webSources?: { title: string; uri: string }[]; // live Google-Search citations (research docs)
+  searchHtml?: string;  // Google "search suggestions" HTML (must be displayed when grounding)
 }
 
 export interface ProposedActionLite {
@@ -127,6 +130,9 @@ const IconRestore: React.FC = () => (
 const IconClose: React.FC = () => (
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 );
+const IconDownload: React.FC = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+);
 const IconAttach: React.FC = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
 );
@@ -144,12 +150,18 @@ const GcThinking: React.FC<{ label: string }> = ({ label }) => (
   </div>
 );
 
-// Heuristic: does the user want a long, document-grade draft?
-const LONG_RE = /(كامل|كاملة|مفصّل|مفصل|تفصيل|استراتيج|سياسة|لائحة|دليل|إجراء|اجراء|عملية|عمليات|صياغة|اكتب|أكتب|حرّر|حرر|وثيق|كمّل|كمل|أكمل|اكمل|استمر|تابع|واصل|أطول|full|complete|draft|strategy|policy|regulation|manual|procedure|process|write|detailed|continue|expand|longer)/i;
+// Document-creation intent: does the user want a real, document-grade draft of
+// ANY kind (not a short Q&A)? Broadened so the copilot creates any document type
+// just by asking — creation verbs + a wide doc-type vocabulary (AR + EN).
+const LONG_RE = /(كامل|كاملة|مفصّل|مفصل|تفصيل|استراتيج|سياسة|لائحة|دليل|إجراء|اجراء|عملية|عمليات|صياغة|اكتب|أكتب|حرّر|حرر|وثيق|وثيقة|مستند|كمّل|كمل|أكمل|اكمل|استمر|تابع|واصل|أطول|أنشئ|انشئ|أنشِئ|جهّز|جهز|صمّم|صمم|أعدّ|نموذج|مذكرة|تقرير|خطة|خطّة|عقد|اتفاقية|محضر|خطاب|ميثاق|مصفوفة|قالب|استمارة|توصيف وظيفي|full|complete|draft|strategy|policy|regulation|manual|procedure|process|write|detailed|continue|expand|longer|create|generate|prepare|design|report|plan|contract|agreement|memo|minutes|letter|proposal|presentation|matrix|template|charter|document)/i;
 
 // Output-formatting directive sent to the model (not shown in the UI bubble):
 // any diagram must be a real Mermaid code block — never ASCII art — and tabular
 // data must be Markdown tables. The front-end renders both as styled visuals.
+// Does this document request need CURRENT/EXTERNAL facts (→ live web research)
+// rather than only the user's uploaded files? Recency + market/standards signals.
+const NEEDS_RESEARCH_RE = /(ابحث|بحث|الويب|الإنترنت|أحدث|الأحدث|حديثة|حديث|٢٠٢٥|٢٠٢٦|٢٠٢٧|2025|2026|2027|السوق|سوق|مقارنة|قارن|منافس|معايير دولية|أفضل الممارسات|اتجاهات|إحصاء|إحصائيات|عالمي|دولي|research|web|internet|online|latest|recent|current|today|news|market|benchmark|compare|competitor|trend|statistics|best practices|state of the art|global|international)/i;
+
 const FORMAT_HINT =
   '\n\n[تعليمات التنسيق — لا تذكرها في الرد: إذا تطلّب الجواب رسمًا بيانيًا أو هيكلاً تنظيميًا أو مخطط تدفّق أو علاقات، فأخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (graph TD / flowchart). لا ترسم المخططات بالحروف أو ASCII أبداً. قدّم البيانات الجدولية كجداول Markdown.]';
 
@@ -166,8 +178,6 @@ const GovCopilot: React.FC<Props> = (props) => {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
-  const [manualMenu, setManualMenu] = useState(false);
-  const [manualBusy, setManualBusy] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const chunksRef = useRef<DocChunk[] | null>(null);
@@ -294,6 +304,23 @@ const GovCopilot: React.FC<Props> = (props) => {
     abortRef.current = ac;
     const patch = (fn: (m: Msg) => Msg) => setMsgs(ms => ms.map(m => m.id === agentId ? fn(m) : m));
     try {
+      // Document creation that needs CURRENT/EXTERNAL facts → web-grounded
+      // (Google Search) document, merged with the user's own files. Front-end
+      // path (Gemini google skill), independent of the backend. Degrades to the
+      // normal draft on any failure.
+      if (!att.length && LONG_RE.test(q) && NEEDS_RESEARCH_RE.test(q)) {
+        patch(m => ({ ...m, thoughts: [...m.thoughts, { id: nid(), text: t('يبحث في الويب لتجميع أحدث المعلومات…', 'Searching the web for the latest information…') }] }));
+        scrollDown();
+        try {
+          const { ctx, sources } = await buildFileContext(q, ac.signal);
+          const gdoc = await generateGroundedDocument(q, ctx, language || 'ar', ac.signal);
+          if (ac.signal.aborted) { patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('أُلغي.', 'Cancelled.') })); return; }
+          patch(m => ({ ...m, thinking: false, streaming: false, text: gdoc.markdown, sources: sources.length ? sources : m.sources, webSources: gdoc.webSources, searchHtml: gdoc.searchSuggestionsHtml }));
+          return;
+        } catch { /* web research failed → fall through to the normal draft path */ }
+        // If the user aborted during research, stop here — don't fire a ghost draft.
+        if (ac.signal.aborted) { patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('أُلغي.', 'Cancelled.') })); return; }
+      }
       // Python google-genai agent path (feature-flagged via VITE_COPILOT_API).
       // A long-form request → /draft (full multi-page doc); else → /ask (grounded
       // streaming Q&A). Falls through to the in-app stageChat path when disabled.
@@ -410,33 +437,6 @@ const GovCopilot: React.FC<Props> = (props) => {
     finally { setExporting(null); }
   };
 
-  // Does the copilot have a real, non-empty governance model to export?
-  const hasModel = !!(model && (
-    (model.orgUnits?.length || 0) > 0 ||
-    (model.roles?.length || 0) > 0 ||
-    (model.policies?.length || 0) > 0 ||
-    (model.procedures?.length || 0) > 0
-  ));
-
-  // Export the FULL structured governance manual straight from the live model
-  // (not a single chat message). Three model-driven manuals are available.
-  const exportManual = async (kind: 'workflow' | 'jds' | 'policies') => {
-    if (!model || !hasModel || manualBusy) return;
-    setManualBusy(kind);
-    setManualMenu(false);
-    const o = {
-      language: (language || 'ar') as Language,
-      fontFamily: 'Tajawal',
-      companyName: model.companyName || undefined,
-    };
-    try {
-      if (kind === 'workflow') await exportWorkflowManual(model, o);
-      else if (kind === 'jds') await exportJobDescriptions(model, o);
-      else await exportPoliciesManual(model, o);
-    } catch (e) { console.error('manual export failed', e); }
-    finally { setManualBusy(null); }
-  };
-
   if (!open) {
     return (
       <button onClick={() => setOpen(true)}
@@ -455,16 +455,17 @@ const GovCopilot: React.FC<Props> = (props) => {
     </button>
   );
 
-  const exportBtn = (kind: 'docx' | 'xlsx' | 'pdf' | 'pptx' | 'html', icon: string, label: string, md: string) => (
+  // Generated-content action buttons — Ailigent design language (hw-btn + Thmanyah).
+  const exportBtn = (kind: 'docx' | 'xlsx' | 'pdf' | 'pptx' | 'html', _icon: string, label: string, md: string) => (
     <button onClick={() => exportAs(kind, md)} disabled={!!exporting}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 hover:border-emerald-400 hover:text-emerald-700 dark:hover:border-emerald-500 dark:hover:text-emerald-300 text-[11px] font-medium text-slate-600 dark:text-slate-300 transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed">
-      {exporting === kind + md.slice(0, 8) ? <span className="animate-spin inline-block">↻</span> : null}{label}
+      className="hw-btn hw-btn-subtle hw-btn-xs !rounded-full">
+      {exporting === kind + md.slice(0, 8) ? <span className="hw-spin inline-block">↻</span> : <IconDownload />}{label}
     </button>
   );
 
   const exportRow = (md: string) => (
-    <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-slate-100 dark:border-slate-700">
-      <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">{t('تصدير', 'Export')}</span>
+    <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-2.5 border-t border-[var(--hw-border)]">
+      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide me-0.5">{t('تصدير', 'Export')}</span>
       {exportBtn('html', '', t('HTML', 'HTML'), md)}
       {exportBtn('docx', '', 'Word', md)}
       {exportBtn('pdf', '', 'PDF', md)}
@@ -518,40 +519,11 @@ const GovCopilot: React.FC<Props> = (props) => {
         </div>
       </div>
 
-      {/* mode tabs + full-manual export */}
+      {/* mode tabs */}
       <div className="flex items-center gap-1.5 px-4 py-2 border-b border-[var(--hw-border)] shrink-0">
         {modePill('ask', '💬', t('سؤال', 'Ask'))}
         {modePill('edit', '✏️', t('تعديل', 'Edit'))}
         {modePill('reason', '🎯', t('هدف', 'Goal'))}
-
-        {/* full structured governance manual — built from the live model */}
-        <div className="relative ms-auto pb-px">
-          <button
-            onClick={() => hasModel && setManualMenu(v => !v)}
-            disabled={!hasModel || !!manualBusy}
-            title={hasModel ? t('تصدير دليل الحوكمة الكامل', 'Export full governance manual') : t('ابنِ نموذج الحوكمة أولاً', 'Build the governance model first')}
-            className="hw-btn hw-btn-ghost hw-btn-sm disabled:opacity-40 disabled:cursor-not-allowed">
-            {manualBusy ? <span className="animate-spin inline-block">↻</span> : null} {t('الدليل الكامل', 'Full manual')}
-          </button>
-          {manualMenu && hasModel && (
-            <div className="absolute end-0 mt-1 z-50 w-60 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-md p-1 text-start"
-              dir={ar ? 'rtl' : 'ltr'}>
-              <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{t('تصدير Word', 'Export as Word')}</div>
-              <button onClick={() => exportManual('workflow')} disabled={!!manualBusy}
-                className="w-full text-start px-3 py-2 rounded-md text-[12px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors duration-150">
-                {manualBusy === 'workflow' ? <span className="animate-spin inline-block me-1">↻</span> : null}{t('دليل دورة العمل المتكاملة', 'Integrated workflow manual')}
-              </button>
-              <button onClick={() => exportManual('jds')} disabled={!!manualBusy}
-                className="w-full text-start px-3 py-2 rounded-md text-[12px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors duration-150">
-                {manualBusy === 'jds' ? <span className="animate-spin inline-block me-1">↻</span> : null}{t('دليل الأوصاف الوظيفية', 'Job descriptions manual')}
-              </button>
-              <button onClick={() => exportManual('policies')} disabled={!!manualBusy}
-                className="w-full text-start px-3 py-2 rounded-md text-[12px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors duration-150">
-                {manualBusy === 'policies' ? <span className="animate-spin inline-block me-1">↻</span> : null}{t('دليل السياسات والصلاحيات', 'Policies & authorities manual')}
-              </button>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* body */}
@@ -562,9 +534,19 @@ const GovCopilot: React.FC<Props> = (props) => {
             {msgs.length === 0 && (
               <div className="flex flex-col items-center text-center gap-3 py-12 px-4 gc-msg-in">
                 <GeminiSpark className="w-11 h-11 gc-spark-breathe" />
-                <p className="text-[16px] font-bold text-slate-700 dark:text-slate-200">{t('كيف أساعدك في الحوكمة؟', 'How can I help with governance?')}</p>
-                <p className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs">{t('اسأل أو اطلب صياغة كاملة — يفكّر، يسترجع من ملفاتك المرفوعة، ويكتب وثيقة قابلة للتصدير.', 'Ask or request a full draft — reasons, retrieves from your files, and writes an export-ready document.')}</p>
-                <p className="text-[11px] text-slate-400 dark:text-slate-500 max-w-xs">{t('مثال: «اكتب سياسة تضارب المصالح كاملة مستندة للملفات»', 'e.g. "Write a complete conflict-of-interest policy grounded in the files"')}</p>
+                <p className="text-[16px] font-bold text-slate-700 dark:text-slate-200">{t('اطلب أي وثيقة — أنشئها لك مباشرةً', 'Ask for any document — I’ll create it')}</p>
+                <p className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs">{t('صف ما تريد بلغتك: سياسة، عقد، تقرير، خطة، ميثاق، نموذج… يستند إلى ملفاتك ويبحث في الويب عند الحاجة، ويُنتج وثيقة قابلة للتصدير.', 'Describe what you want: a policy, contract, report, plan, charter, template… grounded in your files, web-researched when needed, and export-ready.')}</p>
+                <div className="flex flex-wrap items-center justify-center gap-1.5 mt-1 max-w-sm">
+                  {[
+                    t('اكتب سياسة تضارب المصالح كاملة', 'Write a complete conflict-of-interest policy'),
+                    t('جهّز عقد عمل نموذجي', 'Draft a model employment contract'),
+                    t('أعدّ تقريراً عن أحدث ممارسات الحوكمة ٢٠٢٦', 'Report on the latest 2026 governance practices'),
+                  ].map((ex, x) => (
+                    <button key={x} type="button" onClick={() => send(ex)} className="gc-chip border border-[var(--hw-border)]">
+                      {ex}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             {msgs.map(m => (
@@ -600,6 +582,21 @@ const GovCopilot: React.FC<Props> = (props) => {
                           </button>
                         ))}
                       </div>
+                    )}
+                    {m.webSources && m.webSources.length > 0 && (
+                      <div className="mt-2 pt-1.5 border-t border-[var(--hw-border)] flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">{t('مصادر الويب', 'Web sources')}</span>
+                        {m.webSources.map((s, x) => (
+                          <a key={x} href={s.uri} target="_blank" rel="noopener noreferrer" title={s.uri} className="hw-cite max-w-[190px]">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 0 20M12 2a15.3 15.3 0 0 0 0 20" /></svg>
+                            <span className="truncate">{s.title || s.uri}</span>
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    {/* Google requires displaying the search-suggestions chips when grounding is used */}
+                    {m.searchHtml && (
+                      <div className="mt-2 overflow-x-auto" dangerouslySetInnerHTML={{ __html: m.searchHtml }} />
                     )}
                     {!m.streaming && m.text.length > 40 && exportRow(m.text)}
                   </div>

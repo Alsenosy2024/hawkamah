@@ -61,7 +61,9 @@ function renderCitation(tok: string, keyBase: string, ctx: CiteCtx): React.React
 function renderInline(src: string, keyBase: string, ctx: CiteCtx): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   // Order: code first (so ** inside code is literal), then citations, links, bold, italic.
-  const re = /(`[^`]+`)|(\[\s*(?:مصدر|sources?|src|ref)\s*[\d\s،,و]+\])|(\[[^\]]+\]\([^)]+\))|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(__[^_]+__)/gi;
+  // The (?!\() guard keeps a real Markdown link [text](url) whose text happens to
+  // be "مصدر N" from being mis-parsed as a citation chip.
+  const re = /(`[^`]+`)|(\[\s*(?:مصدر|sources?|src|ref)\s*[\d\s،,و]+\](?!\())|(\[[^\]]+\]\([^)]+\))|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(__[^_]+__)/gi;
   let last = 0; let m: RegExpExecArray | null; let i = 0;
   while ((m = re.exec(src)) !== null) {
     if (m.index > last) out.push(src.slice(last, m.index));
