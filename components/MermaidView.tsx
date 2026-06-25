@@ -3,12 +3,27 @@ import mermaid from 'mermaid';
 import type { Language } from '../types';
 import { sanitizeMermaid, guardMermaidLabels } from '../services/diagramService';
 
+// Brand-themed Mermaid (refined teal) so every rendered diagram matches the
+// Ailigent palette instead of Mermaid's default purple/lavender.
 mermaid.initialize({
   startOnLoad: false,
-  theme: 'default',
+  theme: 'base',
   securityLevel: 'loose',
   fontFamily: 'inherit',
   flowchart: { curve: 'basis', htmlLabels: true },
+  themeVariables: {
+    primaryColor: '#eef8fa',          // node fill (brand-50)
+    primaryBorderColor: '#11a8bc',    // node stroke (brand)
+    primaryTextColor: '#122a33',      // node text (ink)
+    secondaryColor: '#def2f6',
+    tertiaryColor: '#f7fafb',
+    lineColor: '#0b8090',             // edges (brand-deep)
+    fontFamily: 'inherit',
+    fontSize: '14px',
+    clusterBkg: '#f7fafb',
+    clusterBorder: '#bde4ec',
+    titleColor: '#0a6775',
+  },
 });
 
 let _rid = 0;

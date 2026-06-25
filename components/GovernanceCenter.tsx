@@ -156,6 +156,26 @@ const GovernanceCenter: React.FC<Props> = ({ documents, settings, language, onBa
   useEffect(() => { setStage(0); setShowProjects(true); }, [tenantId]);
   const gotoStage = (s: number) => { setShowProjects(false); setStage(s); };
 
+  // Copilot citation → jump to the cited uploaded resource. Open the Sources
+  // stage and flash the matching document row so the user lands right on it.
+  const [highlightDoc, setHighlightDoc] = useState<string | null>(null);
+  const openSource = (docName: string) => {
+    if (!docName) return;
+    setShowProjects(false);
+    setStage(0);
+    setHighlightDoc(docName);
+  };
+  useEffect(() => {
+    if (!highlightDoc) return;
+    const scroll = window.setTimeout(() => {
+      const sel = (window.CSS && CSS.escape) ? CSS.escape(highlightDoc) : highlightDoc.replace(/"/g, '\\"');
+      const el = document.querySelector<HTMLElement>(`[data-doc-name="${sel}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 140); // let the Sources stage mount first
+    const clear = window.setTimeout(() => setHighlightDoc(null), 3200);
+    return () => { window.clearTimeout(scroll); window.clearTimeout(clear); };
+  }, [highlightDoc]);
+
   const [model, setModel] = useState<CompanyGovernanceModel | null>(null);
   const [chunkCount, setChunkCount] = useState<number>(0);
   const [ingestedChunks, setIngestedChunks] = useState<DocChunk[]>([]); // for sources list display
@@ -2072,7 +2092,7 @@ ${content.slice(0, 8000)}`;
                       </div>
                       <div className="space-y-1 max-h-40 overflow-auto flex-1">
                         {documents.map(d => (
-                          <div key={d.id} className={`flex items-center gap-2 text-xs rounded-lg px-2 py-1 border ${excludedDocIds.has(d.id) ? 'opacity-40 bg-rose-50 dark:bg-rose-900/10 border-rose-200 dark:border-rose-800' : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'}`}>
+                          <div key={d.id} data-doc-name={d.name} className={`flex items-center gap-2 text-xs rounded-lg px-2 py-1 border ${highlightDoc === d.name ? 'gc-doc-flash' : ''} ${excludedDocIds.has(d.id) ? 'opacity-40 bg-rose-50 dark:bg-rose-900/10 border-rose-200 dark:border-rose-800' : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'}`}>
                             <span className="truncate flex-1 text-slate-700 dark:text-slate-200">{d.name}</span>
                             <button title={excludedDocIds.has(d.id) ? t('تضمين', 'Include') : t('استبعاد', 'Exclude')}
                               onClick={() => setExcludedDocIds(prev => { const n = new Set(prev); n.has(d.id) ? n.delete(d.id) : n.add(d.id); return n; })}
@@ -2293,7 +2313,7 @@ ${content.slice(0, 8000)}`;
                 <div className="font-bold text-slate-700 dark:text-slate-200 text-sm mb-2">{t('الوثائق', 'Documents')}</div>
                 <div className="space-y-1 max-h-[40vh] overflow-auto">
                   {documents.map(d => (
-                    <div key={d.id} className={`flex items-center justify-between gap-2 text-sm py-1 border-b border-slate-100 dark:border-slate-700 ${excludedDocIds.has(d.id) ? 'opacity-50' : ''}`}>
+                    <div key={d.id} data-doc-name={d.name} className={`flex items-center justify-between gap-2 text-sm py-1 px-1 border-b border-slate-100 dark:border-slate-700 ${highlightDoc === d.name ? 'gc-doc-flash' : ''} ${excludedDocIds.has(d.id) ? 'opacity-50' : ''}`}>
                       <span className="truncate text-slate-700 dark:text-slate-200">{d.name}</span>
                       <span className="flex items-center gap-1.5 shrink-0">
                         <span className="text-[11px] text-slate-400">{(d.content || '').length} {t('حرف', 'chars')}</span>
@@ -3657,6 +3677,7 @@ ${content.slice(0, 8000)}`;
         language={language}
         logoUrl={settings.logoUrl}
         tenantId={tenantId}
+        onOpenSource={openSource}
         stateSnapshot={{
           documentsCount: documents.length,
           chunkCount,

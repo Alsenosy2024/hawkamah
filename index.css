@@ -747,6 +747,219 @@ select:not(.hw-select):focus {
    Restrained: no big lifts, no glow. !important beats inline JIT.
    ═══════════════════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════════════════
+   GEMINI COPILOT LAYER — "gc-*"
+   Re-skins the governance copilot to Google Gemini's calm, airy
+   form language (soft radial wash, pill composer, large rounded
+   cards, flat hairline depth, the multicolor spark) while KEEPING
+   the teal brand accent (#11a8bc) and Thmanyah typography.
+   Motion is subtle, transform/opacity-only, Material-3 eased, and
+   fully disabled under prefers-reduced-motion.
+   Scoped under .gc-* so the rest of the design system is untouched.
+   ═══════════════════════════════════════════════════════════════ */
+:root {
+  /* Material-3 motion easings */
+  --gc-ease-emph:  cubic-bezier(0.2, 0, 0, 1);       /* emphasized standard */
+  --gc-ease-decel: cubic-bezier(0.05, 0.7, 0.1, 1);  /* emphasized decelerate (enter) */
+  --gc-ease-accel: cubic-bezier(0.3, 0, 0.8, 0.15);  /* emphasized accelerate (exit) */
+  /* Durations — Material 3 motion scale (verified): Medium 250-400, Long 450-600.
+     Exit is deliberately shorter than enter. */
+  --gc-d-open:   400ms;   /* Medium4 */
+  --gc-d-close:  260ms;   /* Medium1-ish, shorter exit */
+  --gc-d-expand: 420ms;   /* Long-ish hero morph */
+  --gc-d-msg:    280ms;   /* Medium */
+  /* Gemini-on-teal geometry */
+  --gc-r-sheet:  28px;
+  --gc-r-card:   22px;
+  --gc-r-pill:   9999px;
+}
+
+/* ── Floating launcher (Gemini pill + spark) ───────────────────── */
+@keyframes gc-launch-in { from { opacity: 0; transform: translateY(10px) scale(0.92); } to { opacity: 1; transform: none; } }
+.gc-launch {
+  display: inline-flex; align-items: center; gap: 9px;
+  height: 48px; padding: 0 20px;
+  border-radius: var(--gc-r-pill);
+  background: linear-gradient(135deg, var(--hw-brand), var(--hw-brand-blue));
+  color: #fff; font-weight: 600; font-size: 14px;
+  font-family: 'Thmanyah Sans', 'Tajawal', 'Inter', sans-serif;
+  border: none; cursor: pointer;
+  box-shadow: 0 6px 20px -6px rgba(17,168,188,0.55), 0 2px 6px -2px rgba(18,42,51,0.18);
+  transition: transform var(--hw-fast) var(--gc-ease-emph), box-shadow var(--hw-base) var(--gc-ease-emph);
+  animation: gc-launch-in var(--gc-d-open) var(--gc-ease-decel) both;
+}
+.gc-launch:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -8px rgba(17,168,188,0.62), 0 3px 8px -2px rgba(18,42,51,0.20); }
+.gc-launch:active { transform: translateY(0) scale(0.97); }
+
+/* ── Panel shell: soft radial wash, hairline, single soft shadow ── */
+.gc-shell {
+  background:
+    radial-gradient(120% 72% at 100% 0%, rgba(17,168,188,0.13), rgba(17,168,188,0) 56%),
+    radial-gradient(95% 60% at 0% 100%, rgba(30,111,168,0.07), rgba(30,111,168,0) 52%),
+    var(--hw-surface);
+  border: 1px solid var(--hw-border);
+  box-shadow: 0 18px 60px -18px rgba(18,42,51,0.30), 0 3px 10px -3px rgba(18,42,51,0.10);
+}
+html.dark .gc-shell {
+  background:
+    radial-gradient(120% 72% at 100% 0%, rgba(56,192,209,0.12), rgba(56,192,209,0) 56%),
+    radial-gradient(95% 60% at 0% 100%, rgba(30,111,168,0.12), rgba(30,111,168,0) 52%),
+    var(--hw-surface);
+  border-color: var(--hw-border);
+  box-shadow: 0 24px 70px -20px rgba(0,0,0,0.62), 0 4px 12px -4px rgba(0,0,0,0.40);
+}
+
+@keyframes gc-panel-in  { from { opacity: 0; transform: translateX(var(--gc-fx, 24px)) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes gc-panel-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(var(--gc-fx, 24px)) scale(0.985); } }
+@keyframes gc-full-in   { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
+.gc-panel-in  { animation: gc-panel-in  var(--gc-d-open)   var(--gc-ease-decel) both; }
+.gc-panel-out { animation: gc-panel-out var(--gc-d-close)  var(--gc-ease-accel) both; }
+.gc-full-in   { animation: gc-full-in   var(--gc-d-expand) var(--gc-ease-decel) both; }
+.gc-morph     { animation: gc-full-in   var(--gc-d-expand) var(--gc-ease-emph)  both; }
+
+/* While the copilot is reasoning/streaming, a soft teal wash breathes at the
+   top of the panel — a calm "working" cue (Gemini's active-response state). */
+@keyframes gc-bg-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+.gc-busy::before {
+  content: ''; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(130% 46% at 50% 0%, rgba(17,168,188,0.16), rgba(17,168,188,0) 62%);
+  animation: gc-bg-pulse 3s ease-in-out infinite;
+}
+html.dark .gc-busy::before { background: radial-gradient(130% 46% at 50% 0%, rgba(56,192,209,0.16), rgba(56,192,209,0) 62%); }
+/* keep panel content above the wash */
+.gc-shell > * { position: relative; z-index: 1; }
+
+/* ── Mode chips (Gemini pill tabs) ─────────────────────────────── */
+.gc-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 15px; border-radius: var(--gc-r-pill);
+  font-size: 13px; font-weight: 600;
+  font-family: 'Thmanyah Sans', 'Tajawal', 'Inter', sans-serif;
+  color: var(--hw-text-muted); background: transparent;
+  border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+  transition: background var(--hw-fast) var(--gc-ease-emph), color var(--hw-fast) var(--gc-ease-emph), border-color var(--hw-fast) var(--gc-ease-emph), transform var(--hw-fast) var(--gc-ease-emph);
+}
+.gc-chip:hover:not(.gc-chip-active) { background: var(--hw-surface-muted); color: var(--hw-text); }
+.gc-chip:active { transform: scale(0.96); }
+.gc-chip-active { background: var(--hw-brand-50); color: var(--hw-brand-pressed); border-color: var(--hw-brand-200); }
+html.dark .gc-chip-active { background: rgba(17,168,188,0.14); color: #6cd0de; border-color: rgba(17,168,188,0.30); }
+
+/* ── Composer: pill input + circular send ──────────────────────── */
+.gc-composer {
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 6px;
+  background: var(--hw-surface);
+  border: 1px solid var(--hw-border-strong);
+  border-radius: 26px;
+  box-shadow: 0 1px 2px rgba(18,42,51,0.05);
+  transition: border-color var(--hw-base) var(--gc-ease-emph), box-shadow var(--hw-base) var(--gc-ease-emph);
+}
+html.dark .gc-composer { background: var(--hw-surface-subtle); border-color: var(--hw-border-strong); }
+.gc-composer:focus-within { border-color: var(--hw-brand); box-shadow: 0 0 0 4px var(--hw-brand-focus); }
+.gc-input {
+  flex: 1 1 auto; min-width: 0; resize: none; border: none; outline: none;
+  background: transparent; box-shadow: none !important;
+  color: var(--hw-text); font-size: 14px; line-height: 1.6; padding: 9px 10px;
+  font-family: 'Thmanyah Sans', 'Tajawal', 'Inter', sans-serif;
+  max-height: 160px;
+}
+.gc-input::placeholder { color: var(--hw-text-subtle); }
+.gc-send {
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: var(--gc-r-pill);
+  display: grid; place-items: center; border: none; cursor: pointer;
+  background: linear-gradient(135deg, var(--hw-brand), var(--hw-brand-blue)); color: #fff;
+  transition: transform var(--hw-fast) var(--gc-ease-emph), box-shadow var(--hw-base) var(--gc-ease-emph), opacity var(--hw-fast) var(--gc-ease-emph);
+}
+.gc-send:hover:not(:disabled) { box-shadow: var(--hw-shadow-brand); transform: scale(1.05); }
+.gc-send:active:not(:disabled) { transform: scale(0.92); }
+.gc-send:disabled { opacity: 0.4; cursor: not-allowed; background: var(--hw-text-subtle); }
+.gc-send-stop { background: var(--hw-danger); }
+
+/* ── Message blocks ────────────────────────────────────────────── */
+@keyframes gc-msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.gc-msg-in { animation: gc-msg-in var(--gc-d-msg) var(--gc-ease-decel) both; }
+.gc-msg-user {
+  max-width: 86%; padding: 11px 16px; border-radius: 20px;
+  background: linear-gradient(135deg, var(--hw-brand), var(--hw-brand-blue)); color: #fff;
+  font-size: 14px; line-height: 1.65; white-space: pre-wrap;
+  box-shadow: 0 4px 14px -6px rgba(17,168,188,0.55);
+}
+.gc-msg-model {
+  width: 100%; padding: 14px 18px; border-radius: var(--gc-r-card);
+  background: var(--hw-surface); border: 1px solid var(--hw-border);
+  color: var(--hw-text); font-size: 14px; line-height: 1.7;
+}
+html.dark .gc-msg-model { background: rgba(255,255,255,0.02); border-color: var(--hw-border); }
+
+/* ── Thinking / generating (shimmer + spark + dots) ────────────── */
+@keyframes gc-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.gc-shimmer {
+  background: linear-gradient(100deg, var(--hw-surface-muted) 28%, rgba(17,168,188,0.16) 50%, var(--hw-surface-muted) 72%);
+  background-size: 200% 100%; border-radius: var(--gc-r-pill);
+  animation: gc-shimmer 1.5s linear infinite;
+}
+html.dark .gc-shimmer { background: linear-gradient(100deg, rgba(255,255,255,0.04) 28%, rgba(56,192,209,0.18) 50%, rgba(255,255,255,0.04) 72%); background-size: 200% 100%; }
+
+@keyframes gc-breathe { 0%, 100% { transform: scale(0.9); opacity: 0.8; } 50% { transform: scale(1.12); opacity: 1; } }
+.gc-spark-breathe { animation: gc-breathe 1.7s ease-in-out infinite; transform-origin: center; }
+@keyframes gc-twinkle { 0% { transform: rotate(0) scale(1); } 50% { transform: rotate(90deg) scale(1.1); } 100% { transform: rotate(180deg) scale(1); } }
+.gc-spark-idle { transition: transform var(--hw-slow) var(--gc-ease-emph); }
+.gc-launch:hover .gc-spark-idle, .gc-spark-hover:hover .gc-spark-idle { transform: rotate(90deg) scale(1.08); }
+
+@keyframes gc-dot { 0%, 80%, 100% { opacity: 0.25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+.gc-dot { display: inline-block; width: 5px; height: 5px; border-radius: 9999px; background: var(--hw-brand); animation: gc-dot 1.2s ease-in-out infinite; }
+.gc-dot:nth-child(2) { animation-delay: 0.16s; }
+.gc-dot:nth-child(3) { animation-delay: 0.32s; }
+
+/* ── Inline source citation chip ([مصدر N] → interactive) ──────── */
+.hw-cite {
+  display: inline-flex; align-items: center; gap: 3px;
+  margin-inline: 2px; padding: 0 8px; height: 1.45em;
+  border-radius: var(--gc-r-pill); vertical-align: baseline;
+  font-size: 0.74em; font-weight: 700; line-height: 1;
+  background: var(--hw-brand-50); color: var(--hw-brand-pressed);
+  border: 1px solid var(--hw-brand-200); cursor: pointer;
+  transition: background var(--hw-fast) var(--gc-ease-emph), transform var(--hw-fast) var(--gc-ease-emph), box-shadow var(--hw-base) var(--gc-ease-emph);
+  -webkit-tap-highlight-color: transparent;
+}
+.hw-cite:hover:not(:disabled) { background: var(--hw-brand-100); box-shadow: var(--hw-shadow-brand); }
+.hw-cite:active:not(:disabled) { transform: scale(0.93); }
+.hw-cite:disabled { cursor: default; }
+.hw-cite svg { width: 0.85em; height: 0.85em; }
+html.dark .hw-cite { background: rgba(17,168,188,0.14); color: #6cd0de; border-color: rgba(17,168,188,0.30); }
+
+/* ── Cited-document flash (copilot "take me there" lands here) ──── */
+@keyframes gc-doc-flash { 0%, 100% { background-color: transparent; } 45% { background-color: var(--hw-brand-50); } }
+.gc-doc-flash {
+  box-shadow: 0 0 0 2px var(--hw-brand);
+  border-radius: 10px;
+  animation: gc-doc-flash 1.2s var(--gc-ease-emph) 2;
+  scroll-margin: 24px;
+}
+html.dark .gc-doc-flash { box-shadow: 0 0 0 2px #38c0d1; }
+@media (prefers-reduced-motion: reduce) { .gc-doc-flash { animation: none; } }
+
+/* ── Header icon chip ──────────────────────────────────────────── */
+.gc-icon-btn {
+  width: 34px; height: 34px; display: grid; place-items: center;
+  border-radius: var(--gc-r-pill); border: none; background: transparent;
+  color: var(--hw-text-muted); cursor: pointer;
+  transition: background var(--hw-fast) var(--gc-ease-emph), color var(--hw-fast) var(--gc-ease-emph), transform var(--hw-fast) var(--gc-ease-emph);
+}
+.gc-icon-btn:hover { background: var(--hw-surface-muted); color: var(--hw-brand); }
+.gc-icon-btn:active { transform: scale(0.92); }
+
+/* Reduced motion: kill all gc looping/entrance motion, keep states legible */
+@media (prefers-reduced-motion: reduce) {
+  .gc-launch, .gc-panel-in, .gc-panel-out, .gc-full-in, .gc-morph,
+  .gc-msg-in, .gc-shimmer, .gc-spark-breathe, .gc-dot,
+  .gc-busy::before {
+    animation: none !important;
+  }
+  .gc-shimmer { background-position: 0 0; }
+  .gc-busy::before { opacity: 0.6; }
+}
+
 /* Solid brand action buttons → subtle brand depth on hover, no lift */
 button[class*="bg-emerald-6"]:not(.hw-btn):not(:disabled),
 button[class*="bg-emerald-500"]:not(.hw-btn):not(:disabled),

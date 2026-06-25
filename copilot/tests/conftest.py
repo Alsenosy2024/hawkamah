@@ -41,6 +41,10 @@ def fake_gemini(monkeypatch):
     def fake_embed_one(text, *, task_type, dim=None):
         return _fake_vec(text, dim or 1536)
 
+    def fake_embed_image(image_bytes, *, mime_type, dim=None, attempts=4):
+        # Deterministic vector keyed by the image bytes length (stand-in).
+        return _fake_vec(f"image:{len(image_bytes)}:{mime_type}", dim or 1536)
+
     def fake_generate(prompt, **kw):
         # Echo a small markdown section so generation pipeline produces structure.
         title = "قسم"
@@ -63,6 +67,7 @@ def fake_gemini(monkeypatch):
 
     monkeypatch.setattr(genai_client, "embed", fake_embed)
     monkeypatch.setattr(genai_client, "embed_one", fake_embed_one)
+    monkeypatch.setattr(genai_client, "embed_image", fake_embed_image)
     monkeypatch.setattr(genai_client, "generate", fake_generate)
     monkeypatch.setattr(genai_client, "generate_json", fake_generate_json)
     monkeypatch.setattr(genai_client, "generate_stream", fake_stream)
@@ -72,6 +77,8 @@ def fake_gemini(monkeypatch):
     import hawkama_copilot.agent as agent_mod
     for mod in (rag_mod, gen_mod, agent_mod):
         monkeypatch.setattr(mod, "genai_client", genai_client)
+    # Image captioning calls the model directly; stub it for offline tests.
+    monkeypatch.setattr(rag_mod, "caption_image", lambda data, name: f"وصف الصورة {name}")
     return genai_client
 
 

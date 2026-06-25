@@ -68,9 +68,11 @@ class Models:
     # Heavy long-form drafting. Defaults to the same flash model (proven on the
     # project's key) but can be pointed at a Pro model via env when available.
     generate: str = _get("HAWKAMA_GEN_MODEL", _get("HAWKAMA_TEXT_MODEL", "gemini-3.5-flash"))
-    # Embeddings ("embedding 2" generation == gemini-embedding-001, the GA model).
-    embed: str = _get("HAWKAMA_EMBED_MODEL", "gemini-embedding-001")
-    embed_fallback: str = _get("HAWKAMA_EMBED_FALLBACK", "gemini-embedding-2")
+    # Embeddings. Primary is gemini-embedding-2 — MULTIMODAL (text + image + video
+    # in one shared vector space; inline image bytes work on the Developer API,
+    # verified). gemini-embedding-001 (text-only) is the fallback for text.
+    embed: str = _get("HAWKAMA_EMBED_MODEL", "gemini-embedding-2")
+    embed_fallback: str = _get("HAWKAMA_EMBED_FALLBACK", "gemini-embedding-001")
 
 
 @dataclass(frozen=True)

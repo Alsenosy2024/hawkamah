@@ -47,6 +47,27 @@ def test_agent_ask_and_draft(fake_gemini, tmp_corpus):
     assert isinstance(out, GeneratedDoc)
 
 
+def test_image_ingest_multimodal(fake_gemini, tmp_corpus):
+    rag = RagEngine("img1")
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 256          # stand-in image bytes
+    reports = rag.ingest_bytes([("logo.png", png), ("HR.md", HR_TEXT.encode("utf-8"))])
+
+    img_rep = next(r for r in reports if r.file == "logo.png")
+    assert img_rep.chunks == 1 and img_rep.method == "image-embed"
+
+    img_chunks = [c for c in rag.store.chunks if c.kind == "image"]
+    assert len(img_chunks) == 1
+    assert img_chunks[0].embedding, "image chunk must carry a multimodal embedding"
+    assert "وصف الصورة" in img_chunks[0].text   # caption used as readable evidence
+    # text + image share one store/space
+    assert rag.stats()["chunks"] >= 3
+
+
+def test_primary_embed_is_multimodal():
+    from hawkama_copilot.config import MODELS
+    assert MODELS.embed == "gemini-embedding-2"
+
+
 def test_detect_deliverable():
     agent = HawkamaAgent("c4")
     assert agent.detect_deliverable("اكتب تقرير الواقع الراهن") == "current_state"

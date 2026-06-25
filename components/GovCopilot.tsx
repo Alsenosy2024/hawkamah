@@ -7,7 +7,19 @@ import { exportMessageDocx, exportMessageXlsx, exportMessagePdfDirect, exportMes
 import { exportMessagePptx } from '../services/pptxExport';
 import { copilotEnabled, askStream as copilotAsk, draft as copilotDraft, exportDoc as copilotExport, stats as copilotStats, ingestFiles as copilotIngest } from '../services/copilotClient';
 import ThinkingTrace from './ThinkingTrace';
-import Markdown from './Markdown';
+import Markdown, { type CiteRef } from './Markdown';
+
+// Build ordered citation refs from the backend's labeled source list. The
+// Python copilot labels each evidence item "مصدر N" (1-indexed); we map that
+// number → {doc, heading} so inline [مصدر N] markers become clickable.
+const toCiteRefs = (ss: { label?: string; doc?: string; heading?: string }[]): CiteRef[] =>
+  (ss || [])
+    .map((s, i) => ({
+      num: parseInt((s.label || '').replace(/[^\d]/g, ''), 10) || (i + 1),
+      doc: s.doc || '',
+      heading: s.heading || undefined,
+    }))
+    .filter(r => r.doc);
 
 // ===========================================================================
 //  GovCopilot — ONE persistent governance copilot for the whole Governance
@@ -27,7 +39,8 @@ interface Msg {
   thoughts: ThinkingStep[];
   thinking: boolean;
   streaming: boolean;
-  sources?: string[];   // doc names grounded this answer
+  sources?: string[];   // doc names grounded this answer (deduped, for the footer)
+  srcRefs?: CiteRef[];  // ordered [مصدر N] → {doc, heading} for inline citations
 }
 
 export interface ProposedActionLite {
@@ -57,6 +70,7 @@ interface Props {
   tenantId?: string;          // binds the copilot to this tenant's uploaded files
   seedChunks?: DocChunk[];    // dev/test injection — bypass Firestore loadChunks
   stateSnapshot?: GovStateSnapshot; // P0-2: live page state — copilot never contradicts it
+  onOpenSource?: (docName: string) => void; // clicking a citation collapses the copilot and jumps to that resource
 
   // edit mode (parent owns the engine + state)
   actionInput: string;
@@ -83,15 +97,67 @@ interface Props {
 let _mid = 0;
 const nid = () => `gc_${_mid++}`;
 
+// ── Gemini-style spark (single 4-point sparkle, teal→blue brand gradient) ──
+const GeminiSpark: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+    <defs>
+      <linearGradient id="gcSparkGrad" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stopColor="#11a8bc" />
+        <stop offset="55%" stopColor="#1e6fa8" />
+        <stop offset="100%" stopColor="#0b8090" />
+      </linearGradient>
+    </defs>
+    <path fill="url(#gcSparkGrad)" d="M12 2c.8 5.5 4.5 9.2 10 10-5.5.8-9.2 4.5-10 10-.8-5.5-4.5-9.2-10-10 5.5-.8 9.2-4.5 10-10z" />
+  </svg>
+);
+
+// Crisp stroke icons (replace the old unicode glyphs)
+const IconSend: React.FC = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+);
+const IconStop: React.FC = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
+);
+const IconExpand: React.FC = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" /></svg>
+);
+const IconRestore: React.FC = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><path d="M4 9h3a2 2 0 0 0 2-2V4M20 9h-3a2 2 0 0 1-2-2V4M4 15h3a2 2 0 0 1 2 2v3M20 15h-3a2 2 0 0 0-2 2v3" /></svg>
+);
+const IconClose: React.FC = () => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+);
+
+// Gemini "thinking" placeholder — breathing spark + shimmering skeleton bars.
+const GcThinking: React.FC<{ label: string }> = ({ label }) => (
+  <div className="flex items-center gap-3 py-1">
+    <GeminiSpark className="w-5 h-5 shrink-0 gc-spark-breathe" />
+    <div className="flex-1 min-w-0 space-y-1.5 max-w-[230px]">
+      <div className="gc-shimmer h-2.5 w-full" />
+      <div className="gc-shimmer h-2.5 w-4/5" />
+      <div className="gc-shimmer h-2.5 w-3/5" />
+    </div>
+    <span className="sr-only">{label}</span>
+  </div>
+);
+
 // Heuristic: does the user want a long, document-grade draft?
 const LONG_RE = /(كامل|كاملة|مفصّل|مفصل|تفصيل|استراتيج|سياسة|لائحة|دليل|إجراء|اجراء|عملية|عمليات|صياغة|اكتب|أكتب|حرّر|حرر|وثيق|كمّل|كمل|أكمل|اكمل|استمر|تابع|واصل|أطول|full|complete|draft|strategy|policy|regulation|manual|procedure|process|write|detailed|continue|expand|longer)/i;
 
+// Output-formatting directive sent to the model (not shown in the UI bubble):
+// any diagram must be a real Mermaid code block — never ASCII art — and tabular
+// data must be Markdown tables. The front-end renders both as styled visuals.
+const FORMAT_HINT =
+  '\n\n[تعليمات التنسيق — لا تذكرها في الرد: إذا تطلّب الجواب رسمًا بيانيًا أو هيكلاً تنظيميًا أو مخطط تدفّق أو علاقات، فأخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (graph TD / flowchart). لا ترسم المخططات بالحروف أو ASCII أبداً. قدّم البيانات الجدولية كجداول Markdown.]';
+
 const GovCopilot: React.FC<Props> = (props) => {
-  const { stageKey, stageLabel, model, language, extraContext, logoUrl, tenantId, seedChunks, stateSnapshot } = props;
+  const { stageKey, stageLabel, model, language, extraContext, logoUrl, tenantId, seedChunks, stateSnapshot, onOpenSource } = props;
   const ar = (language || 'ar') === 'ar';
   const t = (a: string, e: string) => (ar ? a : e);
   const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);   // play exit animation before unmount
   const [full, setFull] = useState(false);
+  const closeTimer = useRef<number | null>(null);
   const [mode, setMode] = useState<GovCopilotMode>('ask');
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
@@ -214,14 +280,14 @@ const GovCopilot: React.FC<Props> = (props) => {
         }
         try { await ensureCorpus(); } catch { /* degrade: query with whatever is indexed */ }
         if (LONG_RE.test(q)) {
-          const doc = await copilotDraft({ corpus, request: q, language }, ac.signal);
+          const doc = await copilotDraft({ corpus, request: q + FORMAT_HINT, language }, ac.signal);
           const docs = [...new Set(doc.sources.map(s => s.doc).filter(Boolean))];
-          patch(m => ({ ...m, thinking: false, streaming: false, text: doc.markdown, sources: docs }));
+          patch(m => ({ ...m, thinking: false, streaming: false, text: doc.markdown, sources: docs, srcRefs: toCiteRefs(doc.sources) }));
         } else {
           await copilotAsk(
-            { corpus, message: q, history: history.map(h => ({ role: h.role, content: h.parts?.[0]?.text || '' })) },
+            { corpus, message: q + FORMAT_HINT, history: history.map(h => ({ role: h.role, content: h.parts?.[0]?.text || '' })) },
             {
-              onSources: ss => { const d = [...new Set(ss.map(s => s.doc).filter(Boolean))]; if (d.length) patch(m => ({ ...m, sources: d })); },
+              onSources: ss => { const d = [...new Set(ss.map(s => s.doc).filter(Boolean))]; const refs = toCiteRefs(ss); patch(m => ({ ...m, sources: d.length ? d : m.sources, srcRefs: refs.length ? refs : m.srcRefs })); },
               onAnswer: chunk => { patch(m => ({ ...m, thinking: false, text: m.text + chunk })); scrollDown(); },
               onDone: () => patch(m => ({ ...m, thinking: false, streaming: false })),
               onError: () => patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد. أعد المحاولة.', 'Failed. Retry.') })),
@@ -235,7 +301,7 @@ const GovCopilot: React.FC<Props> = (props) => {
       if (sources.length) patch(m => ({ ...m, sources }));
       await stageChat(
         {
-          stage: stageKey, model, history, message: q, language, signal: ac.signal,
+          stage: stageKey, model, history, message: q + FORMAT_HINT, language, signal: ac.signal,
           extraContext, mode, fileContext: ctx, fileCount: count, longForm: LONG_RE.test(q),
           stateSnapshot,
         },
@@ -255,6 +321,33 @@ const GovCopilot: React.FC<Props> = (props) => {
   };
 
   const stop = () => { abortRef.current?.abort(); setBusy(false); };
+
+  // Animated close: play the exit keyframe, then unmount. A fallback timer
+  // guarantees teardown even when animations are disabled (reduced-motion),
+  // where animationend never fires.
+  const finishClose = () => {
+    if (closeTimer.current) { window.clearTimeout(closeTimer.current); closeTimer.current = null; }
+    setClosing(false);
+    setOpen(false);
+  };
+  const requestClose = () => {
+    if (closing) return;
+    setClosing(true);
+    closeTimer.current = window.setTimeout(finishClose, 360);
+  };
+  const onShellAnimEnd = (e: React.AnimationEvent) => {
+    if (e.target !== e.currentTarget) return;   // ignore child animations
+    if (closing) finishClose();
+  };
+
+  // Clicking a source citation/chip → collapse the copilot, then jump the page
+  // to that resource (the parent navigates + highlights it).
+  const handleCite = (doc: string) => {
+    if (!doc) return;
+    onOpenSource?.(doc);
+    requestClose();
+  };
+  useEffect(() => () => { if (closeTimer.current) window.clearTimeout(closeTimer.current); }, []);
 
   // Turn any answer into a real downloadable file.
   const exportAs = async (kind: 'docx' | 'xlsx' | 'pdf' | 'pptx' | 'html', md: string) => {
@@ -312,7 +405,9 @@ const GovCopilot: React.FC<Props> = (props) => {
   if (!open) {
     return (
       <button onClick={() => setOpen(true)}
-        className="hw-btn hw-btn-primary fixed bottom-5 end-5 z-40 rounded-md px-4 h-10 text-sm shadow-sm">
+        className="gc-launch gc-spark-hover fixed bottom-5 end-5 z-40"
+        title={t('كوبايلوت الحوكمة', 'Governance copilot')}>
+        <GeminiSpark className="w-5 h-5 gc-spark-idle" />
         {t('كوبايلوت الحوكمة', 'Governance copilot')}
       </button>
     );
@@ -320,7 +415,7 @@ const GovCopilot: React.FC<Props> = (props) => {
 
   const modePill = (m: GovCopilotMode, _icon: string, label: string) => (
     <button onClick={() => setMode(m)}
-      className={`hw-tab-line ${mode === m ? 'hw-tab-active' : ''}`}>
+      className={`gc-chip ${mode === m ? 'gc-chip-active' : ''}`}>
       {label}
     </button>
   );
@@ -346,18 +441,22 @@ const GovCopilot: React.FC<Props> = (props) => {
   // Shell geometry: full-screen vs in-screen SIDE PANEL (docked to the edge,
   // full height — "في الجنب"، not a floating bubble). The page stays visible
   // beside it; the panel is page-aware (stageKey) and acts inline.
+  const animCls = closing ? 'gc-panel-out' : (full ? 'gc-full-in' : 'gc-panel-in');
+  const busyCls = busy ? 'gc-busy' : '';
   const shellCls = full
-    ? 'fixed inset-0 z-50 w-screen h-screen rounded-none bg-white dark:bg-slate-900 flex flex-col'
-    : 'fixed top-0 end-0 z-40 h-screen w-[min(96vw,460px)] rounded-none border-s border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm flex flex-col';
-  const shellStyle = full ? undefined : { maxHeight: '100vh' };
+    ? `gc-shell ${animCls} ${busyCls} fixed inset-0 z-50 rounded-none flex flex-col overflow-hidden`
+    : `gc-shell ${animCls} ${busyCls} fixed top-3 bottom-3 end-3 z-40 w-[min(94vw,440px)] rounded-[28px] flex flex-col overflow-hidden`;
+  const shellStyle = { '--gc-fx': ar ? '-24px' : '24px' } as React.CSSProperties;
   const bodyWrap = full ? 'mx-auto w-full max-w-3xl' : '';
 
   return (
-    <div className={shellCls} style={shellStyle}>
+    <div className={shellCls} style={shellStyle} onAnimationEnd={onShellAnimEnd}>
       {/* header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shrink-0">
-        <div className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">{t('كوبايلوت الحوكمة', 'Governance copilot')}</span>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--hw-border)] shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <GeminiSpark className={`w-6 h-6 shrink-0 ${busy ? 'gc-spark-breathe' : 'gc-spark-idle'}`} />
+          <div className="flex flex-col gap-0.5 min-w-0">
+          <span className="text-[15px] font-bold text-slate-900 dark:text-slate-100 truncate">{t('كوبايلوت الحوكمة', 'Governance copilot')}</span>
           <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate leading-none">
             {stageLabel}
             {/* P0-2: truthful connection status from the live snapshot — never claim
@@ -372,19 +471,20 @@ const GovCopilot: React.FC<Props> = (props) => {
                     : <span className="ms-2 text-slate-400">{t('· لا مصادر', '· no sources')}</span>
             )}
           </span>
+          </div>
         </div>
-        <div className="flex items-center gap-0.5 shrink-0 ms-2">
-          <button onClick={() => setFull(f => !f)} title={full ? t('تصغير', 'Restore') : t('ملء الشاشة', 'Full screen')}
-            className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-700 dark:hover:text-emerald-300 transition-colors duration-150 text-sm">
-            {full ? '⊡' : '⊞'}
+        <div className="flex items-center gap-1 shrink-0 ms-2">
+          <button onClick={() => setFull(f => !f)} title={full ? t('تصغير', 'Restore') : t('ملء الشاشة', 'Full screen')} className="gc-icon-btn">
+            {full ? <IconRestore /> : <IconExpand />}
           </button>
-          <button onClick={() => setOpen(false)}
-            className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 dark:hover:text-slate-200 transition-colors duration-150 text-lg leading-none">×</button>
+          <button onClick={requestClose} title={t('إغلاق', 'Close')} className="gc-icon-btn">
+            <IconClose />
+          </button>
         </div>
       </div>
 
       {/* mode tabs + full-manual export */}
-      <div className="flex items-center gap-0 px-4 border-b border-slate-200 dark:border-slate-700 shrink-0 hw-tabs-line">
+      <div className="flex items-center gap-1.5 px-4 py-2 border-b border-[var(--hw-border)] shrink-0">
         {modePill('ask', '💬', t('سؤال', 'Ask'))}
         {modePill('edit', '✏️', t('تعديل', 'Edit'))}
         {modePill('reason', '🎯', t('هدف', 'Goal'))}
@@ -425,9 +525,11 @@ const GovCopilot: React.FC<Props> = (props) => {
         {mode === 'ask' && (
           <>
             {msgs.length === 0 && (
-              <div className="text-[12px] text-slate-400 dark:text-slate-500 leading-relaxed space-y-1.5 py-4">
-                <p className="font-medium text-slate-500 dark:text-slate-400">{t('اسأل أو اطلب صياغة كاملة — يفكّر، يسترجع من ملفاتك المرفوعة، ويكتب وثيقة قابلة للتصدير.', 'Ask or request a full draft — reasons, retrieves from your files, and writes an export-ready document.')}</p>
-                <p className="text-[11px]">{t('مثال: «اكتب سياسة تضارب المصالح كاملة مستندة للملفات»', 'e.g. "Write a complete conflict-of-interest policy grounded in the files"')}</p>
+              <div className="flex flex-col items-center text-center gap-3 py-12 px-4 gc-msg-in">
+                <GeminiSpark className="w-11 h-11 gc-spark-breathe" />
+                <p className="text-[16px] font-bold text-slate-700 dark:text-slate-200">{t('كيف أساعدك في الحوكمة؟', 'How can I help with governance?')}</p>
+                <p className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs">{t('اسأل أو اطلب صياغة كاملة — يفكّر، يسترجع من ملفاتك المرفوعة، ويكتب وثيقة قابلة للتصدير.', 'Ask or request a full draft — reasons, retrieves from your files, and writes an export-ready document.')}</p>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 max-w-xs">{t('مثال: «اكتب سياسة تضارب المصالح كاملة مستندة للملفات»', 'e.g. "Write a complete conflict-of-interest policy grounded in the files"')}</p>
               </div>
             )}
             {msgs.map(m => (
@@ -436,17 +538,32 @@ const GovCopilot: React.FC<Props> = (props) => {
                   <ThinkingTrace thoughts={m.thoughts} active={m.thinking} language={language || 'ar'} />
                 )}
                 {m.sender === 'user' ? (
-                  <div className="max-w-[88%] px-3 py-2 rounded-md text-sm leading-relaxed whitespace-pre-wrap bg-emerald-600 text-white">
-                    {m.text}
-                  </div>
+                  <div className="gc-msg-user gc-msg-in">{m.text}</div>
                 ) : (
-                  <div className="w-full px-3 py-2.5 rounded-md text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100">
-                    {m.text
-                      ? <Markdown text={m.text} rtl={ar} />
-                      : <span className="text-slate-400 text-[12px] italic">{m.thinking ? t('يفكّر…', 'thinking…') : ''}</span>}
+                  <div className="gc-msg-model gc-msg-in">
+                    {m.text ? (
+                      <>
+                        <Markdown text={m.text} rtl={ar} citations={m.srcRefs} onCite={handleCite} />
+                        {m.streaming && (
+                          <div className="flex items-center gap-2 mt-2.5 text-[11px] text-[color:var(--hw-text-subtle)]">
+                            <GeminiSpark className="w-3.5 h-3.5 gc-spark-breathe" />
+                            <span className="inline-flex items-center gap-1"><span className="gc-dot" /><span className="gc-dot" /><span className="gc-dot" /></span>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <GcThinking label={t('يفكّر…', 'thinking…')} />
+                    )}
                     {m.sources && m.sources.length > 0 && (
-                      <div className="mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-700 text-[10px] text-slate-400 dark:text-slate-500">
-                        {t('مصادر', 'Sources')}: {m.sources.join('، ')}
+                      <div className="mt-2 pt-1.5 border-t border-[var(--hw-border)] flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">{t('مصادر', 'Sources')}</span>
+                        {m.sources.map((s, x) => (
+                          <button key={x} type="button" onClick={() => handleCite(s)} title={s}
+                            className="hw-cite max-w-[170px]" aria-label={t(`فتح المصدر ${s}`, `Open source ${s}`)}>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
+                            <span className="truncate">{s}</span>
+                          </button>
+                        ))}
                       </div>
                     )}
                     {!m.streaming && m.text.length > 40 && exportRow(m.text)}
@@ -512,7 +629,7 @@ const GovCopilot: React.FC<Props> = (props) => {
             )}
             {props.agentAnswer && (
               <div className="rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-3 text-sm text-slate-700 dark:text-slate-200">
-                <Markdown text={props.agentAnswer} rtl={ar} />
+                <Markdown text={props.agentAnswer} rtl={ar} onCite={handleCite} />
                 {exportRow(props.agentAnswer)}
                 {props.agentTrace && (
                   <div className="flex items-center gap-2 mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-700">
@@ -529,46 +646,46 @@ const GovCopilot: React.FC<Props> = (props) => {
       </div>
 
       {/* composer */}
-      <div className="border-t border-slate-200 dark:border-slate-700 px-4 py-3 shrink-0 bg-white dark:bg-slate-900" dir={ar ? 'rtl' : 'ltr'}>
-        <div className={`${bodyWrap} flex items-end gap-2`}>
+      <div className="px-4 pt-2 pb-4 shrink-0" dir={ar ? 'rtl' : 'ltr'}>
+        <div className={bodyWrap}>
         {mode === 'ask' && (
-          <>
+          <div className="gc-composer">
             <textarea
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
               rows={full ? 2 : 1}
               placeholder={t('اكتب سؤالك أو اطلب صياغة كاملة…', 'Ask, or request a full draft…')}
-              className="flex-1 resize-none hw-textarea text-sm max-h-40"
+              className="gc-input"
             />
             {busy
-              ? <button onClick={stop} className="hw-btn hw-btn-danger hw-btn-sm shrink-0">{t('إيقاف', 'Stop')}</button>
-              : <button onClick={() => send(input)} disabled={!input.trim()} className="hw-btn hw-btn-primary hw-btn-sm shrink-0">{t('إرسال', 'Send')}</button>}
-          </>
+              ? <button onClick={stop} className="gc-send gc-send-stop" title={t('إيقاف', 'Stop')} aria-label={t('إيقاف', 'Stop')}><IconStop /></button>
+              : <button onClick={() => send(input)} disabled={!input.trim()} className="gc-send" title={t('إرسال', 'Send')} aria-label={t('إرسال', 'Send')}><IconSend /></button>}
+          </div>
         )}
         {mode === 'edit' && (
-          <>
+          <div className="gc-composer">
             <input
               value={props.actionInput}
               onChange={e => props.setActionInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !props.proposing && props.actionInput.trim()) props.onPropose(); }}
               placeholder={t('مثال: أضف دور مدير امتثال + سياسة تضارب مصالح', 'e.g. Add a compliance-manager role + conflict-of-interest policy')}
-              className="flex-1 hw-input text-sm"
+              className="gc-input"
             />
-            <button onClick={props.onPropose} disabled={props.proposing || !props.actionInput.trim()} className="hw-btn hw-btn-primary hw-btn-sm shrink-0">{props.proposing ? <span className="animate-spin inline-block">↻</span> : t('اقترح', 'Propose')}</button>
-          </>
+            <button onClick={props.onPropose} disabled={props.proposing || !props.actionInput.trim()} className="hw-btn hw-btn-primary hw-btn-sm shrink-0 !rounded-full">{props.proposing ? <span className="animate-spin inline-block">↻</span> : t('اقترح', 'Propose')}</button>
+          </div>
         )}
         {mode === 'reason' && (
-          <>
+          <div className="gc-composer">
             <input
               value={props.agentInput}
               onChange={e => props.setAgentInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !props.agentRunning && props.agentInput.trim()) props.onRunAgent(); }}
               placeholder={t('مثال: عالج فجوات الامتثال وأضف ما يلزم', 'e.g. Close compliance gaps and add what is needed')}
-              className="flex-1 hw-input text-sm"
+              className="gc-input"
             />
-            <button onClick={props.onRunAgent} disabled={props.agentRunning || !props.agentInput.trim()} className="hw-btn hw-btn-primary hw-btn-sm shrink-0">{props.agentRunning ? <span className="animate-spin inline-block">↻</span> : t('شغّل', 'Run')}</button>
-          </>
+            <button onClick={props.onRunAgent} disabled={props.agentRunning || !props.agentInput.trim()} className="hw-btn hw-btn-primary hw-btn-sm shrink-0 !rounded-full">{props.agentRunning ? <span className="animate-spin inline-block">↻</span> : t('شغّل', 'Run')}</button>
+          </div>
         )}
         </div>
       </div>

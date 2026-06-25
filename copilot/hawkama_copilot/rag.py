@@ -19,10 +19,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+import mimetypes
+
 from . import genai_client
 from .chunking import Chunk, classify_doc_kind, hierarchical_chunk
 from .config import SETTINGS
-from .extraction import ExtractResult, extract_bytes, extract_file
+from .extraction import ExtractResult, caption_image, extract_bytes, extract_file, is_image
 from .vector_store import VectorStore
 
 
@@ -42,6 +44,7 @@ class Evidence:
     text: str
     score: float
     chunk_id: str
+    kind: str = "text"  # "text" | "image"
 
 
 class RagEngine:
@@ -63,16 +66,56 @@ class RagEngine:
         files: list[tuple[str, bytes]],
         on_progress: Callable[[str, int, int], None] | None = None,
     ) -> list[IngestReport]:
-        items = [(name, extract_bytes(data, filename=name)) for name, data in files]
-        return self._ingest_extracted(items, on_progress)
+        # Images take the MULTIMODAL path (embed the image itself into the shared
+        # vector space, with a caption as readable evidence); everything else is
+        # extracted to text and chunked.
+        image_chunks: list[Chunk] = []
+        image_reports: list[IngestReport] = []
+        text_items: list[tuple[str, ExtractResult]] = []
+        for name, data in files:
+            if is_image(name):
+                ch = self._image_chunk(name, data)
+                if ch:
+                    image_chunks.append(ch)
+                    image_reports.append(IngestReport(name, "image-embed", 1))
+                else:
+                    image_reports.append(IngestReport(name, "image", 0, error="image embed failed"))
+            else:
+                text_items.append((name, extract_bytes(data, filename=name)))
+
+        reports = self._ingest_extracted(text_items, on_progress, extra_chunks=image_chunks)
+        return image_reports + reports
+
+    def _image_chunk(self, name: str, data: bytes) -> Chunk | None:
+        """Build one image chunk: multimodal embedding of the image + a caption."""
+        vec = genai_client.embed_image(
+            data, mime_type=mimetypes.guess_type(name)[0] or "image/png"
+        )
+        if not vec:
+            return None
+        caption = caption_image(data, name) or f"صورة: {name}"
+        ch = Chunk(
+            text=caption,
+            heading_path=name,
+            char_start=0,
+            ordinal=0,
+            doc_id=name,
+            doc_name=name,
+            doc_kind="image",
+            kind="image",
+            media_mime=mimetypes.guess_type(name)[0] or "image/png",
+        )
+        ch.embedding = vec
+        return ch
 
     def _ingest_extracted(
         self,
         items: list[tuple[str, ExtractResult]],
         on_progress: Callable[[str, int, int], None] | None,
+        extra_chunks: list[Chunk] | None = None,
     ) -> list[IngestReport]:
         reports: list[IngestReport] = []
-        all_new: list[Chunk] = []
+        text_chunks: list[Chunk] = []
         for name, res in items:
             if not res.ok:
                 reports.append(IngestReport(name, res.method, 0, error=res.error or "no text"))
@@ -80,12 +123,14 @@ class RagEngine:
             kind = classify_doc_kind(name, res.text)
             doc_id = f"{name}"
             chunks = hierarchical_chunk(res.text, doc_id=doc_id, doc_name=name, doc_kind=kind)
-            all_new.extend(chunks)
+            text_chunks.extend(chunks)
             reports.append(IngestReport(name, res.method, len(chunks)))
 
-        if all_new:
-            self._embed_chunks(all_new, on_progress)
-            self.store.add(all_new)
+        if text_chunks:
+            self._embed_chunks(text_chunks, on_progress)   # text → text embeddings
+        combined = text_chunks + list(extra_chunks or [])  # image chunks pre-embedded
+        if combined:
+            self.store.add(combined)
             self.store.save()
         return reports
 
@@ -154,6 +199,7 @@ class RagEngine:
                 text=c.text,
                 score=round(s, 4),
                 chunk_id=c.id,
+                kind=getattr(c, "kind", "text"),
             )
             for i, (c, s) in enumerate(kept)
         ]
@@ -171,7 +217,8 @@ class RagEngine:
         out: list[str] = []
         used = 0
         for ev in items:
-            head = f"[{ev.label}] {ev.doc_name}" + (f" › {ev.heading_path}" if ev.heading_path else "")
+            tag = " (صورة)" if ev.kind == "image" else ""
+            head = f"[{ev.label}]{tag} {ev.doc_name}" + (f" › {ev.heading_path}" if ev.heading_path else "")
             body = ev.text.strip()
             block = f"{head}\n{body}"
             if used + len(block) > max_chars:

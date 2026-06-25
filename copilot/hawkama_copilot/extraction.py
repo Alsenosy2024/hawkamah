@@ -50,6 +50,29 @@ def extract_file(path: str | Path) -> ExtractResult:
     return extract_bytes(data, filename=p.name)
 
 
+def is_image(filename: str) -> bool:
+    return Path(filename).suffix.lower() in _IMG_EXT
+
+
+def caption_image(data: bytes, filename: str) -> str:
+    """Short Arabic caption + any visible text for an image, used as the readable
+    evidence/citation text alongside the image's multimodal embedding."""
+    mime = mimetypes.guess_type(filename)[0] or "image/png"
+    prompt = (
+        "صف محتوى هذه الصورة بإيجاز (سطر إلى ثلاثة أسطر) بالعربية، واذكر أي نص ظاهر فيها "
+        "حرفيًا إن وجد. لا تضف مقدمات."
+    )
+    try:
+        client = genai_client.get_client()
+        resp = client.models.generate_content(
+            model=MODELS.text,
+            contents=[prompt, types.Part.from_bytes(data=data, mime_type=mime)],
+        )
+        return (resp.text or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def extract_bytes(data: bytes, *, filename: str) -> ExtractResult:
     """Extract text from in-memory bytes (used by the upload API)."""
     ext = Path(filename).suffix.lower()

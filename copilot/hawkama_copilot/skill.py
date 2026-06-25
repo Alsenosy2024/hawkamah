@@ -45,6 +45,14 @@ GROUNDING_RULE = (
     "ميّز بوضوح ما هو ثابت بالدليل عمّا هو استنتاج أو توصية."
 )
 
+# Output formatting: diagrams MUST be valid Mermaid code blocks (rendered as real
+# diagrams by the app), never ASCII art; tabular data as Markdown tables.
+FORMATTING_RULE = (
+    "التنسيق: عند الحاجة إلى رسمٍ بياني أو هيكل تنظيمي أو مخطط تدفّق أو خريطة علاقات، "
+    "أخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (مثل graph TD أو flowchart LR). "
+    "لا ترسم المخططات بالحروف أو ASCII أبداً. قدّم البيانات الجدولية كجداول Markdown."
+)
+
 
 @dataclass(frozen=True)
 class Deliverable:
@@ -226,7 +234,7 @@ QUALITY_GATES: tuple[QualityGate, ...] = (
 
 def system_prompt(extra: str = "") -> str:
     """Full agent system prompt: persona + grounding rule + optional context."""
-    parts = [PERSONA, GROUNDING_RULE]
+    parts = [PERSONA, GROUNDING_RULE, FORMATTING_RULE]
     if extra:
         parts.append(extra)
     return "\n\n".join(parts)

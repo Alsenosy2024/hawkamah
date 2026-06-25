@@ -276,6 +276,33 @@ def embed_one(text: str, *, task_type: str, dim: int | None = None) -> list[floa
     return res[0] if res else []
 
 
+def embed_image(image_bytes: bytes, *, mime_type: str, dim: int | None = None, attempts: int = 4) -> list[float]:
+    """Embed an image into the SAME vector space as text via gemini-embedding-2.
+
+    Only the multimodal model is used (the text-only fallback can't accept image
+    parts), so this returns [] on failure rather than degrading to a text model.
+    """
+    if not image_bytes:
+        return []
+    client = get_client()
+    out_dim = dim or SETTINGS.embed_dim
+    cfg = types.EmbedContentConfig(output_dimensionality=out_dim)
+    part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+    for attempt in range(attempts):
+        try:
+            resp = client.models.embed_content(model=MODELS.embed, contents=part, config=cfg)
+            vecs = [list(e.values) for e in (resp.embeddings or [])]
+            if vecs and vecs[0]:
+                return _normalize(vecs[0], out_dim)
+            return []
+        except Exception as e:  # noqa: BLE001
+            if _retryable(e) and attempt < attempts - 1:
+                time.sleep(_backoff(attempt))
+                continue
+            return []
+    return []
+
+
 def _normalize(vec: list[float], expected_dim: int) -> list[float]:
     # gemini-embedding-001 returns unit-norm vectors only at 3072; truncated MRL
     # vectors must be re-normalized for cosine/dot-product to behave.
