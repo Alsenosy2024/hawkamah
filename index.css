@@ -875,6 +875,26 @@ html.dark .gc-composer { background: var(--hw-surface-subtle); border-color: var
 .gc-send:disabled { opacity: 0.4; cursor: not-allowed; background: var(--hw-text-subtle); }
 .gc-send-stop { background: var(--hw-danger); }
 
+/* ── Image attach (multimodal RAG) ─────────────────────────────── */
+.gc-attach {
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: var(--gc-r-pill);
+  display: grid; place-items: center; cursor: pointer;
+  background: transparent; color: var(--hw-text-subtle);
+  border: 1px solid var(--hw-border-strong);
+  transition: transform var(--hw-fast) var(--gc-ease-emph), color var(--hw-fast) var(--gc-ease-emph), border-color var(--hw-fast) var(--gc-ease-emph), background var(--hw-fast) var(--gc-ease-emph);
+}
+.gc-attach:hover { color: var(--hw-brand); border-color: var(--hw-brand); background: var(--hw-brand-focus); transform: scale(1.05); }
+.gc-attach:active { transform: scale(0.92); }
+.gc-attach-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 6px 8px; }
+.gc-thumb { position: relative; width: 56px; height: 56px; border-radius: 12px; overflow: hidden; border: 1px solid var(--hw-border-strong); box-shadow: 0 1px 2px rgba(18,42,51,0.06); }
+.gc-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gc-thumb-x {
+  position: absolute; top: 2px; inset-inline-end: 2px; width: 18px; height: 18px; line-height: 1;
+  border-radius: 50%; border: none; cursor: pointer; display: grid; place-items: center;
+  background: rgba(15,23,42,0.72); color: #fff; font-size: 13px;
+}
+.gc-thumb-x:hover { background: var(--hw-danger); }
+
 /* ── Message blocks ────────────────────────────────────────────── */
 @keyframes gc-msg-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .gc-msg-in { animation: gc-msg-in var(--gc-d-msg) var(--gc-ease-decel) both; }

@@ -127,6 +127,9 @@ const IconRestore: React.FC = () => (
 const IconClose: React.FC = () => (
   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
 );
+const IconAttach: React.FC = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+);
 
 // Gemini "thinking" placeholder — breathing spark + shimmering skeleton bars.
 const GcThinking: React.FC<{ label: string }> = ({ label }) => (
@@ -168,6 +171,10 @@ const GovCopilot: React.FC<Props> = (props) => {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const chunksRef = useRef<DocChunk[] | null>(null);
+  // Ask-mode image attachments (multimodal RAG via gemini-embedding-2). Kept
+  // LOCAL to the copilot (no new parent props) so it never touches the parent.
+  const [attachments, setAttachments] = useState<{ file: File; url: string }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   // Memoizes the one-time sync of this tenant's docs into the Python copilot
   // corpus (see ensureCorpus). Reset when the tenant changes.
   const corpusReadyRef = useRef<Promise<void> | null>(null);
@@ -252,11 +259,31 @@ const GovCopilot: React.FC<Props> = (props) => {
     return corpusReadyRef.current;
   };
 
+  const pickImages = () => fileInputRef.current?.click();
+  const onFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fl = e.target.files;
+    const picked: File[] = [];
+    for (let i = 0; fl && i < fl.length; i++) {
+      const f = fl.item(i);
+      if (f && f.type.startsWith('image/')) picked.push(f);
+    }
+    if (picked.length) setAttachments(a => [...a, ...picked.map(f => ({ file: f, url: URL.createObjectURL(f) }))]);
+    if (fileInputRef.current) fileInputRef.current.value = '';   // allow re-picking the same file
+  };
+  const removeAttachment = (i: number) => setAttachments(a => {
+    if (a[i]?.url) URL.revokeObjectURL(a[i].url);
+    return a.filter((_, j) => j !== i);
+  });
+
   const send = async (text: string) => {
-    const q = text.trim();
-    if (!q || busy) return;
+    const raw = text.trim();
+    const att = attachments;                 // snapshot; chips clear immediately
+    if ((!raw && !att.length) || busy) return;
+    const q = raw || t('حلّل الصور المرفقة وصِفها.', 'Analyze and describe the attached image(s).');
     setInput('');
-    const userMsg: Msg = { id: nid(), sender: 'user', text: q, thoughts: [], thinking: false, streaming: false };
+    setAttachments([]);
+    const attNote = att.length ? t(` (${att.length} صورة مرفقة)`, ` (${att.length} image(s) attached)`) : '';
+    const userMsg: Msg = { id: nid(), sender: 'user', text: q + attNote, thoughts: [], thinking: false, streaming: false };
     const agentId = nid();
     const agentMsg: Msg = { id: agentId, sender: 'agent', text: '', thoughts: [], thinking: true, streaming: true };
     const history: ChatTurn[] = msgs.map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text }] }));
@@ -279,6 +306,13 @@ const GovCopilot: React.FC<Props> = (props) => {
           scrollDown();
         }
         try { await ensureCorpus(); } catch { /* degrade: query with whatever is indexed */ }
+        // Ingest any attached images into the corpus (multimodal gemini-embedding-2)
+        // so this and later questions can retrieve them.
+        if (att.length) {
+          patch(m => ({ ...m, thoughts: [...m.thoughts, { id: nid(), text: t('جاري تحليل وفهرسة الصور المرفقة…', 'Analyzing & indexing attached image(s)…') }] }));
+          scrollDown();
+          try { await copilotIngest(corpus, att.map(a => a.file)); } catch { /* non-fatal */ }
+        }
         if (LONG_RE.test(q)) {
           const doc = await copilotDraft({ corpus, request: q + FORMAT_HINT, language }, ac.signal);
           const docs = [...new Set(doc.sources.map(s => s.doc).filter(Boolean))];
@@ -315,6 +349,7 @@ const GovCopilot: React.FC<Props> = (props) => {
     } catch {
       patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد.', 'Failed.') }));
     } finally {
+      att.forEach(a => URL.revokeObjectURL(a.url));   // free object URLs
       setBusy(false);
       abortRef.current = null;
     }
@@ -649,19 +684,37 @@ const GovCopilot: React.FC<Props> = (props) => {
       <div className="px-4 pt-2 pb-4 shrink-0" dir={ar ? 'rtl' : 'ltr'}>
         <div className={bodyWrap}>
         {mode === 'ask' && (
-          <div className="gc-composer">
-            <textarea
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
-              rows={full ? 2 : 1}
-              placeholder={t('اكتب سؤالك أو اطلب صياغة كاملة…', 'Ask, or request a full draft…')}
-              className="gc-input"
-            />
-            {busy
-              ? <button onClick={stop} className="gc-send gc-send-stop" title={t('إيقاف', 'Stop')} aria-label={t('إيقاف', 'Stop')}><IconStop /></button>
-              : <button onClick={() => send(input)} disabled={!input.trim()} className="gc-send" title={t('إرسال', 'Send')} aria-label={t('إرسال', 'Send')}><IconSend /></button>}
-          </div>
+          <>
+            {copilotEnabled() && attachments.length > 0 && (
+              <div className="gc-attach-row" dir={ar ? 'rtl' : 'ltr'}>
+                {attachments.map((a, i) => (
+                  <div key={a.url} className="gc-thumb">
+                    <img src={a.url} alt={a.file.name} />
+                    <button type="button" className="gc-thumb-x" onClick={() => removeAttachment(i)} title={t('إزالة', 'Remove')} aria-label={t('إزالة', 'Remove')}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="gc-composer">
+              {copilotEnabled() && (
+                <>
+                  <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={onFilesSelected} className="hidden" />
+                  <button type="button" onClick={pickImages} className="gc-attach" title={t('إرفاق صورة', 'Attach image')} aria-label={t('إرفاق صورة', 'Attach image')}><IconAttach /></button>
+                </>
+              )}
+              <textarea
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
+                rows={full ? 2 : 1}
+                placeholder={t('اكتب سؤالك أو اطلب صياغة كاملة…', 'Ask, or request a full draft…')}
+                className="gc-input"
+              />
+              {busy
+                ? <button onClick={stop} className="gc-send gc-send-stop" title={t('إيقاف', 'Stop')} aria-label={t('إيقاف', 'Stop')}><IconStop /></button>
+                : <button onClick={() => send(input)} disabled={!input.trim() && !attachments.length} className="gc-send" title={t('إرسال', 'Send')} aria-label={t('إرسال', 'Send')}><IconSend /></button>}
+            </div>
+          </>
         )}
         {mode === 'edit' && (
           <div className="gc-composer">
