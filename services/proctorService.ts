@@ -11,6 +11,7 @@
 
 import { GoogleGenAI, Modality } from '@google/genai';
 import { MODELS } from '../constants/models';
+import { speak as ttsSpeak } from './ttsService';
 import {
   initProctorState,
   buildProctorSystemInstruction,
@@ -39,6 +40,8 @@ export interface LiveProctorOptions {
   onStatus: (status: 'connecting' | 'live' | 'unavailable' | 'closed') => void;
   /** Frame pump interval in ms (default 2500). */
   intervalMs?: number;
+  /** Returns the candidate's current question index, so each alert records WHERE it happened. */
+  getQuestion?: () => number | null | undefined;
 }
 
 export interface LiveProctorHandle {
@@ -204,6 +207,11 @@ export function createLiveProctor(opts: LiveProctorOptions): LiveProctorHandle {
   // ── Internal helpers ────────────────────────────────────────────────────────
 
   function applyAndBroadcast(alert: ProctorAlert): void {
+    // Stamp the question the candidate was on when this was detected.
+    if (alert.questionIndex == null) {
+      const q = opts.getQuestion?.();
+      if (typeof q === 'number') alert.questionIndex = q;
+    }
     state = applyAlert(state, alert);
     try { opts.onAlert(alert); }    catch { /* never let callback throw */ }
     try { opts.onState(state); }    catch { /* never let callback throw */ }
@@ -333,3 +341,43 @@ export function createLiveProctor(opts: LiveProctorOptions): LiveProctorHandle {
 
   return { start, pushEvent, stop };
 }
+
+// ─── Spoken alarm ───────────────────────────────────────────────────────────────
+// Speak a short out-loud warning when a suspicious action is detected. Throttled so
+// the recurring per-frame alerts (one every ~4s while a violation persists) don't
+// spam the candidate, and gated to medium+ severity. Uses the browser's
+// SpeechSynthesis (independent of the neural interviewer TTS), never throws.
+let _lastAlarmMs = 0;
+const ALARM_MIN_GAP_MS = 12_000;   // at most one spoken alarm per 12s
+
+export function speakProctorAlarm(
+  language: 'ar' | 'en',
+  opts?: { severity?: string; questionIndex?: number | null },
+): void {
+  try {
+    if (typeof window === 'undefined') return;
+    const sev = opts?.severity;
+    if (sev === 'low' || sev === 'none') return;            // only alarm on medium/high/critical
+    const now = Date.now();
+    if (now - _lastAlarmMs < ALARM_MIN_GAP_MS) return;      // throttle
+    _lastAlarmMs = now;
+
+    const qn = opts?.questionIndex != null ? opts.questionIndex + 1 : null;
+    const text = language === 'ar'
+      ? `تنبيه. تم رصد سلوك مخالف${qn ? ` في السؤال ${qn}` : ''}. يُرجى التوقف والتركيز في المقابلة.`
+      : `Warning. Suspicious activity detected${qn ? ` on question ${qn}` : ''}. Please stop and focus on the interview.`;
+
+    // Speak the alarm in the SAME male Gemini voice (Puck) as the interviewer, via
+    // the neural TTS chain — never the browser's default Arabic voice, which is
+    // female on most platforms. instant:false so we wait for the male neural voice
+    // instead of momentarily emitting a female Web Speech fallback.
+    void ttsSpeak(text, {
+      gender: 'male',
+      lang: language === 'ar' ? 'ar-SA' : 'en-US',
+      instant: false,
+    }).catch(() => { /* never throw out of an alarm */ });
+  } catch { /* never throw out of an alarm */ }
+}
+
+/** Reset the alarm throttle (call at the start of a fresh attempt). */
+export function resetProctorAlarm(): void { _lastAlarmMs = 0; }

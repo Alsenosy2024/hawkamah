@@ -5,6 +5,7 @@ import type { ChatTurn } from '../services/agentOrchestrator';
 import { loadChunks, retrieve } from '../services/governanceService';
 import { exportMessageDocx, exportMessageXlsx, exportMessagePdfDirect, exportMessageHtml, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual } from '../services/exportService';
 import { exportMessagePptx } from '../services/pptxExport';
+import { copilotEnabled, askStream as copilotAsk, draft as copilotDraft, exportDoc as copilotExport } from '../services/copilotClient';
 import ThinkingTrace from './ThinkingTrace';
 import Markdown from './Markdown';
 
@@ -152,6 +153,29 @@ const GovCopilot: React.FC<Props> = (props) => {
     abortRef.current = ac;
     const patch = (fn: (m: Msg) => Msg) => setMsgs(ms => ms.map(m => m.id === agentId ? fn(m) : m));
     try {
+      // Python google-genai agent path (feature-flagged via VITE_COPILOT_API).
+      // A long-form request → /draft (full multi-page doc); else → /ask (grounded
+      // streaming Q&A). Falls through to the in-app stageChat path when disabled.
+      if (copilotEnabled()) {
+        const corpus = tenantId || 'default';
+        if (LONG_RE.test(q)) {
+          const doc = await copilotDraft({ corpus, request: q, language }, ac.signal);
+          const docs = [...new Set(doc.sources.map(s => s.doc).filter(Boolean))];
+          patch(m => ({ ...m, thinking: false, streaming: false, text: doc.markdown, sources: docs }));
+        } else {
+          await copilotAsk(
+            { corpus, message: q, history: history.map(h => ({ role: h.role, content: h.parts?.[0]?.text || '' })) },
+            {
+              onSources: ss => { const d = [...new Set(ss.map(s => s.doc).filter(Boolean))]; if (d.length) patch(m => ({ ...m, sources: d })); },
+              onAnswer: chunk => { patch(m => ({ ...m, thinking: false, text: m.text + chunk })); scrollDown(); },
+              onDone: () => patch(m => ({ ...m, thinking: false, streaming: false })),
+              onError: () => patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد. أعد المحاولة.', 'Failed. Retry.') })),
+            },
+            ac.signal,
+          );
+        }
+        return;
+      }
       const { ctx, count, sources } = await buildFileContext(q, ac.signal);
       if (sources.length) patch(m => ({ ...m, sources }));
       await stageChat(
@@ -182,6 +206,12 @@ const GovCopilot: React.FC<Props> = (props) => {
     const title = (md.match(/^#+\s*(.+)$/m)?.[1] || stageLabel || 'governance').slice(0, 60).trim();
     setExporting(kind + md.slice(0, 8));
     try {
+      // Server-side rendering via the Python agent when enabled (Arabic RTL
+      // DOCX/PDF/XLSX/PPTX/HTML), else the in-app exporters.
+      if (copilotEnabled()) {
+        await copilotExport(md, title, kind, { company: model?.companyName || undefined });
+        return;
+      }
       const o = {
         language: (language || 'ar') as Language,
         fontFamily: 'Tajawal',
@@ -227,34 +257,34 @@ const GovCopilot: React.FC<Props> = (props) => {
   if (!open) {
     return (
       <button onClick={() => setOpen(true)}
-        className="hw-btn hw-btn-primary fixed bottom-5 end-5 z-40 rounded-full px-5 h-12 text-sm font-extrabold">
-        🤖 {t('كوبايلوت الحوكمة', 'Governance copilot')}
+        className="hw-btn hw-btn-primary fixed bottom-5 end-5 z-40 rounded-md px-4 h-10 text-sm shadow-sm">
+        {t('كوبايلوت الحوكمة', 'Governance copilot')}
       </button>
     );
   }
 
-  const modePill = (m: GovCopilotMode, icon: string, label: string) => (
+  const modePill = (m: GovCopilotMode, _icon: string, label: string) => (
     <button onClick={() => setMode(m)}
-      className={`hw-btn hw-btn-xs ${mode === m ? 'hw-btn-primary' : 'hw-btn-ghost'}`}>
-      {icon} {label}
+      className={`hw-tab-line ${mode === m ? 'hw-tab-active' : ''}`}>
+      {label}
     </button>
   );
 
   const exportBtn = (kind: 'docx' | 'xlsx' | 'pdf' | 'pptx' | 'html', icon: string, label: string, md: string) => (
     <button onClick={() => exportAs(kind, md)} disabled={!!exporting}
-      className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-[11px] font-bold text-slate-600 dark:text-slate-300 disabled:opacity-50">
-      {exporting === kind + md.slice(0, 8) ? '⏳' : icon} {label}
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 hover:border-emerald-400 hover:text-emerald-700 dark:hover:border-emerald-500 dark:hover:text-emerald-300 text-[11px] font-medium text-slate-600 dark:text-slate-300 transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed">
+      {exporting === kind + md.slice(0, 8) ? <span className="animate-spin inline-block">↻</span> : null}{label}
     </button>
   );
 
   const exportRow = (md: string) => (
-    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-      <span className="text-[10px] text-slate-400">{t('تصدير:', 'Export:')}</span>
-      {exportBtn('html', '🌐', t('HTML تفاعلي', 'Interactive HTML'), md)}
-      {exportBtn('docx', '📄', 'Word', md)}
-      {exportBtn('pdf', '📕', 'PDF', md)}
-      {exportBtn('xlsx', '📊', 'Excel', md)}
-      {exportBtn('pptx', '📈', t('عرض', 'Slides'), md)}
+    <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+      <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">{t('تصدير', 'Export')}</span>
+      {exportBtn('html', '', t('HTML', 'HTML'), md)}
+      {exportBtn('docx', '', 'Word', md)}
+      {exportBtn('pdf', '', 'PDF', md)}
+      {exportBtn('xlsx', '', 'Excel', md)}
+      {exportBtn('pptx', '', t('عرض', 'Slides'), md)}
     </div>
   );
 
@@ -263,70 +293,71 @@ const GovCopilot: React.FC<Props> = (props) => {
   // beside it; the panel is page-aware (stageKey) and acts inline.
   const shellCls = full
     ? 'fixed inset-0 z-50 w-screen h-screen rounded-none bg-white dark:bg-slate-900 flex flex-col'
-    : 'fixed top-0 end-0 z-40 h-screen w-[min(96vw,460px)] rounded-none border-s border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-2xl flex flex-col';
+    : 'fixed top-0 end-0 z-40 h-screen w-[min(96vw,460px)] rounded-none border-s border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-sm flex flex-col';
   const shellStyle = full ? undefined : { maxHeight: '100vh' };
   const bodyWrap = full ? 'mx-auto w-full max-w-3xl' : '';
 
   return (
     <div className={shellCls} style={shellStyle}>
       {/* header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-700 bg-emerald-50/70 dark:bg-emerald-900/20 shrink-0">
-        <div className="flex flex-col">
-          <span className="text-sm font-extrabold text-emerald-800 dark:text-emerald-200">🤖 {t('كوبايلوت الحوكمة', 'Governance copilot')}</span>
-          <span className="text-[10px] text-slate-500 dark:text-slate-400">
-            {t('المرحلة', 'Stage')}: {stageLabel}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shrink-0">
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <span className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">{t('كوبايلوت الحوكمة', 'Governance copilot')}</span>
+          <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate leading-none">
+            {stageLabel}
             {/* P0-2: truthful connection status from the live snapshot — never claim
                 "bound to files" when nothing is uploaded or indexing failed. */}
             {stateSnapshot && (
               stateSnapshot.permissionError
-                ? <span className="ms-2 text-rose-600 dark:text-rose-400">· ⛔ {t('تعذّر قراءة البيانات (صلاحيات)', 'cannot read data (perm)')}</span>
+                ? <span className="ms-2 text-rose-600 dark:text-rose-400">{t('· تعذّر قراءة البيانات (صلاحيات)', '· cannot read data (perm)')}</span>
                 : stateSnapshot.chunkCount > 0
-                  ? <span className="ms-2">· 📎 {t(`${stateSnapshot.documentsCount} وثيقة · ${stateSnapshot.chunkCount} مقطع مفهرس`, `${stateSnapshot.documentsCount} docs · ${stateSnapshot.chunkCount} indexed`)}</span>
+                  ? <span className="ms-2 text-slate-400">{t(`· ${stateSnapshot.documentsCount} وثيقة · ${stateSnapshot.chunkCount} مقطع`, `· ${stateSnapshot.documentsCount} docs · ${stateSnapshot.chunkCount} indexed`)}</span>
                   : stateSnapshot.documentsCount > 0
-                    ? <span className="ms-2 text-amber-600 dark:text-amber-400">· ⚠️ {t(`${stateSnapshot.documentsCount} وثيقة مرفوعة · غير مفهرسة`, `${stateSnapshot.documentsCount} uploaded · un-indexed`)}</span>
-                    : <span className="ms-2">· {t('لا مصادر بعد', 'no sources yet')}</span>
+                    ? <span className="ms-2 text-amber-600 dark:text-amber-400">{t(`· ${stateSnapshot.documentsCount} وثيقة غير مفهرسة`, `· ${stateSnapshot.documentsCount} un-indexed`)}</span>
+                    : <span className="ms-2 text-slate-400">{t('· لا مصادر', '· no sources')}</span>
             )}
           </span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5 shrink-0 ms-2">
           <button onClick={() => setFull(f => !f)} title={full ? t('تصغير', 'Restore') : t('ملء الشاشة', 'Full screen')}
-            className="text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-300 text-lg leading-none px-1">
-            {full ? '🗗' : '⛶'}
+            className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-700 dark:hover:text-emerald-300 transition-colors duration-150 text-sm">
+            {full ? '⊡' : '⊞'}
           </button>
-          <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl leading-none px-1">×</button>
+          <button onClick={() => setOpen(false)}
+            className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 dark:hover:text-slate-200 transition-colors duration-150 text-lg leading-none">×</button>
         </div>
       </div>
 
-      {/* mode pills + full-manual export */}
-      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-100 dark:border-slate-700 shrink-0">
+      {/* mode tabs + full-manual export */}
+      <div className="flex items-center gap-0 px-4 border-b border-slate-200 dark:border-slate-700 shrink-0 hw-tabs-line">
         {modePill('ask', '💬', t('سؤال', 'Ask'))}
-        {modePill('edit', '✏️', t('تعديل النموذج', 'Edit model'))}
+        {modePill('edit', '✏️', t('تعديل', 'Edit'))}
         {modePill('reason', '🎯', t('هدف', 'Goal'))}
 
         {/* full structured governance manual — built from the live model */}
-        <div className="relative ms-auto">
+        <div className="relative ms-auto pb-px">
           <button
             onClick={() => hasModel && setManualMenu(v => !v)}
             disabled={!hasModel || !!manualBusy}
             title={hasModel ? t('تصدير دليل الحوكمة الكامل', 'Export full governance manual') : t('ابنِ نموذج الحوكمة أولاً', 'Build the governance model first')}
-            className="px-2.5 py-1 rounded-lg text-[11px] font-extrabold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">
-            {manualBusy ? '⏳' : '📚'} {t('الدليل الكامل', 'Full manual')}
+            className="hw-btn hw-btn-ghost hw-btn-sm disabled:opacity-40 disabled:cursor-not-allowed">
+            {manualBusy ? <span className="animate-spin inline-block">↻</span> : null} {t('الدليل الكامل', 'Full manual')}
           </button>
           {manualMenu && hasModel && (
-            <div className="absolute end-0 mt-1 z-50 w-60 rounded-xl border border-emerald-200 dark:border-emerald-700 bg-white dark:bg-slate-800 shadow-2xl p-1.5 text-start"
+            <div className="absolute end-0 mt-1 z-50 w-60 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-md p-1 text-start"
               dir={ar ? 'rtl' : 'ltr'}>
-              <div className="px-2 py-1 text-[10px] font-bold text-slate-400">{t('تصدير دليل الحوكمة الكامل (Word)', 'Export full governance manual (Word)')}</div>
+              <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{t('تصدير Word', 'Export as Word')}</div>
               <button onClick={() => exportManual('workflow')} disabled={!!manualBusy}
-                className="w-full text-start px-2 py-1.5 rounded-lg text-[12px] font-bold text-slate-700 dark:text-slate-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/40 disabled:opacity-50">
-                {manualBusy === 'workflow' ? '⏳' : '🔄'} {t('دليل دورة العمل المتكاملة', 'Integrated workflow manual')}
+                className="w-full text-start px-3 py-2 rounded-md text-[12px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors duration-150">
+                {manualBusy === 'workflow' ? <span className="animate-spin inline-block me-1">↻</span> : null}{t('دليل دورة العمل المتكاملة', 'Integrated workflow manual')}
               </button>
               <button onClick={() => exportManual('jds')} disabled={!!manualBusy}
-                className="w-full text-start px-2 py-1.5 rounded-lg text-[12px] font-bold text-slate-700 dark:text-slate-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/40 disabled:opacity-50">
-                {manualBusy === 'jds' ? '⏳' : '👤'} {t('دليل الأوصاف الوظيفية', 'Job descriptions manual')}
+                className="w-full text-start px-3 py-2 rounded-md text-[12px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors duration-150">
+                {manualBusy === 'jds' ? <span className="animate-spin inline-block me-1">↻</span> : null}{t('دليل الأوصاف الوظيفية', 'Job descriptions manual')}
               </button>
               <button onClick={() => exportManual('policies')} disabled={!!manualBusy}
-                className="w-full text-start px-2 py-1.5 rounded-lg text-[12px] font-bold text-slate-700 dark:text-slate-200 hover:bg-emerald-50 dark:hover:bg-emerald-900/40 disabled:opacity-50">
-                {manualBusy === 'policies' ? '⏳' : '📋'} {t('دليل السياسات والصلاحيات', 'Policies & authorities manual')}
+                className="w-full text-start px-3 py-2 rounded-md text-[12px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors duration-150">
+                {manualBusy === 'policies' ? <span className="animate-spin inline-block me-1">↻</span> : null}{t('دليل السياسات والصلاحيات', 'Policies & authorities manual')}
               </button>
             </div>
           )}
@@ -334,33 +365,33 @@ const GovCopilot: React.FC<Props> = (props) => {
       </div>
 
       {/* body */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3" dir={ar ? 'rtl' : 'ltr'}>
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3" dir={ar ? 'rtl' : 'ltr'}>
         <div className={bodyWrap}>
         {mode === 'ask' && (
           <>
             {msgs.length === 0 && (
-              <div className="text-xs text-slate-400 dark:text-slate-500 leading-relaxed space-y-1">
-                <p>{t('اسأل أو اطلب صياغة كاملة — يفكّر، يسترجع من ملفاتك المرفوعة، ويكتب وثيقة كاملة قابلة للتصدير.', 'Ask or request a full draft — it reasons, retrieves from your uploaded files, and writes an export-ready document.')}</p>
-                <p className="text-[11px]">{t('مثال: «اكتب سياسة تضارب المصالح كاملة مستندة للملفات» أو «صيغة استراتيجية حوكمة كاملة».', 'e.g. "Write a complete conflict-of-interest policy grounded in the files" or "A full governance strategy".')}</p>
+              <div className="text-[12px] text-slate-400 dark:text-slate-500 leading-relaxed space-y-1.5 py-4">
+                <p className="font-medium text-slate-500 dark:text-slate-400">{t('اسأل أو اطلب صياغة كاملة — يفكّر، يسترجع من ملفاتك المرفوعة، ويكتب وثيقة قابلة للتصدير.', 'Ask or request a full draft — reasons, retrieves from your files, and writes an export-ready document.')}</p>
+                <p className="text-[11px]">{t('مثال: «اكتب سياسة تضارب المصالح كاملة مستندة للملفات»', 'e.g. "Write a complete conflict-of-interest policy grounded in the files"')}</p>
               </div>
             )}
             {msgs.map(m => (
-              <div key={m.id} className={`${m.sender === 'user' ? 'text-end' : ''} space-y-1`}>
+              <div key={m.id} className={`space-y-1 ${m.sender === 'user' ? 'flex flex-col items-end' : ''}`}>
                 {m.sender === 'agent' && (m.thinking || m.thoughts.length > 0) && (
                   <ThinkingTrace thoughts={m.thoughts} active={m.thinking} language={language || 'ar'} />
                 )}
                 {m.sender === 'user' ? (
-                  <div className="inline-block max-w-[88%] px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap bg-emerald-600 text-white">
+                  <div className="max-w-[88%] px-3 py-2 rounded-md text-sm leading-relaxed whitespace-pre-wrap bg-emerald-600 text-white">
                     {m.text}
                   </div>
                 ) : (
-                  <div className="block w-full px-3 py-2 rounded-2xl text-sm bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100">
+                  <div className="w-full px-3 py-2.5 rounded-md text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100">
                     {m.text
                       ? <Markdown text={m.text} rtl={ar} />
-                      : <span className="text-slate-400">{m.thinking ? t('يفكّر…', 'thinking…') : ''}</span>}
+                      : <span className="text-slate-400 text-[12px] italic">{m.thinking ? t('يفكّر…', 'thinking…') : ''}</span>}
                     {m.sources && m.sources.length > 0 && (
-                      <div className="mt-2 text-[10px] text-slate-400 dark:text-slate-500">
-                        📎 {t('مصادر', 'Sources')}: {m.sources.join('، ')}
+                      <div className="mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-700 text-[10px] text-slate-400 dark:text-slate-500">
+                        {t('مصادر', 'Sources')}: {m.sources.join('، ')}
                       </div>
                     )}
                     {!m.streaming && m.text.length > 40 && exportRow(m.text)}
@@ -372,21 +403,22 @@ const GovCopilot: React.FC<Props> = (props) => {
         )}
 
         {mode === 'edit' && (
-          <div className="space-y-2">
-            <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('اكتب أمراً بلغة طبيعية — يقترح تعديلات منظّمة تراجعها قبل التطبيق (يُحفظ snapshot).', 'Describe a change in natural language — it proposes structured actions you review before applying (snapshotted).')}</div>
-            {!model && <div className="text-xs text-amber-600">{t('ابنِ النموذج أولاً.', 'Build the model first.')}</div>}
+          <div className="space-y-3 py-2">
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{t('اكتب أمراً بلغة طبيعية — يقترح تعديلات منظّمة تراجعها قبل التطبيق (يُحفظ snapshot).', 'Describe a change in natural language — it proposes structured actions you review before applying (snapshotted).')}</p>
+            {!model && <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400">{t('ابنِ النموذج أولاً.', 'Build the model first.')}</div>}
             {props.proposedActions.length > 0 && (
-              <div className="space-y-1">
+              <div className="space-y-1.5">
+                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{t('الإجراءات المقترحة', 'Proposed actions')} ({props.proposedActions.length})</div>
                 {props.proposedActions.map((a, i) => (
-                  <div key={i} className="text-xs rounded-lg bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-700 p-2">
-                    <span className="font-bold text-emerald-700 dark:text-emerald-300">{a.type}</span>
-                    {a.title || a.name || a.decision ? ` — ${a.title || a.name || a.decision}` : ''}
-                    {a.rationale && <span className="text-slate-400"> · {a.rationale}</span>}
+                  <div key={i} className="text-[12px] rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-2">
+                    <span className="font-semibold text-emerald-700 dark:text-emerald-300">{a.type}</span>
+                    {a.title || a.name || a.decision ? <span className="text-slate-700 dark:text-slate-200"> · {a.title || a.name || a.decision}</span> : ''}
+                    {a.rationale && <span className="text-slate-400"> — {a.rationale}</span>}
                   </div>
                 ))}
                 <div className="flex gap-2 pt-1">
-                  <button onClick={props.onApplyActions} disabled={props.applyBusy} className="hw-btn hw-btn-xs hw-btn-primary">✅ {t(`تطبيق ${props.proposedActions.length}`, `Apply ${props.proposedActions.length}`)}</button>
-                  <button onClick={props.onDiscardActions} className="px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold">{t('تجاهل', 'Discard')}</button>
+                  <button onClick={props.onApplyActions} disabled={props.applyBusy} className="hw-btn hw-btn-primary hw-btn-sm">{t(`تطبيق ${props.proposedActions.length}`, `Apply ${props.proposedActions.length}`)}</button>
+                  <button onClick={props.onDiscardActions} className="hw-btn hw-btn-ghost hw-btn-sm">{t('تجاهل', 'Discard')}</button>
                 </div>
               </div>
             )}
@@ -394,43 +426,44 @@ const GovCopilot: React.FC<Props> = (props) => {
         )}
 
         {mode === 'reason' && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="text-[11px] text-slate-500 dark:text-slate-400 flex-1">{t('هدف مركّب — يخطّط خطوة بخطوة ويصحّح نفسه قبل الإنهاء.', 'A composite goal — plans step-by-step and self-corrects before finishing.')}</div>
-              <label className="flex items-center gap-1 text-[11px] text-slate-600 dark:text-slate-300 font-bold cursor-pointer shrink-0">
-                <input type="checkbox" checked={props.agentAutoApply} onChange={e => props.setAgentAutoApply(e.target.checked)} className="accent-emerald-600" />
+          <div className="space-y-3 py-2">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed flex-1">{t('هدف مركّب — يخطّط خطوة بخطوة ويصحّح نفسه قبل الإنهاء.', 'A composite goal — plans step-by-step and self-corrects before finishing.')}</p>
+              <label className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300 font-medium cursor-pointer shrink-0 mt-0.5">
+                <input type="checkbox" checked={props.agentAutoApply} onChange={e => props.setAgentAutoApply(e.target.checked)} className="accent-emerald-600 rounded-sm" />
                 {t('تطبيق تلقائي', 'Auto-apply')}
               </label>
             </div>
-            {!model && <div className="text-xs text-amber-600">{t('ابنِ النموذج أولاً.', 'Build the model first.')}</div>}
+            {!model && <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400">{t('ابنِ النموذج أولاً.', 'Build the model first.')}</div>}
             {(props.agentSteps.length > 0 || props.agentRunning) && (
-              <div className="space-y-1.5">
+              <div className="space-y-1">
+                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{t('خطوات التنفيذ', 'Execution steps')}</div>
                 {props.agentSteps.map((s, i) => (
-                  <div key={i} className="rounded-lg bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-700 p-2 text-xs">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-mono text-[10px] text-emerald-500">#{s.index + 1}</span>
-                      <span className="font-black text-emerald-700 dark:text-emerald-300">{s.toolCall.tool}</span>
-                      <span className={`text-[10px] ${s.status === 'error' ? 'text-rose-500' : 'text-emerald-500'}`}>{s.status === 'error' ? '⚠' : '✓'}</span>
+                  <div key={i} className="rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-2 text-[12px]">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[10px] text-slate-400">#{s.index + 1}</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-200">{s.toolCall.tool}</span>
+                      <span className={`text-[10px] font-medium ${s.status === 'error' ? 'text-rose-500' : 'text-green-600'}`}>{s.status === 'error' ? t('خطأ', 'error') : t('تم', 'done')}</span>
                       {typeof s.durationMs === 'number' && (
                         <span className="ms-auto font-mono text-[10px] text-slate-400">{(s.durationMs / 1000).toFixed(1)}s</span>
                       )}
                     </div>
-                    {s.thought && <div className="text-slate-500 dark:text-slate-400 mt-0.5 italic">{s.thought}</div>}
-                    {s.observation && <div className="text-slate-600 dark:text-slate-300 mt-0.5 whitespace-pre-wrap leading-snug">{s.observation}</div>}
+                    {s.thought && <div className="text-slate-500 dark:text-slate-400 mt-1 text-[11px] italic leading-snug">{s.thought}</div>}
+                    {s.observation && <div className="text-slate-600 dark:text-slate-300 mt-1 text-[11px] whitespace-pre-wrap leading-snug">{s.observation}</div>}
                   </div>
                 ))}
-                {props.agentRunning && <div className="text-[11px] text-emerald-500 animate-pulse">{t('الوكيل يفكّر…', 'agent reasoning…')}</div>}
+                {props.agentRunning && <div className="text-[11px] text-slate-500 dark:text-slate-400 py-1">{t('الوكيل يفكّر…', 'Agent reasoning…')}</div>}
               </div>
             )}
             {props.agentAnswer && (
-              <div className="rounded-lg bg-white dark:bg-slate-800 border-2 border-emerald-300 dark:border-emerald-600 p-3 text-sm text-slate-700 dark:text-slate-200">
+              <div className="rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-3 text-sm text-slate-700 dark:text-slate-200">
                 <Markdown text={props.agentAnswer} rtl={ar} />
                 {exportRow(props.agentAnswer)}
                 {props.agentTrace && (
-                  <div className="flex items-center gap-1.5 mt-1.5">
-                    <span className="text-[10px] text-slate-400">{t('سجل التنفيذ الكامل:', 'Full run trace:')}</span>
-                    {exportBtn('docx', '🧾', t('أثر (Word)', 'Trace (Word)'), props.agentTrace)}
-                    {exportBtn('pdf', '🧾', t('أثر (PDF)', 'Trace (PDF)'), props.agentTrace)}
+                  <div className="flex items-center gap-2 mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-700">
+                    <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">{t('سجل التنفيذ', 'Run trace')}</span>
+                    {exportBtn('docx', '', 'Word', props.agentTrace)}
+                    {exportBtn('pdf', '', 'PDF', props.agentTrace)}
                   </div>
                 )}
               </div>
@@ -441,7 +474,7 @@ const GovCopilot: React.FC<Props> = (props) => {
       </div>
 
       {/* composer */}
-      <div className="border-t border-slate-100 dark:border-slate-700 p-2 shrink-0" dir={ar ? 'rtl' : 'ltr'}>
+      <div className="border-t border-slate-200 dark:border-slate-700 px-4 py-3 shrink-0 bg-white dark:bg-slate-900" dir={ar ? 'rtl' : 'ltr'}>
         <div className={`${bodyWrap} flex items-end gap-2`}>
         {mode === 'ask' && (
           <>
@@ -451,11 +484,11 @@ const GovCopilot: React.FC<Props> = (props) => {
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
               rows={full ? 2 : 1}
               placeholder={t('اكتب سؤالك أو اطلب صياغة كاملة…', 'Ask, or request a full draft…')}
-              className="flex-1 resize-none text-sm rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-3 py-2 max-h-40"
+              className="flex-1 resize-none hw-textarea text-sm max-h-40"
             />
             {busy
-              ? <button onClick={stop} className="px-3 h-9 rounded-xl bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 text-xs font-bold">⏹ {t('إيقاف', 'Stop')}</button>
-              : <button onClick={() => send(input)} disabled={!input.trim()} className="hw-btn hw-btn-primary hw-btn-sm">{t('إرسال', 'Send')}</button>}
+              ? <button onClick={stop} className="hw-btn hw-btn-danger hw-btn-sm shrink-0">{t('إيقاف', 'Stop')}</button>
+              : <button onClick={() => send(input)} disabled={!input.trim()} className="hw-btn hw-btn-primary hw-btn-sm shrink-0">{t('إرسال', 'Send')}</button>}
           </>
         )}
         {mode === 'edit' && (
@@ -465,9 +498,9 @@ const GovCopilot: React.FC<Props> = (props) => {
               onChange={e => props.setActionInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !props.proposing && props.actionInput.trim()) props.onPropose(); }}
               placeholder={t('مثال: أضف دور مدير امتثال + سياسة تضارب مصالح', 'e.g. Add a compliance-manager role + conflict-of-interest policy')}
-              className="flex-1 text-sm rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-3 py-2"
+              className="flex-1 hw-input text-sm"
             />
-            <button onClick={props.onPropose} disabled={props.proposing || !props.actionInput.trim()} className="hw-btn hw-btn-primary hw-btn-sm">{props.proposing ? '⏳' : t('اقترح', 'Propose')}</button>
+            <button onClick={props.onPropose} disabled={props.proposing || !props.actionInput.trim()} className="hw-btn hw-btn-primary hw-btn-sm shrink-0">{props.proposing ? <span className="animate-spin inline-block">↻</span> : t('اقترح', 'Propose')}</button>
           </>
         )}
         {mode === 'reason' && (
@@ -477,9 +510,9 @@ const GovCopilot: React.FC<Props> = (props) => {
               onChange={e => props.setAgentInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !props.agentRunning && props.agentInput.trim()) props.onRunAgent(); }}
               placeholder={t('مثال: عالج فجوات الامتثال وأضف ما يلزم', 'e.g. Close compliance gaps and add what is needed')}
-              className="flex-1 text-sm rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-3 py-2"
+              className="flex-1 hw-input text-sm"
             />
-            <button onClick={props.onRunAgent} disabled={props.agentRunning || !props.agentInput.trim()} className="hw-btn hw-btn-primary hw-btn-sm">{props.agentRunning ? '⏳' : t('شغّل', 'Run')}</button>
+            <button onClick={props.onRunAgent} disabled={props.agentRunning || !props.agentInput.trim()} className="hw-btn hw-btn-primary hw-btn-sm shrink-0">{props.agentRunning ? <span className="animate-spin inline-block">↻</span> : t('شغّل', 'Run')}</button>
           </>
         )}
         </div>

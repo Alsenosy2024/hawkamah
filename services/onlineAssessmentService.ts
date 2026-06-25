@@ -42,6 +42,7 @@ export interface ExamAttempt {
   jobTitle: string;                       // title selected by employee
   startedAt: string;
   finishedAt: string;
+  proctorSummary?: import('./proctorCore').ProctorSummary;  // live AI integrity summary (camera + screen)
 }
 
 export interface ExamResult {

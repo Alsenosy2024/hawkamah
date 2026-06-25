@@ -63,6 +63,8 @@ const MeasuredChart: React.FC<{ className?: string; children: React.ReactNode }>
 };
 
 const ARABIC_FONTS = [
+  { id: 'Thmanyah Sans', name_ar: 'خط ثمانية (Thmanyah) — الافتراضي', name_en: 'Thmanyah Sans (default)' },
+  { id: 'Thmanyah Serif Display', name_ar: 'خط ثمانية عريض للعناوين (Thmanyah Serif)', name_en: 'Thmanyah Serif Display' },
   { id: 'Tajawal', name_ar: 'خط تجول (Tajawal)', name_en: 'Tajawal Font' },
   { id: 'Almarai', name_ar: 'خط الثمانية / المراعي (Almarai)', name_en: 'Thamanya / Almarai Font' },
   { id: 'Cairo', name_ar: 'خط القاهرة (Cairo)', name_en: 'Cairo Font' },
@@ -81,7 +83,7 @@ const renderBoldSpans = (text: string) => {
   return parts.map((part, index) => {
     if (index % 2 === 1) {
       return (
-        <span key={index} className="text-emerald-800 font-extrabold text-[11.5px] bg-slate-100 px-1 rounded mx-0.5">
+        <span key={index} className="text-slate-800 font-extrabold text-[11.5px] bg-slate-100 px-1 rounded mx-0.5">
           {part}
         </span>
       );
@@ -652,19 +654,17 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
 
   return (
-    <div className="flex flex-col text-start animate-fade-in space-y-8">
+    <div className="flex flex-col text-start animate-fade-in space-y-6">
       {/* Title */}
-      <div className="border-b border-gray-100 pb-4 flex items-start justify-between gap-4 flex-wrap">
+      <div className="border-b border-slate-200 pb-4 flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-3xl font-extrabold text-slate-800 flex items-center gap-2">
-            <span className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">⚙️</span>
+          <h1 className="text-2xl font-bold text-slate-900">
             {T.adminGate}
           </h1>
-          <p className="text-slate-500 mt-1">Configure company profiles, assessment scopes, and organizational models.</p>
+          <p className="text-sm text-slate-500 mt-1 leading-relaxed">{language === 'ar' ? 'إدارة ملفات الشركات وإعدادات التقييمات والنماذج التنظيمية' : 'Configure company profiles, assessment scopes, and organizational models.'}</p>
         </div>
         {onOpenGovernanceCenter && (
-          <button onClick={onOpenGovernanceCenter} className="hw-btn hw-btn-primary hw-btn-lg self-center gap-2">
-            <span>🏛️</span>
+          <button onClick={onOpenGovernanceCenter} className="hw-btn hw-btn-primary self-center gap-2">
             {language === 'ar' ? 'مركز الحوكمة' : 'Governance Center'}
           </button>
         )}
@@ -673,16 +673,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* Top-level Admin Tabs */}
       <div className="hw-tabs-pill self-start flex-wrap">
         {([
-          { key: 'dashboard', icon: '📊', labelAr: 'التحليلات والسجلات', labelEn: 'Analytics & Records' },
-          { key: 'responses', icon: '📋', labelAr: 'مركز الردود', labelEn: 'Responses Center' },
-          { key: 'config', icon: '⚙️', labelAr: 'الإعداد والعلامة', labelEn: 'Setup & Branding' },
+          { key: 'dashboard', labelAr: 'التحليلات والسجلات', labelEn: 'Analytics & Records' },
+          { key: 'responses', labelAr: 'مركز الردود', labelEn: 'Responses Center' },
+          { key: 'config', labelAr: 'الإعداد والعلامة', labelEn: 'Setup & Branding' },
         ] as const).map(tab => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={`hw-tab-pill${activeTab === tab.key ? ' hw-tab-active' : ''}`}
           >
-            <span>{tab.icon}</span>
+            {tab.key === 'dashboard' && (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            )}
+            {tab.key === 'responses' && (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
+            )}
+            {tab.key === 'config' && (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            )}
             {language === 'ar' ? tab.labelAr : tab.labelEn}
           </button>
         ))}
@@ -699,25 +707,25 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
       {/* Config tab: assessment scope, models & branding */}
       {activeTab === 'config' && (
-        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-6 space-y-6 animate-fade-in">
-          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-            <span>🎯</span> {T.adminSettings}
-          </h2>
-          <p className="text-xs text-slate-500">{T.methodsExplain}</p>
+        <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-5 animate-fade-in">
+          <div className="border-b border-slate-200 pb-3">
+            <h2 className="text-base font-bold text-slate-900">{T.adminSettings}</h2>
+            <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{T.methodsExplain}</p>
+          </div>
 
           {/* Question Count */}
           <div className="space-y-2">
-            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">{T.selectNumQuestions}</label>
+            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">{T.selectNumQuestions}</label>
             <div className="grid grid-cols-3 gap-2">
               {[30, 40, 50].map((num) => (
                 <button
                   key={num}
                   type="button"
                   onClick={() => setQuestionCount(num)}
-                  className={`py-2 px-3 rounded-lg text-sm font-bold transition-all ${
+                  className={`py-2 px-3 rounded-md text-sm font-bold transition-colors ${
                     questionCount === num
-                      ? 'bg-emerald-600 text-white shadow-md'
-                      : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
                   }`}
                 >
                   {num} {language === 'ar' ? 'سؤال' : 'Q'}
@@ -732,62 +740,62 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
 
           {/* Theory Toggles */}
-          <div className="space-y-3 pt-2">
-            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Enabled Theories</label>
+          <div className="space-y-2 pt-1">
+            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">{language === 'ar' ? 'النظريات المفعّلة' : 'Enabled Theories'}</label>
 
             {/* Birkman */}
-            <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
+            <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-md cursor-pointer hover:bg-slate-50 transition-colors">
               <input
                 type="checkbox"
                 checked={birkman}
                 onChange={(e) => setBirkman(e.target.checked)}
-                className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
+                className="w-4 h-4 accent-emerald-600"
               />
-              <div className="text-sm">
-                <span className="font-semibold block text-slate-800">Birkman Method</span>
-                <span className="text-xs text-slate-500">Environmental compatibilities & social stressors.</span>
+              <div>
+                <span className="font-semibold block text-sm text-slate-800">Birkman Method</span>
+                <span className="text-xs text-slate-500">{language === 'ar' ? 'توافق البيئة والضغوط الاجتماعية' : 'Environmental compatibilities & social stressors.'}</span>
               </div>
             </label>
 
             {/* Holland */}
-            <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
+            <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-md cursor-pointer hover:bg-slate-50 transition-colors">
               <input
                 type="checkbox"
                 checked={holland}
                 onChange={(e) => setHolland(e.target.checked)}
-                className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
+                className="w-4 h-4 accent-emerald-600"
               />
-              <div className="text-sm">
-                <span className="font-semibold block text-slate-800">Holland RIASEC Code</span>
-                <span className="text-xs text-slate-500">Occupational match with corporate roles.</span>
+              <div>
+                <span className="font-semibold block text-sm text-slate-800">Holland RIASEC Code</span>
+                <span className="text-xs text-slate-500">{language === 'ar' ? 'المواءمة المهنية مع الأدوار الوظيفية' : 'Occupational match with corporate roles.'}</span>
               </div>
             </label>
 
             {/* Psych Tech */}
-            <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
+            <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-md cursor-pointer hover:bg-slate-50 transition-colors">
               <input
                 type="checkbox"
                 checked={psychTech}
                 onChange={(e) => setPsychTech(e.target.checked)}
-                className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
+                className="w-4 h-4 accent-emerald-600"
               />
-              <div className="text-sm">
-                <span className="font-semibold block text-slate-800">Psych Tech Scale</span>
-                <span className="text-xs text-slate-500">Standardized behavioral scenarios.</span>
+              <div>
+                <span className="font-semibold block text-sm text-slate-800">Psych Tech Scale</span>
+                <span className="text-xs text-slate-500">{language === 'ar' ? 'سيناريوهات سلوكية موحدة' : 'Standardized behavioral scenarios.'}</span>
               </div>
             </label>
 
             {/* Bloom's Taxonomy */}
-            <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
+            <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-md cursor-pointer hover:bg-slate-50 transition-colors">
               <input
                 type="checkbox"
                 checked={bloom}
                 onChange={(e) => setBloom(e.target.checked)}
-                className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
+                className="w-4 h-4 accent-emerald-600"
               />
-              <div className="text-sm">
-                <span className="font-semibold block text-slate-800">Bloom's Taxonomy</span>
-                <span className="text-xs text-slate-500">Aptitude (Applying, Analyzing, Evaluating).</span>
+              <div>
+                <span className="font-semibold block text-sm text-slate-800">Bloom's Taxonomy</span>
+                <span className="text-xs text-slate-500">{language === 'ar' ? 'قدرات (تطبيق، تحليل، تقييم)' : 'Aptitude (Applying, Analyzing, Evaluating).'}</span>
               </div>
             </label>
           </div>
@@ -795,22 +803,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           {/* Corporate Branding & Logo Settings with Two Sub-Tabs */}
           <div className="space-y-4 pt-4 border-t border-slate-200">
             {/* Visual Header */}
-            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-              🏢 {language === 'ar' ? 'البوابة والشركات وهوية العمليات' : 'Multi-Enterprise Branding & Audits'}
+            <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">
+              {language === 'ar' ? 'البوابة والشركات وهوية العمليات' : 'Multi-Enterprise Branding & Audits'}
             </label>
 
             {/* Sub-Tabs Selector */}
             <div className="hw-tabs-line">
               <button type="button" onClick={() => setSettingsSubTab('platform')}
                 className={settingsSubTab === 'platform' ? 'hw-tab-line hw-tab-active' : 'hw-tab-line'}>
-                🌐 {language === 'ar' ? 'هوية منصتك (Ailigent.ai)' : 'Platform branding'}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                {language === 'ar' ? 'هوية منصتك (Ailigent.ai)' : 'Platform branding'}
               </button>
               {/* P1-3: company management lives ONLY in Governance → Projects.
                   This is a direct nav action, not a dead in-panel tab. */}
               {onOpenGovernanceCenter && (
                 <button type="button" onClick={onOpenGovernanceCenter} className="hw-tab-line"
                   title={language === 'ar' ? 'إدارة الشركات في مركز الحوكمة' : 'Manage companies in Governance Center'}>
-                  🏢 {language === 'ar' ? 'ملفات الشركات المستهدفة ↪' : 'Assessed Companies ↪'}
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M3 21h18M3 7v14M21 7v14M6 21V7M18 21V7M9 21v-4h6v4M9 7V3h6v4"/></svg>
+                  {language === 'ar' ? 'ملفات الشركات المستهدفة ↪' : 'Assessed Companies ↪'}
                 </button>
               )}
             </div>
@@ -828,7 +838,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     value={companyName}
                     onChange={(e) => setCompanyName(e.target.value)}
                     placeholder="Ailigent.ai"
-                    className="w-full p-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-medium shadow-xs"
+                    className="hw-input"
                   />
                   <p className="text-[10px] text-slate-400 mt-1">
                     {language === 'ar' ? 'هذا الاسم سيظهر كعنوان في شريط تصفح المنصة الخارجي الرئيسي.' : 'This appears in the primary browser header and system navigation bar.'}
@@ -843,7 +853,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                   <select
                     value={fontFamily}
                     onChange={(e) => setFontFamily(e.target.value)}
-                    className="w-full p-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-bold cursor-pointer"
+                    className="hw-input cursor-pointer font-semibold"
                   >
                     {ARABIC_FONTS.map(f => (
                       <option key={f.id} value={f.id} style={{ fontFamily: f.id }}>
@@ -861,12 +871,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                   <select
                     value={aiPresetPersona}
                     onChange={(e) => setAiPresetPersona(e.target.value as any)}
-                    className="w-full p-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-bold cursor-pointer"
+                    className="hw-input cursor-pointer font-semibold"
                   >
-                    <option value="executive">👔 {language === 'ar' ? 'استشاري تنفيذي استراتيجي (افتراضي)' : 'Strategic Executive Consultant (Default)'}</option>
-                    <option value="academic">🎓 {language === 'ar' ? 'أكاديمي رصين وباحث علمي' : 'Academic Scholar & Critic'}</option>
-                    <option value="technical">💻 {language === 'ar' ? 'خبير تقني ورقمي سحابي متعمق' : 'Tech Infrastructure Architect'}</option>
-                    <option value="supportive">🤝 {language === 'ar' ? 'موجه مرشد ومتعاطف للكوادر البشرية' : 'Supportive Career Coach'}</option>
+                    <option value="executive">{language === 'ar' ? 'استشاري تنفيذي استراتيجي (افتراضي)' : 'Strategic Executive Consultant (Default)'}</option>
+                    <option value="academic">{language === 'ar' ? 'أكاديمي رصين وباحث علمي' : 'Academic Scholar & Critic'}</option>
+                    <option value="technical">{language === 'ar' ? 'خبير تقني ورقمي سحابي متعمق' : 'Tech Infrastructure Architect'}</option>
+                    <option value="supportive">{language === 'ar' ? 'موجه مرشد ومتعاطف للكوادر البشرية' : 'Supportive Career Coach'}</option>
                   </select>
                   <p className="text-[10px] text-slate-400 mt-1">
                     {language === 'ar' ? 'هذا الإعداد يتحكم في نبرة وصيغة واهتمامات الذكاء الاصطناعي (الدكتور أحمد) عند التفاعل معه بمستودع الوثائق.' : 'Controls the vocabulary, rigor, and orientation of Dr. Ahmed AI co-pilot.'}
@@ -874,18 +884,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
 
                 {/* Admin-Locked Assessment Launch */}
-                <div className="p-4 bg-emerald-50/40 border border-emerald-200 rounded-xl space-y-4">
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-4">
                   <div className="flex items-center justify-between gap-2">
-                    <h4 className="text-sm font-black text-emerald-900">
-                      🔒 {language === 'ar' ? 'إطلاق التقييم وقفله (الأدمن يتحكّم بالكامل)' : 'Launch & Lock Assessment (Admin-controlled)'}
+                    <h4 className="text-sm font-bold text-slate-800">
+                      {language === 'ar' ? 'إطلاق التقييم وقفله (الأدمن يتحكّم بالكامل)' : 'Launch & Lock Assessment (Admin-controlled)'}
                     </h4>
                     {settings.surveyLaunchConfig?.locked && (
-                      <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full border border-emerald-200">
-                        {language === 'ar' ? '✓ مقفول حالياً' : '✓ Currently locked'}
+                      <span className="hw-badge-success text-[10px]">
+                        {language === 'ar' ? 'مقفول حالياً' : 'Currently locked'}
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-emerald-700/80 leading-relaxed">
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
                     {language === 'ar'
                       ? 'الأدمن يحدد نوع التقييم والنطاق والإجبارية ويقفلها. الموظف يجاوب فقط — لا يختار نطاقاً ولا نوعاً. الحدود الدنيا للكلمات تُستنبط تلقائياً من سياق الملفات المرفوعة لكل سؤال حسب تعقيده.'
                       : 'Admin sets type, scope and mandatory answering, then locks. Employees only answer — they cannot pick scope or type. Per-question word minimums are auto-derived from the uploaded file context by complexity.'}
@@ -904,19 +914,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                           return next.length ? next : prev; // never allow empty
                         });
                       };
-                      const KindBox: React.FC<{ k: AssessmentKind; icon: string; label: string }> = ({ k, icon, label }) => {
+                      const KindBox: React.FC<{ k: AssessmentKind; icon: React.ReactNode; label: string }> = ({ k, icon, label }) => {
                         const on = launchKinds.includes(k);
                         return (
-                          <label className={`flex items-center gap-2 rounded-xl p-2.5 cursor-pointer border transition-colors ${on ? 'bg-emerald-50 border-emerald-400 ring-1 ring-emerald-300' : 'bg-white border-slate-300 hover:border-emerald-300'}`}>
+                          <label className={`flex items-center gap-2 rounded-md p-2.5 cursor-pointer border transition-colors ${on ? 'bg-emerald-50 border-emerald-400 ring-1 ring-emerald-300' : 'bg-white border-slate-200 hover:border-slate-300'}`}>
                             <input type="checkbox" checked={on} onChange={() => toggleKind(k)} className="w-4 h-4 accent-emerald-600" />
-                            <span className="text-sm font-bold text-slate-700">{icon} {label}</span>
+                            <span className="text-sm font-bold text-slate-700 flex items-center gap-1">{icon} {label}</span>
                           </label>
                         );
                       };
                       return (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <KindBox k="competency" icon="🎯" label={language === 'ar' ? 'تقييم جدارات' : 'Competency-based'} />
-                          <KindBox k="behavioral" icon="🧠" label={language === 'ar' ? 'تقييم سلوكي' : 'Behavioral'} />
+                          <KindBox k="competency" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>} label={language === 'ar' ? 'تقييم جدارات' : 'Competency-based'} />
+                          <KindBox k="behavioral" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 2a9 9 0 0 1 9 9c0 4.97-4.03 9-9 9S3 15.97 3 11a9 9 0 0 1 9-9z"/><path d="M9 10h.01M15 10h.01M9.5 14.5s1 1.5 2.5 1.5 2.5-1.5 2.5-1.5"/></svg>} label={language === 'ar' ? 'تقييم سلوكي' : 'Behavioral'} />
                         </div>
                       );
                     })()}
@@ -930,39 +940,47 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     <select
                       value={launchScope}
                       onChange={(e) => setLaunchScope(e.target.value as SurveyScope)}
-                      className="w-full p-2.5 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white font-bold cursor-pointer"
+                      className="hw-input cursor-pointer font-semibold"
                     >
-                      <option value="both">🔄 {language === 'ar' ? 'تقييم الشخص وبيئة العمل معاً' : 'Person + Work Environment'}</option>
-                      <option value="person">👤 {language === 'ar' ? 'تقييم الشخص فقط' : 'Person Only'}</option>
-                      <option value="environment">🏢 {language === 'ar' ? 'تقييم بيئة العمل فقط' : 'Work Environment Only'}</option>
+                      <option value="both">{language === 'ar' ? 'تقييم الشخص وبيئة العمل معاً' : 'Person + Work Environment'}</option>
+                      <option value="person">{language === 'ar' ? 'تقييم الشخص فقط' : 'Person Only'}</option>
+                      <option value="environment">{language === 'ar' ? 'تقييم بيئة العمل فقط' : 'Work Environment Only'}</option>
                     </select>
                   </div>
 
                   {/* Lock + Mandatory toggles */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <label className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-2.5 cursor-pointer">
+                    <label className="flex items-center gap-2 bg-white border border-slate-200 rounded-md p-2.5 cursor-pointer hover:bg-slate-50 transition-colors">
                       <input type="checkbox" checked={launchLocked} onChange={(e) => setLaunchLocked(e.target.checked)} className="w-4 h-4 accent-emerald-600" />
-                      <span className="text-[11px] font-bold text-slate-700">{language === 'ar' ? 'قفل الاختيارات للموظف' : 'Lock choices for employee'}</span>
+                      <span className="text-[11px] font-semibold text-slate-700">{language === 'ar' ? 'قفل الاختيارات للموظف' : 'Lock choices for employee'}</span>
                     </label>
-                    <label className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-2.5 cursor-pointer">
+                    <label className="flex items-center gap-2 bg-white border border-slate-200 rounded-md p-2.5 cursor-pointer hover:bg-slate-50 transition-colors">
                       <input type="checkbox" checked={launchMandatory} onChange={(e) => setLaunchMandatory(e.target.checked)} className="w-4 h-4 accent-emerald-600" />
-                      <span className="text-[11px] font-bold text-slate-700">{language === 'ar' ? 'إجبارية الإجابة' : 'Mandatory answering'}</span>
+                      <span className="text-[11px] font-semibold text-slate-700">{language === 'ar' ? 'إجبارية الإجابة' : 'Mandatory answering'}</span>
                     </label>
                   </div>
 
                   <button
                     onClick={handleLaunchAssessment}
                     disabled={launching}
-                    className="hw-btn hw-btn-primary hw-btn-w"
+                    className="hw-btn hw-btn-primary hw-btn-w flex items-center justify-center gap-2"
                   >
-                    {launching
-                      ? (language === 'ar' ? '⏳ يستنبط الحدود الدنيا من الملفات…' : '⏳ Deriving minimums from files…')
-                      : (language === 'ar' ? '🚀 إطلاق وقفل التقييم' : '🚀 Launch & Lock Assessment')}
+                    {launching ? (
+                      <>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                        {language === 'ar' ? 'يستنبط الحدود الدنيا من الملفات…' : 'Deriving minimums from files…'}
+                      </>
+                    ) : (
+                      <>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                        {language === 'ar' ? 'إطلاق وقفل التقييم' : 'Launch & Lock Assessment'}
+                      </>
+                    )}
                   </button>
 
                   {/* Auto min-words — fully dynamic, no manual table. Read-only status only. */}
-                  <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 flex items-start gap-2">
-                    <span className="text-lg leading-none">🤖</span>
+                  <div className="rounded-md bg-white border border-slate-200 p-3 flex items-start gap-2">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 mt-0.5 shrink-0"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M12 11V7M9 7h6M7 15h.01M12 15h.01M17 15h.01"/></svg>
                     <div className="flex-1">
                       <div className="text-xs font-bold text-slate-700">
                         {language === 'ar' ? 'الحد الأدنى لكلمات كل سؤال — تلقائي بالكامل' : 'Per-question word minimum — fully automatic'}
@@ -988,8 +1006,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                   <label className="block text-xs font-semibold text-slate-600 mb-1">
                     {language === 'ar' ? 'شعار المنصة الرئيسي (أعلى اليمين)' : 'Platform White-label Logo'}
                   </label>
-                  
-                  <div className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-xl shadow-xs">
+
+                  <div className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-md">
                     {logoUrl ? (
                       <img src={logoUrl} alt="Platform Logo Preview" className="w-12 h-12 rounded-lg object-contain border border-slate-100 bg-slate-50" referrerPolicy="no-referrer" />
                     ) : (
@@ -1001,7 +1019,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         type="file"
                         accept="image/*"
                         onChange={handleLogoUpload}
-                        className="block w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-2.5 file:rounded-full file:border-0 file:text-[10px] file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
+                        className="block w-full text-xs text-slate-500 file:me-2 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-[10px] file:font-bold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
                       />
                       <p className="text-[10px] text-slate-400 mt-1 truncate">
                         {language === 'ar' ? 'يمكنك تحجيم وتقريب الشعار بالأسفل' : 'Select images, adjustments tools active below'}
@@ -1011,13 +1029,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
                   {/* Crop Modal / Interactive Canvas Cropping Widget */}
                   {rawImageSrc && (
-                    <div className="mt-3 p-4 bg-emerald-50/50 border border-emerald-100 rounded-xl space-y-3 animate-fade-in text-center">
-                      <p className="text-xs font-bold text-emerald-900 leading-tight">
-                        {language === 'ar' ? '✂️ أداة محاذاة وقص الشعار السريعة' : '✂️ Center & Scale Branding Logo'}
+                    <div className="mt-3 p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-3 animate-fade-in text-center">
+                      <p className="text-xs font-bold text-slate-700 leading-tight">
+                        {language === 'ar' ? 'أداة محاذاة وقص الشعار' : 'Center & Scale Branding Logo'}
                       </p>
-                      
+
                       {/* Bounding shape horizontal preview */}
-                      <div className="mx-auto w-48 h-20 rounded-xl border-2 border-emerald-400 overflow-hidden relative bg-white flex items-center justify-center p-2 shadow-xs">
+                      <div className="mx-auto w-48 h-20 rounded-md border border-slate-300 overflow-hidden relative bg-white flex items-center justify-center p-2">
                         <img
                           src={rawImageSrc}
                           alt="Crop target"
@@ -1032,7 +1050,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
                       {/* Slider Control */}
                       <div className="space-y-1">
-                        <div className="flex justify-between text-[10px] text-emerald-700 font-bold">
+                        <div className="flex justify-between text-[10px] text-slate-500 font-bold">
                           <span>1.0x</span>
                           <span>{language === 'ar' ? 'تقريب الصورة' : 'Crop Zoom Factor'}</span>
                           <span>3.0x</span>
@@ -1053,14 +1071,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         <button
                           type="button"
                           onClick={handleApplyCropping}
-                          className="flex-1 py-1 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-colors"
+                          className="hw-btn hw-btn-primary hw-btn-sm flex-1"
                         >
                           {language === 'ar' ? 'قص وحفظ الشعار' : 'Crop Logo'}
                         </button>
                         <button
                           type="button"
                           onClick={() => setRawImageSrc(null)}
-                          className="py-1 px-3 bg-white hover:bg-slate-100 border border-slate-200 text-slate-500 text-[11px] font-bold rounded-lg transition-colors"
+                          className="hw-btn hw-btn-ghost hw-btn-sm"
                         >
                           {language === 'ar' ? 'إلغاء' : 'Cancel'}
                         </button>
@@ -1075,90 +1093,65 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
           <button
             onClick={handleSaveSettings}
-            className="w-full bg-slate-800 hover:bg-slate-900 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-2 text-sm"
+            className="hw-btn hw-btn-primary hw-btn-w"
           >
-            💾 {language === 'ar' ? 'حفظ هوية المنصة والملاحظات بـ Cloud' : 'Save Platform White-label & Target Profiles'}
+            {language === 'ar' ? 'حفظ هوية المنصة والملاحظات' : 'Save Platform Identity & Target Profiles'}
           </button>
         </div>
       )}
 
       {/* Dashboard tab: executive analytics + records vault */}
       {activeTab === 'dashboard' && (
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 md:p-8 space-y-6 shadow-sm animate-fade-in">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+      <div className="bg-white border border-slate-200 rounded-xl p-5 md:p-6 space-y-5 animate-fade-in">
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 border-b border-slate-200 pb-4">
           <div>
-            <h3 className="text-xl font-extrabold text-slate-800 flex items-center gap-2">
-              <span>🛡️</span> 
+            <h3 className="text-base font-bold text-slate-900">
               {language === 'ar' ? 'مستودع السجلات وسجلات حوكمة الولوج' : 'Audit Trail & Centralized Records Vault'}
             </h3>
-            <p className="text-xs text-slate-500 mt-1">
-              {language === 'ar' 
-                ? 'تحليل متكامل لعمليات التقييم، وجداول الحوكمة المكتملة، وجدول تدقيق حركة دخول الموظفين للشركة.' 
+            <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+              {language === 'ar'
+                ? 'تحليل متكامل لعمليات التقييم، وجداول الحوكمة المكتملة، وجدول تدقيق حركة دخول الموظفين للشركة.'
                 : 'Centralized registry verifying evaluated reports, human grading logs, and structural user logins.'}
             </p>
           </div>
 
-          {/* Database Section Sub-tabs */}
-          <div className="bg-slate-100 p-1 rounded-xl flex flex-wrap border border-slate-200 text-xs font-bold self-start md:self-auto gap-0.5">
+          {/* Database Section Sub-tabs — unified pill system */}
+          <div className="hw-tabs-pill flex-wrap self-start shrink-0">
             <button
               onClick={() => setDbActiveTab('analytics')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                dbActiveTab === 'analytics'
-                  ? 'bg-white text-slate-900 shadow font-extrabold'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+              className={`hw-tab-pill${dbActiveTab === 'analytics' ? ' hw-tab-active' : ''}`}
             >
-              📊 {language === 'ar' ? 'التحليلات والمؤشرات الكبرى' : 'Executive Analytics Board'}
+              {language === 'ar' ? 'التحليلات' : 'Analytics'}
             </button>
             <button
               onClick={() => setDbActiveTab('journey')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                dbActiveTab === 'journey'
-                  ? 'bg-white text-slate-900 shadow font-extrabold'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+              className={`hw-tab-pill${dbActiveTab === 'journey' ? ' hw-tab-active' : ''}`}
             >
-              🛤️ {language === 'ar' ? 'المسار الشامل للتقييمات' : 'Assessments Journey'}
+              {language === 'ar' ? 'المسار' : 'Journey'}
             </button>
             <button
               onClick={() => setDbActiveTab('assessments')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                dbActiveTab === 'assessments'
-                  ? 'bg-white text-slate-900 shadow font-extrabold'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+              className={`hw-tab-pill${dbActiveTab === 'assessments' ? ' hw-tab-active' : ''}`}
             >
-              📋 {language === 'ar' ? 'سجلات تقييم الجدارات' : 'Competency Assessments'}
+              {language === 'ar' ? 'الجدارات' : 'Assessments'}
             </button>
             <button
               onClick={() => setDbActiveTab('surveylab')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                dbActiveTab === 'surveylab'
-                  ? 'bg-emerald-600 text-white shadow font-extrabold'
-                  : 'text-slate-500 hover:text-emerald-600'
-              }`}
+              className={`hw-tab-pill${dbActiveTab === 'surveylab' ? ' hw-tab-active' : ''}`}
             >
-              🧪 {language === 'ar' ? 'مختبر الاستبيانات' : 'Survey Lab'}
+              {language === 'ar' ? 'مختبر الاستبيانات' : 'Survey Lab'}
             </button>
             <button
               onClick={() => setDbActiveTab('logins')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                dbActiveTab === 'logins'
-                  ? 'bg-white text-slate-900 shadow font-extrabold'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+              className={`hw-tab-pill${dbActiveTab === 'logins' ? ' hw-tab-active' : ''}`}
             >
-              👥 {language === 'ar' ? 'سجلات دخول الموظفين' : 'Employee Logins'}
+              {language === 'ar' ? 'سجلات الدخول' : 'Logins'}
             </button>
             <button
               onClick={() => setDbActiveTab('consultations')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                dbActiveTab === 'consultations'
-                  ? 'bg-emerald-600 text-white shadow font-extrabold'
-                  : 'text-slate-500 hover:text-emerald-600'
-              }`}
+              className={`hw-tab-pill${dbActiveTab === 'consultations' ? ' hw-tab-active' : ''}`}
             >
-              👨‍💼 {language === 'ar' ? 'جلسات الدكتور أحمد السنوسي' : 'Strategic Consults Queue'}
+              {language === 'ar' ? 'الاستشارات' : 'Consults'}
             </button>
           </div>
         </div>
@@ -1285,66 +1278,46 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
           return (
             <div className="space-y-6">
-              {/* Stats Cards Bento Grid */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-gradient-to-br from-emerald-900/5 via-slate-50 to-slate-100/40 p-5 rounded-2xl border border-slate-200 shadow-sm text-start flex flex-col justify-between">
-                  <div>
-                    <span className="text-3xl">👥</span>
-                    <div className="text-[10px] text-slate-500 font-bold uppercase mt-3 tracking-wider">
-                      {language === 'ar' ? 'الموظفين الخاضعين للتقييم' : 'Total Evaluated Employees'}
-                    </div>
+              {/* Stats Tiles — flat hairline, no gradient */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-slate-200 border border-slate-200 rounded-lg overflow-hidden">
+                <div className="bg-white p-4 text-start">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                    {language === 'ar' ? 'الموظفون الخاضعون للتقييم' : 'Evaluated Employees'}
                   </div>
-                  <div className="mt-2 flex items-baseline justify-between">
-                    <div className="text-3xl font-black text-slate-800">{totalCandidates}</div>
-                  </div>
+                  <div className="text-2xl font-bold text-slate-800 tabular-nums">{totalCandidates}</div>
                 </div>
 
-                <div className="bg-gradient-to-br from-emerald-500/5 via-emerald-50/70 to-emerald-50/40 p-5 rounded-2xl border border-emerald-200/60 shadow-sm text-start flex flex-col justify-between">
-                  <div>
-                    <span className="text-3xl">🎯</span>
-                    <div className="text-[10px] text-emerald-800/80 font-bold uppercase mt-3 tracking-wider">
-                      {language === 'ar' ? 'ملاءمة الجدارات المتوسطة' : 'Average Competency Match'}
-                    </div>
+                <div className="bg-white p-4 text-start">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                    {language === 'ar' ? 'متوسط ملاءمة الجدارات' : 'Avg. Competency Match'}
                   </div>
-                  <div className="mt-2 flex items-baseline justify-between">
-                    <div className="text-3xl font-black text-emerald-700">{avgScore}%</div>
-                  </div>
+                  <div className="text-2xl font-bold text-emerald-600 tabular-nums">{avgScore}%</div>
                 </div>
 
-                <div className="bg-gradient-to-br from-emerald-500/5 via-emerald-50/70 to-blue-50/40 p-5 rounded-2xl border border-emerald-200/60 shadow-sm text-start flex flex-col justify-between">
-                  <div>
-                    <span className="text-3xl">⭐</span>
-                    <div className="text-[10px] text-emerald-800/80 font-bold uppercase mt-3 tracking-wider">
-                      {language === 'ar' ? 'معدل الاعتماد للمنصب' : 'Fit Approval Ratio'}
-                    </div>
+                <div className="bg-white p-4 text-start">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                    {language === 'ar' ? 'معدل الاعتماد' : 'Fit Approval Ratio'}
                   </div>
-                  <div className="mt-2 flex items-baseline justify-between">
-                    <div className="text-3xl font-black text-emerald-700">{approvalRatio}%</div>
-                  </div>
+                  <div className="text-2xl font-bold text-emerald-600 tabular-nums">{approvalRatio}%</div>
                 </div>
 
-                <div className="bg-gradient-to-br from-amber-500/5 via-amber-50/70 to-orange-50/40 p-5 rounded-2xl border border-amber-200/60 shadow-sm text-start flex flex-col justify-between">
-                  <div>
-                    <span className="text-3xl">🛡️</span>
-                    <div className="text-[10px] text-amber-800/80 font-bold uppercase mt-3 tracking-wider">
-                      {language === 'ar' ? 'إجمالي زيارات تسجيل الدخول' : 'Access Logins Count'}
-                    </div>
+                <div className="bg-white p-4 text-start">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                    {language === 'ar' ? 'زيارات تسجيل الدخول' : 'Access Logins'}
                   </div>
-                  <div className="mt-2 flex items-baseline justify-between">
-                    <div className="text-3xl font-black text-amber-600">{totalLoginsCount}</div>
-                  </div>
+                  <div className="text-2xl font-bold text-slate-800 tabular-nums">{totalLoginsCount}</div>
                 </div>
               </div>
 
               {/* Charts grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Chart 1: Pie Chart (بايت شارت) - Holland Careers Prevalence */}
-                <div className="bg-slate-50 border border-slate-200/60 p-5 rounded-2xl space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-200/50 pb-2">
-                    <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider">
-                      {language === 'ar' ? '📊 توزيع سمات هولاند المهنية (Prevalence PieChart)' : 'RIASEC Interest Types Prevalence'}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Chart 1: Pie Chart - Holland Careers Prevalence */}
+                <div className="bg-white border border-slate-200 p-4 rounded-lg space-y-3">
+                  <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                    <h4 className="text-xs font-bold text-slate-700">
+                      {language === 'ar' ? 'توزيع سمات هولاند المهنية (RIASEC)' : 'RIASEC Interest Types Prevalence'}
                     </h4>
-                    <span className="px-2 py-0.5 text-[9px] font-black rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100/30 uppercase">{language === 'ar' ? 'بايت شارت' : 'Pie Chart'}</span>
+                    <span className="hw-badge-neutral text-[9px]">{language === 'ar' ? 'دائري' : 'Pie'}</span>
                   </div>
                   <MeasuredChart className="h-64 w-full min-w-0">
                       <PieChart>
@@ -1365,20 +1338,20 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         <Legend verticalAlign="bottom" height={36} wrapperStyle={{fontSize: '9px', fontWeight: 'bold'}} />
                       </PieChart>
                   </MeasuredChart>
-                  <p className="text-[10px] text-slate-500 leading-relaxed font-bold text-center bg-white p-2 rounded-xl border border-slate-100 shadow-3xs">
-                    {language === 'ar' 
-                      ? '💡 يُبرز هذا المخطط الدائري تراكم نقاط جدارات RIASEC والاهتمامات المهنية للموظفين وعلاقته بملائمة الشغل.'
-                      : '💡 Accumulative distribution of RIASEC interests computed in real-time from active response surveys.'}
+                  <p className="text-[10px] text-slate-500 leading-relaxed text-center">
+                    {language === 'ar'
+                      ? 'تراكم نقاط جدارات RIASEC والاهتمامات المهنية للموظفين وعلاقته بملائمة الشغل.'
+                      : 'Accumulative distribution of RIASEC interests computed in real-time from active response surveys.'}
                   </p>
                 </div>
 
-                {/* Chart 2: Bar Chart (رينجت شارت) - Match Score Distributions */}
-                <div className="bg-slate-50 border border-slate-200/60 p-5 rounded-2xl space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-200/50 pb-2">
-                    <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider">
-                      {language === 'ar' ? '📊 تصنيف نسب كفاءة التطابق والملاءمة (Competency ranges Bar)' : 'Competency Match Score Ranges'}
+                {/* Chart 2: Bar Chart - Match Score Distributions */}
+                <div className="bg-white border border-slate-200 p-4 rounded-lg space-y-3">
+                  <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                    <h4 className="text-xs font-bold text-slate-700">
+                      {language === 'ar' ? 'تصنيف نسب كفاءة التطابق والملاءمة' : 'Competency Match Score Ranges'}
                     </h4>
-                    <span className="px-2 py-0.5 text-[9px] font-black rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100/30 uppercase">{language === 'ar' ? 'رينجت شارت' : 'Bar Chart'}</span>
+                    <span className="hw-badge-neutral text-[9px]">{language === 'ar' ? 'أعمدة' : 'Bar'}</span>
                   </div>
                   <MeasuredChart className="h-64 w-full min-w-0">
                       <BarChart data={scoreBarData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
@@ -1393,20 +1366,20 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         </Bar>
                       </BarChart>
                   </MeasuredChart>
-                  <p className="text-[10px] text-slate-500 leading-relaxed font-bold text-center bg-white p-2 rounded-xl border border-slate-100 shadow-3xs">
+                  <p className="text-[10px] text-slate-500 leading-relaxed text-center">
                     {language === 'ar'
-                      ? '💡 تصنيف المرشحين والموظفين طبقًا لجودة ملاءمة الجدارات (الأخضر للملاءمة الفائقة والأحمر لدلائل احتياج التدريب).'
-                      : '💡 Segmenting talent based on overall match scores to identify skill gaps and enterprise top-talents.'}
+                      ? 'تصنيف المرشحين والموظفين طبقًا لجودة ملاءمة الجدارات.'
+                      : 'Segmenting talent based on overall match scores to identify skill gaps and enterprise top-talents.'}
                   </p>
                 </div>
 
-                {/* Chart 3: Line Chart (لاين شارت) - Trend of engagement & Logins */}
-                <div className="bg-slate-50 border border-slate-200/60 p-5 rounded-2xl space-y-4 lg:col-span-2">
-                  <div className="flex justify-between items-center border-b border-slate-200/50 pb-2">
-                    <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider">
-                      {language === 'ar' ? '📈 وتيرة تفاعل الموظفين وعمليات الدخل وسيرفرات الحوكمة اليومية (Engagement Line)' : '7-Day Employee Engagement & Server Logins'}
+                {/* Chart 3: Line Chart - Trend of engagement & Logins */}
+                <div className="bg-white border border-slate-200 p-4 rounded-lg space-y-3 lg:col-span-2">
+                  <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                    <h4 className="text-xs font-bold text-slate-700">
+                      {language === 'ar' ? 'وتيرة تفاعل الموظفين وعمليات الدخول — آخر 7 أيام' : '7-Day Employee Engagement & Server Logins'}
                     </h4>
-                    <span className="px-2 py-0.5 text-[9px] font-black rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100/30 uppercase">{language === 'ar' ? 'لاين شارت' : 'Line Chart'}</span>
+                    <span className="hw-badge-neutral text-[9px]">{language === 'ar' ? 'خطي' : 'Line'}</span>
                   </div>
                   <MeasuredChart className="h-56 w-full min-w-0">
                       <LineChart data={weeklyLogData} margin={{ top: 10, right: 15, left: -20, bottom: 5 }}>
@@ -1437,12 +1410,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
 
               {/* Top Competencies Gaps & Strengths Diagnostic Panels */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Talent Strengths Detected */}
-                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200/60 shadow-xs text-start space-y-4">
-                  <div className="flex items-center gap-2 text-emerald-600 border-b border-slate-200/50 pb-2">
-                    <span className="text-xl">⭐</span>
-                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">
+                <div className="bg-white p-4 rounded-lg border border-slate-200 text-start space-y-3">
+                  <div className="border-b border-slate-100 pb-2">
+                    <h4 className="text-xs font-bold text-slate-700">
                       {language === 'ar' ? 'أقوى الجدارات المكتشفة في الكوادر' : 'Top Talent Strengths'}
                     </h4>
                   </div>
@@ -1450,40 +1422,39 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-700">{language === 'ar' ? 'التحول الرقمي والذكاء الاصطناعي' : 'Digital Transformation & AI'}</span>
-                        <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-black">92%</span>
+                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-black tabular-nums">92%</span>
                       </div>
-                      <div className="w-full bg-slate-200/70 h-1.5 rounded-full overflow-hidden">
-                        <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: '92%' }}></div>
+                      <div className="hw-progress">
+                        <div className="hw-progress-bar" style={{ width: '92%' }}></div>
                       </div>
                     </div>
 
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-700">{language === 'ar' ? 'المرونة التشغيلية والتكيف مع المتغيرات' : 'Operational Agility & Adaptability'}</span>
-                        <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-black">88%</span>
+                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-black tabular-nums">88%</span>
                       </div>
-                      <div className="w-full bg-slate-200/70 h-1.5 rounded-full overflow-hidden">
-                        <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: '88%' }}></div>
+                      <div className="hw-progress">
+                        <div className="hw-progress-bar" style={{ width: '88%' }}></div>
                       </div>
                     </div>
 
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-700">{language === 'ar' ? 'النزاهة والاتساق الأخلاقي والمثالي' : 'Corporate Integrity & Governance'}</span>
-                        <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-black">85%</span>
+                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-black tabular-nums">85%</span>
                       </div>
-                      <div className="w-full bg-slate-200/70 h-1.5 rounded-full overflow-hidden">
-                        <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: '85%' }}></div>
+                      <div className="hw-progress">
+                        <div className="hw-progress-bar" style={{ width: '85%' }}></div>
                       </div>
                     </div>
                   </div>
                 </div>
 
                 {/* Gaps and Areas for Training / Intervention */}
-                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200/60 shadow-xs text-start space-y-4">
-                  <div className="flex items-center gap-2 text-rose-600 border-b border-slate-200/50 pb-2">
-                    <span className="text-xl">🛠️</span>
-                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">
+                <div className="bg-white p-4 rounded-lg border border-slate-200 text-start space-y-3">
+                  <div className="border-b border-slate-100 pb-2">
+                    <h4 className="text-xs font-bold text-slate-700">
                       {language === 'ar' ? 'الجدارات المستهدفة للتطوير والتدريب الموصى بها' : 'Development Gaps & Recommended Interventions'}
                     </h4>
                   </div>
@@ -1491,30 +1462,30 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-700">{language === 'ar' ? 'التعاون والموازنة الفاعلة للموارد المشتركة' : 'Cross-functional Collaboration'}</span>
-                        <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded font-black">64%</span>
+                        <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded font-black tabular-nums">64%</span>
                       </div>
-                      <div className="w-full bg-slate-200/70 h-1.5 rounded-full overflow-hidden">
-                        <div className="bg-rose-400 h-full rounded-full transition-all duration-500" style={{ width: '64%' }}></div>
+                      <div className="hw-progress">
+                        <div className="hw-progress-bar bg-rose-400" style={{ width: '64%' }}></div>
                       </div>
                     </div>
 
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-700">{language === 'ar' ? 'مؤشرات معيار التميز الأوروبي طاقة الـ EFQM' : 'EFQM Institutional Excellence Alignment'}</span>
-                        <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded font-black">59%</span>
+                        <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded font-black tabular-nums">59%</span>
                       </div>
-                      <div className="w-full bg-slate-200/70 h-1.5 rounded-full overflow-hidden">
-                        <div className="bg-rose-400 h-full rounded-full transition-all duration-500" style={{ width: '59%' }}></div>
+                      <div className="hw-progress">
+                        <div className="hw-progress-bar bg-rose-400" style={{ width: '59%' }}></div>
                       </div>
                     </div>
 
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-xs">
                         <span className="font-bold text-slate-700">{language === 'ar' ? 'التمكن الإحصائي والتحليلي للممارسات والبيانات' : 'Data-driven Operational Diagnostics'}</span>
-                        <span className="bg-rose-100 text-rose-800 px-2 py-0.5 rounded font-black">55%</span>
+                        <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded font-black tabular-nums">55%</span>
                       </div>
-                      <div className="w-full bg-slate-200/70 h-1.5 rounded-full overflow-hidden">
-                        <div className="bg-rose-400 h-full rounded-full transition-all duration-500" style={{ width: '55%' }}></div>
+                      <div className="hw-progress">
+                        <div className="hw-progress-bar bg-rose-400" style={{ width: '55%' }}></div>
                       </div>
                     </div>
                   </div>
@@ -1522,25 +1493,23 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
 
               {/* Bottom Executive Share Box */}
-              <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 border border-emerald-100 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 mt-4">
-                <div className="text-start space-y-1">
-                  <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
-                    <span>📢</span>
-                    {language === 'ar' ? 'مشاركة وتوجيه مؤشرات الحوكمة الاستراتيجية للجهة المستفيدة' : 'Share Certified Corporate Synopsis'}
+              <div className="border border-slate-200 p-4 rounded-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <h4 className="font-bold text-slate-900 text-sm">
+                    {language === 'ar' ? 'مشاركة مؤشرات الحوكمة للجهة المستفيدة' : 'Share Certified Corporate Synopsis'}
                   </h4>
-                  <p className="text-xs text-emerald-950 font-bold leading-relaxed">
+                  <p className="text-xs text-slate-500 leading-relaxed">
                     {language === 'ar'
-                      ? 'يمكنك الآن نسخ هذا الملخص الشامل بضغطة زر وتضمينه مباشرة في بريد الإدارة الشريكة أو خطابات التصدير للجهة المستفيدة.'
-                      : 'Generate and copy a professional corporate appraisal log ready to report in high-level briefs / executive emails.'}
+                      ? 'انسخ الملخص الشامل وضمّنه في بريد الإدارة الشريكة أو خطابات التصدير.'
+                      : 'Generate and copy a professional corporate appraisal log ready to report in high-level briefs.'}
                   </p>
                 </div>
-                
+
                 <button
                   onClick={handleCopyAuditSummary}
-                  className="w-full md:w-auto px-5 py-3 bg-emerald-600 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 flex-shrink-0"
+                  className="hw-btn hw-btn-primary shrink-0"
                 >
-                  <span>🔗</span>
-                  {language === 'ar' ? 'إنشاء ونَسخ تقرير الجهة المستفيدة' : 'Copy Beneficiary Synopsis'}
+                  {language === 'ar' ? 'نسخ تقرير الجهة المستفيدة' : 'Copy Beneficiary Synopsis'}
                 </button>
               </div>
             </div>
@@ -1568,76 +1537,84 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             items: [...items].sort((x, y) => new Date(y.timestamp).getTime() - new Date(x.timestamp).getTime()),
           })).sort((a, b) => new Date(b.items[0].timestamp).getTime() - new Date(a.items[0].timestamp).getTime());
 
-          const typeBadge = (tp: string) => tp === 'verbal' ? '🎤' : tp === 'survey' ? '📊' : '✍️';
+          const typeBadge = (tp: string): React.ReactNode => tp === 'verbal'
+            ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
+            : tp === 'survey'
+            ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+            : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>;
           return (
             <div className="space-y-4">
               {/* فلاتر */}
               <div className="flex flex-wrap items-center gap-2">
                 <input value={journeyQuery} onChange={e => setJourneyQuery(e.target.value)}
-                  placeholder={ar ? '🔍 ابحث باسم الموظف أو البريد أو الوظيفة…' : '🔍 Search name / email / job…'}
-                  className="flex-1 min-w-[220px] px-3 py-2 rounded-lg border border-slate-300 bg-white text-slate-800 text-sm font-semibold" />
+                  placeholder={ar ? 'ابحث باسم الموظف أو البريد أو الوظيفة…' : 'Search name / email / job…'}
+                  className="hw-input flex-1 min-w-[220px] text-sm" />
                 <div className="flex gap-1">
                   {(['all','text','verbal','survey'] as const).map(tp => (
                     <button key={tp} onClick={() => setJourneyType(tp)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${journeyType === tp ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-                      {tp === 'all' ? (ar ? 'الكل' : 'All') : tp === 'text' ? (ar ? '✍️ تحريري' : 'Written') : tp === 'verbal' ? (ar ? '🎤 شفهي' : 'Verbal') : (ar ? '📊 استبيان' : 'Survey')}
+                      className={`hw-tab-pill${journeyType === tp ? ' hw-tab-active' : ''}`}>
+                      {tp === 'all' ? (ar ? 'الكل' : 'All') : tp === 'text' ? (ar ? 'تحريري' : 'Written') : tp === 'verbal' ? (ar ? 'شفهي' : 'Verbal') : (ar ? 'استبيان' : 'Survey')}
                     </button>
                   ))}
                 </div>
               </div>
               {/* عدّادات */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="text-2xl font-black text-emerald-600">{people.length}</div>
-                  <div className="text-[11px] text-slate-500">{ar ? 'موظف لديه تقييمات' : 'employees assessed'}</div>
+              <div className="grid grid-cols-3 gap-px bg-slate-200 border border-slate-200 rounded-lg overflow-hidden">
+                <div className="bg-white p-3">
+                  <div className="text-lg font-bold text-slate-800 tabular-nums">{people.length}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-wide font-bold">{ar ? 'موظف لديه تقييمات' : 'Employees Assessed'}</div>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="text-2xl font-black text-emerald-600">{filtered.length}</div>
-                  <div className="text-[11px] text-slate-500">{ar ? 'تقييم مكتمل' : 'completed assessments'}</div>
+                <div className="bg-white p-3">
+                  <div className="text-lg font-bold text-slate-800 tabular-nums">{filtered.length}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-wide font-bold">{ar ? 'تقييم مكتمل' : 'Completed'}</div>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="text-2xl font-black text-emerald-600">
+                <div className="bg-white p-3">
+                  <div className="text-lg font-bold text-emerald-600 tabular-nums">
                     {filtered.filter((a: any) => a.evaluatorReview?.status === 'approved').length}
                   </div>
-                  <div className="text-[11px] text-slate-500">{ar ? 'معتمد من المقيّم' : 'evaluator-approved'}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5 uppercase tracking-wide font-bold">{ar ? 'معتمد من المقيّم' : 'Approved'}</div>
                 </div>
               </div>
               {/* R5 #3: تصدير تقارير التقييمات (فنية + سلوكية) — مش الاستبيان */}
-              <div className="flex flex-wrap items-center gap-2 rounded-xl bg-emerald-50/60 border border-emerald-200 p-2.5">
-                <span className="text-[11px] font-black text-emerald-800">{ar ? '📑 تصدير تقارير التقييمات' : '📑 Export assessment reports'}</span>
-                <select value={reportFmt} onChange={e => setReportFmt(e.target.value as AssessmentExportFormat)} className="text-xs px-2 py-1 rounded-lg border border-emerald-300 bg-white font-bold text-slate-700">
+              <div className="flex flex-wrap items-center gap-2 rounded-md bg-slate-50 border border-slate-200 p-2.5">
+                <span className="text-[11px] font-bold text-slate-700">{ar ? 'تصدير تقارير التقييمات' : 'Export assessment reports'}</span>
+                <select value={reportFmt} onChange={e => setReportFmt(e.target.value as AssessmentExportFormat)} className="hw-input text-xs py-1">
                   <option value="docx">Word (.docx)</option>
                   <option value="pdf">PDF</option>
                   <option value="xlsx">Excel (.xlsx)</option>
                 </select>
                 <button onClick={() => handleExportAllAssessments(filtered)} disabled={!!reportBusy || !filtered.length}
                   title={ar ? 'تقرير شامل لكل تقييمات الجهة: الدرجات + الجدارات الفنية + الملف السلوكي' : 'Company-wide report: scores + technical competencies + behavioral profile'}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-50">
-                  {reportBusy ? '⏳ ' : '⬇️ '}{ar ? `التقرير الشامل للجهة (${filtered.length})` : `Company report (${filtered.length})`}
+                  className="hw-btn hw-btn-primary hw-btn-sm disabled:opacity-50">
+                  {reportBusy
+                    ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1 animate-spin"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                    : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                  }{ar ? `التقرير الشامل للجهة (${filtered.length})` : `Company report (${filtered.length})`}
                 </button>
                 {reportBusy && <span className="text-[11px] text-emerald-700 font-bold">{reportBusy}…</span>}
               </div>
 
               {/* مسار كل موظف */}
               {people.length === 0 ? (
-                <div className="text-center py-10 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                  <p className="text-slate-400 text-sm font-semibold">{ar ? 'لا توجد تقييمات مطابقة.' : 'No matching assessments.'}</p>
+                <div className="text-center py-10 bg-slate-50 rounded-md border border-dashed border-slate-200">
+                  <p className="text-slate-400 text-sm">{ar ? 'لا توجد تقييمات مطابقة.' : 'No matching assessments.'}</p>
                 </div>
               ) : people.map(person => (
-                <div key={person.key} className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div key={person.key} className="rounded-md border border-slate-200 bg-white p-4">
                   <div className="flex items-center justify-between gap-2 mb-3 pb-2 border-b border-slate-100">
                     <div className="min-w-0">
                       <div className="font-black text-slate-800 truncate">{person.name}</div>
                       {person.email && <div className="text-xs text-slate-400 truncate">{person.email}</div>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-black border border-emerald-200">
+                      <span className="hw-badge-brand text-xs">
                         {person.items.length} {ar ? 'تقييم' : 'assessments'}
                       </span>
                       <button onClick={() => handleExportEmployee(person)} disabled={!!reportBusy}
                         title={ar ? 'تقرير مفصّل لهذا الموظف (فني + سلوكي)' : 'Detailed report for this employee (technical + behavioral)'}
-                        className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-black disabled:opacity-50">
-                        ⬇️ {ar ? 'تقرير الموظف' : 'Employee report'}
+                        className="hw-btn hw-btn-primary hw-btn-sm disabled:opacity-50">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                        {ar ? 'تقرير الموظف' : 'Employee report'}
                       </button>
                     </div>
                   </div>
@@ -1659,13 +1636,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                             <div className="flex items-center gap-2 shrink-0">
                               {typeof score === 'number' && <span className="font-black text-emerald-600 text-sm">{Math.round(score)}%</span>}
                               {st && (
-                                <span className={`px-2 py-0.5 text-[9px] font-black rounded-md ${st === 'approved' ? 'bg-emerald-50 text-emerald-700' : st === 'needs_revision' ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>
-                                  {st === 'approved' ? (ar ? '✅ معتمد' : 'Approved') : st === 'needs_revision' ? (ar ? '⚠️ مراجعة' : 'Revise') : (ar ? '❌ مرفوض' : 'Rejected')}
+                                <span className={`px-2 py-0.5 text-[9px] font-semibold rounded-sm border ${st === 'approved' ? 'bg-green-50 text-green-700 border-green-200' : st === 'needs_revision' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                  {st === 'approved' ? (ar ? 'معتمد' : 'Approved') : st === 'needs_revision' ? (ar ? 'مراجعة' : 'Revise') : (ar ? 'مرفوض' : 'Rejected')}
                                 </span>
                               )}
                               <button onClick={() => setSelectedAssessment(a)}
-                                className="px-2 py-1 bg-slate-800 hover:bg-slate-900 text-white font-extrabold text-[10px] rounded-md whitespace-nowrap">
-                                👁️ {ar ? 'التقرير' : 'Report'}
+                                className="hw-btn hw-btn-subtle hw-btn-sm whitespace-nowrap flex items-center gap-1">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                {ar ? 'التقرير' : 'Report'}
                               </button>
                             </div>
                           </div>
@@ -1712,25 +1690,25 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                           </td>
                           <td className="px-4 py-3 text-start font-semibold text-slate-700">{item.jobTitle}</td>
                           <td className="px-4 py-3 text-start">
-                            <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full uppercase leading-none ${
-                              item.assessmentType === 'verbal' 
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200/50' 
-                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200/50'
+                            <span className={`inline-block px-2 py-0.5 text-[9px] font-bold rounded-sm uppercase leading-none ${
+                              item.assessmentType === 'verbal'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : 'bg-green-50 text-green-700 border border-green-200'
                             }`}>
-                              {item.assessmentType === 'verbal' ? (language === 'ar' ? '🎤 شفهي AI' : '🎤 Verbal Audio') : (language === 'ar' ? '✍️ تحريري MCQ' : '✍️ Written MCQ')}
+                              {item.assessmentType === 'verbal' ? (language === 'ar' ? 'شفهي AI' : 'Verbal Audio') : (language === 'ar' ? 'تحريري MCQ' : 'Written MCQ')}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-start">
                             {item.evaluatorReview ? (
                               <div className="flex flex-col">
-                                <span className={`inline-block self-start px-2 py-0.5 text-[9px] font-semibold rounded-md ${
+                                <span className={`inline-block self-start px-2 py-0.5 text-[9px] font-semibold rounded-sm ${
                                   item.evaluatorReview.status === 'approved'
-                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/40'
+                                    ? 'bg-green-50 text-green-700 border border-green-200'
                                     : item.evaluatorReview.status === 'needs_revision'
-                                    ? 'bg-amber-50 text-amber-700 border border-amber-200/40'
-                                    : 'bg-rose-50 text-rose-700 border border-rose-200/40'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                    : 'bg-red-50 text-red-700 border border-red-200'
                                 }`}>
-                                  {item.evaluatorReview.status === 'approved' ? (language === 'ar' ? '✅ معتمد' : 'Approved') : item.evaluatorReview.status === 'needs_revision' ? (language === 'ar' ? '⚠️ مراجعة إضافية' : 'Needs Revision') : (language === 'ar' ? '❌ مرفوض' : 'Rejected')}
+                                  {item.evaluatorReview.status === 'approved' ? (language === 'ar' ? 'معتمد' : 'Approved') : item.evaluatorReview.status === 'needs_revision' ? (language === 'ar' ? 'مراجعة إضافية' : 'Needs Revision') : (language === 'ar' ? 'مرفوض' : 'Rejected')}
                                 </span>
                                 <span className="text-[10px] text-slate-500 font-bold mt-0.5">
                                   {'★'.repeat(item.evaluatorReview.rating || 5)}{'☆'.repeat(5 - (item.evaluatorReview.rating || 5))}
@@ -1740,8 +1718,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                                 </span>
                               </div>
                             ) : (
-                              <span className="text-[11px] text-slate-400 font-bold italic">
-                                {language === 'ar' ? '⌛ بانتظار المقيّم' : '⌛ Pending Evaluator'}
+                              <span className="text-[11px] text-slate-400 font-bold italic flex items-center gap-1">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                                {language === 'ar' ? 'بانتظار المقيّم' : 'Pending Evaluator'}
                               </span>
                             )}
                           </td>
@@ -1754,32 +1733,35 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                             <div className="flex flex-wrap items-center justify-center gap-1.5">
                               <button
                                 onClick={() => setSelectedAssessment(item)}
-                                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-900 border border-slate-700 text-white font-extrabold text-[10px] rounded-lg transition-all shadow-xs whitespace-nowrap"
+                                className="hw-btn hw-btn-subtle hw-btn-sm whitespace-nowrap flex items-center gap-1"
                               >
-                                👁️ {language === 'ar' ? 'التقرير المفصل' : 'View Report'}
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                {language === 'ar' ? 'التقرير المفصل' : 'View Report'}
                               </button>
                               <button
                                 onClick={() => setExpandedAssessmentId(expandedAssessmentId === item.id ? null : item.id)}
-                                className={`px-2.5 py-1.5 border font-extrabold text-[10px] rounded-lg transition-all shadow-xs whitespace-nowrap ${
+                                className={`hw-btn hw-btn-sm whitespace-nowrap flex items-center gap-1 ${
                                   expandedAssessmentId === item.id
-                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300 border'
+                                    : 'hw-btn-ghost'
                                 }`}
                               >
-                                🔍 {language === 'ar' ? 'مواءمة خاطفة' : 'Quick Fit'}
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                                {language === 'ar' ? 'مواءمة خاطفة' : 'Quick Fit'}
                               </button>
                             </div>
                           </td>
                         </tr>
                         {expandedAssessmentId === item.id && (
-                          <tr className="bg-slate-50/70 border-b border-emerald-100/50">
-                            <td colSpan={6} className="px-6 py-4">
-                              <div className="bg-white border-2 border-slate-200 rounded-2xl p-5 shadow-xs space-y-4 text-start animate-fade-in">
+                          <tr className="bg-slate-50/50 border-b border-slate-100">
+                            <td colSpan={6} className="px-5 py-4">
+                              <div className="bg-white border border-slate-200 rounded-md p-4 space-y-4 text-start animate-fade-in">
                                 
                                 {/* Inside Title */}
                                 <div className="flex items-center justify-between border-b pb-2 mb-2">
                                   <h5 className="font-extrabold text-xs text-emerald-950 flex items-center gap-2">
-                                    <span>✨</span> {language === 'ar' ? 'بطاقة المراجعة والتدقيق الخاطفة للمرشح' : 'Executive Core Candidate Fit Card'}
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4-6.2-4.5-6.2 4.5 2.4-7.4L2 9.4h7.6z"/></svg>
+                                    {language === 'ar' ? 'بطاقة المراجعة والتدقيق الخاطفة للمرشح' : 'Executive Core Candidate Fit Card'}
                                   </h5>
                                   <button 
                                     onClick={() => setExpandedAssessmentId(null)}
@@ -1789,14 +1771,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                                   </button>
                                 </div>
                                 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                  <div className="space-y-1 bg-emerald-50/20 p-3 rounded-xl border border-emerald-50">
-                                    <p className="text-[11px] font-black text-emerald-900 border-b pb-1">🌟 {language === 'ar' ? 'النقاط القوية والرئيسية:' : 'Core Strengths:'}</p>
-                                    <p className="text-xs text-slate-700 leading-relaxed max-h-[100px] overflow-y-auto pr-1 whitespace-pre-wrap">{item.reportData?.strengths || (language === 'ar' ? 'لم تتوفر معلومات بعد.' : 'N/A')}</p>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div className="space-y-1.5 p-3 rounded-md border border-slate-200 bg-slate-50">
+                                    <p className="text-[11px] font-bold text-slate-700 border-b border-slate-200 pb-1">{language === 'ar' ? 'النقاط القوية والرئيسية' : 'Core Strengths'}</p>
+                                    <p className="text-xs text-slate-700 leading-relaxed max-h-[100px] overflow-y-auto whitespace-pre-wrap">{item.reportData?.strengths || (language === 'ar' ? 'لم تتوفر معلومات بعد.' : 'N/A')}</p>
                                   </div>
-                                  <div className="space-y-1 bg-rose-50/20 p-3 rounded-xl border border-rose-50">
-                                    <p className="text-[11px] font-black text-rose-900 border-b pb-1">⚠️ {language === 'ar' ? 'جوانب التطوير والتحسين:' : 'Development areas:'}</p>
-                                    <p className="text-xs text-slate-700 leading-relaxed max-h-[100px] overflow-y-auto pr-1 whitespace-pre-wrap">{item.reportData?.weaknesses || (language === 'ar' ? 'لم تتوفر معلومات بعد.' : 'N/A')}</p>
+                                  <div className="space-y-1.5 p-3 rounded-md border border-rose-100 bg-rose-50/30">
+                                    <p className="text-[11px] font-bold text-rose-800 border-b border-rose-100 pb-1">{language === 'ar' ? 'جوانب التطوير والتحسين' : 'Development Areas'}</p>
+                                    <p className="text-xs text-slate-700 leading-relaxed max-h-[100px] overflow-y-auto whitespace-pre-wrap">{item.reportData?.weaknesses || (language === 'ar' ? 'لم تتوفر معلومات بعد.' : 'N/A')}</p>
                                   </div>
                                 </div>
 
@@ -1872,12 +1854,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                           <div className="text-xs text-slate-400 font-bold">{lgSnap.userEmail || 'guest@example.com'}</div>
                         </td>
                         <td className="px-4 py-3 text-start">
-                          <span className={`inline-block px-2.5 py-1 text-[9px] font-black rounded-lg ${
-                            lgSnap.isGuest 
-                              ? 'bg-slate-100 text-slate-600 border border-slate-200' 
-                              : 'bg-emerald-50 text-emerald-800 border border-emerald-200/50'
+                          <span className={`inline-block px-2 py-0.5 text-[9px] font-semibold rounded-sm ${
+                            lgSnap.isGuest
+                              ? 'bg-slate-100 text-slate-600 border border-slate-200'
+                              : 'bg-green-50 text-green-700 border border-green-200'
                           }`}>
-                            {lgSnap.isGuest ? (language === 'ar' ? '👤 دخول كـ زائر' : 'Guest Bypass') : (language === 'ar' ? '🔑 حساب جوجل / معتمد' : 'Google Auth')}
+                            {lgSnap.isGuest ? (language === 'ar' ? 'دخول كـ زائر' : 'Guest Bypass') : (language === 'ar' ? 'حساب جوجل / معتمد' : 'Google Auth')}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-start text-xs text-slate-400 font-bold tabular-nums">
@@ -1900,12 +1882,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               
               {/* Form Col: 1/3 size */}
-              <div className="lg:col-span-1 bg-gradient-to-tr from-slate-50 to-emerald-50/40 p-5 rounded-2xl border border-emerald-100 shadow-xs space-y-4">
-                <div className="border-b border-emerald-100 pb-3">
-                  <h4 className="font-extrabold text-slate-800 text-sm flex items-center gap-2">
-                    <span>🗓️</span> {language === 'ar' ? 'طلب جدولة جلسة استشارية جديدة' : 'Schedule Custom Consultation'}
+              <div className="lg:col-span-1 bg-white p-4 rounded-lg border border-slate-200 space-y-4">
+                <div className="border-b border-slate-200 pb-3">
+                  <h4 className="font-bold text-slate-900 text-sm">
+                    {language === 'ar' ? 'طلب جدولة جلسة استشارية جديدة' : 'Schedule Custom Consultation'}
                   </h4>
-                  <p className="text-[10px] text-emerald-700/80 mt-1 font-bold">
+                  <p className="text-xs text-slate-500 mt-0.5">
                     {language === 'ar' ? 'سوف يقوم النظام بتوجيه الطلب للدكتور السنوسي وجدولته.' : 'Instantly logged into Dr. Alsenosy appointment queue.'}
                   </p>
                 </div>
@@ -1919,7 +1901,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       placeholder={language === 'ar' ? 'مثال: الهيئة الوطنية للمعلومات' : 'e.g. FedTech Corp'}
                       value={cClientName}
                       onChange={e => setCClientName(e.target.value)}
-                      className="w-full p-2.5 text-xs border border-slate-300 rounded-xl focus:ring-1 focus:ring-emerald-500 bg-white"
+                      className="hw-input text-xs"
                     />
                   </div>
 
@@ -1931,7 +1913,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         placeholder={language === 'ar' ? 'تقنية / حكومي' : 'Government/Tech'}
                         value={cIndustry}
                         onChange={e => setCIndustry(e.target.value)}
-                        className="w-full p-2.5 text-xs border border-slate-300 rounded-xl focus:ring-1 focus:ring-emerald-500 bg-white"
+                        className="hw-input text-xs"
                       />
                     </div>
                     <div>
@@ -1940,7 +1922,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         type="date" 
                         value={cTargetDate}
                         onChange={e => setCTargetDate(e.target.value)}
-                        className="w-full p-2.5 text-xs border border-slate-300 rounded-xl focus:ring-1 focus:ring-emerald-500 bg-white"
+                        className="hw-input text-xs"
                       />
                     </div>
                   </div>
@@ -1950,12 +1932,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     <select 
                       value={cRequestType}
                       onChange={e => setCRequestType(e.target.value as any)}
-                      className="w-full p-2.5 text-xs border border-slate-300 rounded-xl focus:ring-1 focus:ring-emerald-500 bg-white cursor-pointer font-semibold"
+                      className="hw-input text-xs cursor-pointer"
                     >
-                      <option value="restructuring">{language === 'ar' ? '🔄 إعادة هيكلة وبناء جدارات' : '🔄 System Restructuring'}</option>
-                      <option value="efqm_audit">{language === 'ar' ? '🏅 تدقيق نموذج التميز EFQM' : '🏅 EFQM Excellence Audit'}</option>
-                      <option value="vocal_benchmark">{language === 'ar' ? '🎤 معايرة صوتية وسلوكية' : '🎤 Vocal Psych Calibration'}</option>
-                      <option value="capacity_building">{language === 'ar' ? '📚 ورشة عمل تنمية قدرات' : '📚 Capacity Building'}</option>
+                      <option value="restructuring">{language === 'ar' ? 'إعادة هيكلة وبناء جدارات' : 'System Restructuring'}</option>
+                      <option value="efqm_audit">{language === 'ar' ? 'تدقيق نموذج التميز EFQM' : 'EFQM Excellence Audit'}</option>
+                      <option value="vocal_benchmark">{language === 'ar' ? 'معايرة صوتية وسلوكية' : 'Vocal Psych Calibration'}</option>
+                      <option value="capacity_building">{language === 'ar' ? 'ورشة عمل تنمية قدرات' : 'Capacity Building'}</option>
                     </select>
                   </div>
 
@@ -1966,7 +1948,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       placeholder={language === 'ar' ? 'مثال: مواءمة أدلة التوصيف الوظيفي الفيدرالي الجديدة' : 'e.g. Aligning federal job guidelines'}
                       value={cAgendaTopic}
                       onChange={e => setCAgendaTopic(e.target.value)}
-                      className="w-full p-2.5 text-xs border border-slate-300 rounded-xl focus:ring-1 focus:ring-emerald-500 bg-white"
+                      className="hw-input text-xs"
                     />
                   </div>
 
@@ -1976,11 +1958,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       <select 
                         value={cUrgency}
                         onChange={e => setCUrgency(e.target.value as any)}
-                        className="w-full p-2.5 text-xs border border-slate-300 rounded-xl focus:ring-1 focus:ring-emerald-500 bg-white cursor-pointer"
+                        className="hw-input text-xs cursor-pointer"
                       >
-                        <option value="normal">🟢 {language === 'ar' ? 'طبيعي' : 'Normal'}</option>
-                        <option value="medium">🟡 {language === 'ar' ? 'متوسط الاستعجال' : 'Urgent'}</option>
-                        <option value="high">🔴 {language === 'ar' ? 'مستعجل جداً (طوارئ)' : 'Critical (Express)'}</option>
+                        <option value="normal">{language === 'ar' ? 'طبيعي' : 'Normal'}</option>
+                        <option value="medium">{language === 'ar' ? 'متوسط الاستعجال' : 'Urgent'}</option>
+                        <option value="high">{language === 'ar' ? 'مستعجل جداً (طوارئ)' : 'Critical (Express)'}</option>
                       </select>
                     </div>
                     <div>
@@ -1991,7 +1973,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         placeholder="vip@client.gov"
                         value={cContactEmail}
                         onChange={e => setCContactEmail(e.target.value)}
-                        className="w-full p-2.5 text-xs border border-slate-300 rounded-xl focus:ring-1 focus:ring-emerald-500 bg-white"
+                        className="hw-input text-xs"
                       />
                     </div>
                   </div>
@@ -2003,24 +1985,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       placeholder={language === 'ar' ? 'أدخل تحديات هذه المنشأة هنا لمراعاتها في الطرح الاستشاري' : 'Write details for restructuring consideration'}
                       value={cNotes}
                       onChange={e => setCNotes(e.target.value)}
-                      className="w-full p-2.5 text-xs border border-slate-300 rounded-xl focus:ring-1 focus:ring-emerald-500 bg-white"
+                      className="hw-input text-xs"
                     />
                   </div>
 
-                  <button 
+                  <button
                     type="submit"
-                    className="w-full py-2.5 bg-emerald-600 hover:bg-slate-900 text-white rounded-xl text-xs font-black transition-all shadow-sm"
+                    className="hw-btn hw-btn-primary hw-btn-w"
                   >
-                    🚀 {language === 'ar' ? 'حفظ وإدراج بجدول المعاينة' : 'Persist Strategist Session'}
+                    {language === 'ar' ? 'حفظ وإدراج بجدول المعاينة' : 'Persist Strategist Session'}
                   </button>
                 </form>
               </div>
 
               {/* List Col: 2/3 size */}
               <div className="lg:col-span-2 space-y-4">
-                <div className="bg-white p-5 rounded-2xl border border-slate-200">
-                  <h5 className="font-extrabold text-slate-800 text-xs mb-1 uppercase tracking-wider">{language === 'ar' ? '🗓️ قائمة حجوزات وجلسات إعادة الهيكلة في الانتظار' : 'Pending Restructuring & Excellence Workshops Queue'}</h5>
-                  <p className="text-[10px] text-slate-400 font-bold mb-4">{language === 'ar' ? 'جدول رصد ومتابعة مواعيد استشارات الجهات مع المستشار د. أحمد السنوسي.' : 'Live tracking pipeline and strategic reports for corporate clients under review.'}</p>
+                <div className="bg-white p-4 rounded-lg border border-slate-200">
+                  <h5 className="font-bold text-slate-900 text-sm mb-0.5">{language === 'ar' ? 'قائمة حجوزات وجلسات إعادة الهيكلة في الانتظار' : 'Pending Restructuring & Excellence Workshops Queue'}</h5>
+                  <p className="text-xs text-slate-500 mb-4 leading-relaxed">{language === 'ar' ? 'جدول رصد ومتابعة مواعيد استشارات الجهات مع المستشار د. أحمد السنوسي.' : 'Live tracking pipeline and strategic reports for corporate clients under review.'}</p>
                   
                   {loadingConsultations ? (
                     <div className="flex justify-center items-center py-12 gap-2">
@@ -2031,69 +2013,68 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       <span className="text-slate-400 text-xs font-bold">{language === 'ar' ? 'جاري تحميل الحجوزات المستنشئة...' : 'Accessing consultations log...'}</span>
                     </div>
                   ) : consultationRequests.length === 0 ? (
-                    <div className="text-center py-12 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-                      <span className="text-lg">👨‍💼</span>
-                      <p className="text-slate-500 font-black text-xs mt-2">{language === 'ar' ? 'لا توجد حجوزات نشطة حالياً.' : 'No active restructuring consult sessions yet.'}</p>
-                      <p className="text-[10px] text-slate-400 mt-1">{language === 'ar' ? 'قم بإنشاء وتعبئة النموذج على اليمين لجدولة مصفوفة حجز فوري بمشروعك!' : 'Spawn the first record using the scheduling module on the left.'}</p>
+                    <div className="text-center py-10 bg-slate-50 rounded-md border border-dashed border-slate-200">
+                      <p className="text-slate-500 text-sm mt-2">{language === 'ar' ? 'لا توجد حجوزات نشطة حالياً.' : 'No active restructuring consult sessions yet.'}</p>
+                      <p className="text-xs text-slate-400 mt-1">{language === 'ar' ? 'استخدم النموذج لجدولة جلسة جديدة.' : 'Use the scheduling form to add a record.'}</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
                       {consultationRequests.map((req, index) => {
                         const dateLocaleStr = req.targetDate ? new Date(req.targetDate).toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A';
                         return (
-                          <div key={req.id || index} className="p-4 bg-slate-50/70 hover:bg-emerald-50/10 border border-slate-200 hover:border-emerald-200/50 rounded-2xl transition-all shadow-sm space-y-3">
+                          <div key={req.id || index} className="p-4 bg-white hover:bg-slate-50 border border-slate-200 rounded-md transition-colors space-y-3">
                             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-dashed border-slate-200 pb-2">
                               <div>
-                                <span className={`inline-block px-1.5 py-0.5 text-[9px] font-black rounded-lg uppercase border mr-2 ${
-                                  req.urgency === 'high' 
-                                    ? 'bg-rose-50 text-rose-700 border-rose-200/50 animate-pulse' 
-                                    : req.urgency === 'medium' 
-                                    ? 'bg-amber-50 text-amber-700 border-amber-200/50' 
-                                    : 'bg-emerald-50 text-emerald-700 border-emerald-200/50'
+                                <span className={`inline-block px-1.5 py-0.5 text-[9px] font-bold rounded-sm uppercase border me-2 ${
+                                  req.urgency === 'high'
+                                    ? 'bg-red-50 text-red-700 border-red-200'
+                                    : req.urgency === 'medium'
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                    : 'bg-slate-50 text-slate-600 border-slate-200'
                                 }`}>
-                                  {req.urgency === 'high' ? (language === 'ar' ? '🚨 مستعجل طارئ' : 'Emergency') : req.urgency === 'medium' ? (language === 'ar' ? '⚠️ مؤكد' : 'Medium') : (language === 'ar' ? '🟢 طبيعي' : 'Standard')}
+                                  {req.urgency === 'high' ? (language === 'ar' ? 'مستعجل طارئ' : 'Emergency') : req.urgency === 'medium' ? (language === 'ar' ? 'مؤكد' : 'Medium') : (language === 'ar' ? 'طبيعي' : 'Standard')}
                                 </span>
                                 <h6 className="inline-block font-black text-slate-800 text-sm">{req.clientName}</h6>
                                 <span className="text-xs text-slate-400 font-bold block mt-0.5 md:inline md:mt-0 md:ml-2">({req.industry})</span>
                               </div>
-                              <span className={`inline-block px-2.5 py-1 text-[10px] font-black rounded-full ${
+                              <span className={`inline-block px-2 py-0.5 text-[10px] font-bold rounded-md ${
                                 req.status === 'completed'
-                                  ? 'bg-emerald-100 text-emerald-800'
+                                  ? 'bg-green-50 text-green-800 border border-green-200'
                                   : req.status === 'report_drafted'
-                                  ? 'bg-blue-100 text-blue-800'
+                                  ? 'bg-slate-100 text-slate-700 border border-slate-200'
                                   : req.status === 'scheduled'
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-emerald-100 text-emerald-800'
+                                  ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                                  : 'bg-slate-50 text-slate-600 border border-slate-200'
                               }`}>
-                                {req.status === 'completed' 
-                                  ? (language === 'ar' ? '✅ تم التسليم والاعتماد' : 'Completed') 
+                                {req.status === 'completed'
+                                  ? (language === 'ar' ? 'تم التسليم والاعتماد' : 'Completed')
                                   : req.status === 'report_drafted'
-                                  ? (language === 'ar' ? '📝 مسودة تقرير جاهزة' : 'Report Drafted') 
+                                  ? (language === 'ar' ? 'مسودة تقرير جاهزة' : 'Report Drafted')
                                   : req.status === 'scheduled'
-                                  ? (language === 'ar' ? '📅 مجدول وجاري التحضير' : 'Scheduled') 
-                                  : (language === 'ar' ? '⏳ مستلم وتوجيه فوري' : 'Received Pipeline')}
+                                  ? (language === 'ar' ? 'مجدول وجاري التحضير' : 'Scheduled')
+                                  : (language === 'ar' ? 'مستلم وتوجيه فوري' : 'Received Pipeline')}
                               </span>
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs leading-relaxed">
                               <div className="space-y-0.5">
                                 <span className="text-[10px] text-slate-400 font-bold block">{language === 'ar' ? 'أجندة الجلسة المعيارية:' : 'Standard Session Agenda:'}</span>
-                                <p className="font-extrabold text-slate-800 select-none">🎯 {req.agendaTopic}</p>
+                                <p className="font-extrabold text-slate-800 select-none flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg> {req.agendaTopic}</p>
                               </div>
                               <div className="space-y-0.5">
                                 <span className="text-[10px] text-slate-400 font-bold block">{language === 'ar' ? 'تاريخ عقد الجلسة المتوقع:' : 'Expected Session Date:'}</span>
-                                <p className="font-extrabold text-emerald-700 flex items-center gap-1">📅 {dateLocaleStr}</p>
+                                <p className="font-extrabold text-slate-700 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> {dateLocaleStr}</p>
                               </div>
                             </div>
                             
                             {req.additionalNotes && (
-                              <div className="text-[11px] text-slate-500 bg-white p-2.5 rounded-xl border border-slate-100">
+                              <div className="text-[11px] text-slate-500 bg-white p-2.5 rounded-md border border-slate-100">
                                 <strong className="text-slate-700">{language === 'ar' ? 'ملاحظات استراتيجية رصدها المحلل:' : 'Strategic Observations Context:'}</strong> {req.additionalNotes}
                               </div>
                             )}
 
                             <div className="flex justify-between items-center text-[10px] text-slate-400 pt-1 border-t border-dashed border-slate-100">
-                              <span>المستشار المفوّض: <strong className="text-emerald-950">{req.consultantName}</strong></span>
+                              <span>المستشار المفوّض: <strong className="text-slate-800">{req.consultantName}</strong></span>
                               <span>بريد التواصل: <span className="underline select-all text-slate-500 font-bold">{req.contactEmails}</span></span>
                             </div>
                           </div>
@@ -2113,22 +2094,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       {/* Candidate Past Assessment Detailed Report Modal/Popup */}
       {selectedAssessment && (
         <div className="fixed inset-0 min-h-screen bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto animate-fade-in" dir={language === 'ar' ? 'rtl' : 'ltr'}>
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 md:p-8 space-y-6 text-start flex flex-col relative">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 md:p-8 space-y-6 text-start flex flex-col relative">
             
             {/* Modal Header */}
             <div className="flex justify-between items-start border-b border-slate-100 pb-4">
               <div>
-                <span className="px-3 py-1 bg-emerald-50 text-emerald-700 font-extrabold text-[11px] rounded-full uppercase border border-emerald-200/40">
+                <span className="hw-badge-success text-[10px] uppercase tracking-wide">
                   {language === 'ar' ? 'حالة مكتملة ومحفوظة سحابياً' : 'Completed Cloud Record'}
                 </span>
-                <h3 className="text-2xl font-black text-slate-800 mt-2">
-                  {selectedAssessment.userName} - {selectedAssessment.jobTitle}
+                <h3 className="text-xl font-bold text-slate-900 mt-2">
+                  {selectedAssessment.userName} — {selectedAssessment.jobTitle}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">E-mail: {selectedAssessment.userEmail}</p>
               </div>
               <button
                 onClick={() => setSelectedAssessment(null)}
-                className="p-1 px-3 text-slate-400 hover:text-slate-800 font-black text-lg border border-slate-200 hover:bg-slate-50 rounded-xl"
+                className="p-1.5 px-3 text-slate-400 hover:text-slate-700 font-bold text-sm border border-slate-200 hover:bg-slate-50 rounded-md transition-colors"
               >
                 ✕
               </button>
@@ -2136,22 +2117,32 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
             {/* Modal Content layout */}
             <div className="space-y-6 flex-1 text-slate-700 text-sm overflow-y-auto max-h-[60vh] pr-2">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200/70">
-                <div className="text-center p-3">
-                  <span className="block text-[10px] text-slate-400 uppercase font-black">{language === 'ar' ? 'مؤشر الكفاءة الكلي' : 'Overall Fit Score'}</span>
-                  <p className="text-3xl font-black text-emerald-600 mt-1">
+              <div className="grid grid-cols-3 gap-px bg-slate-200 border border-slate-200 rounded-lg overflow-hidden">
+                <div className="bg-white p-3 text-start">
+                  <span className="block text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">{language === 'ar' ? 'مؤشر الكفاءة الكلي' : 'Overall Fit Score'}</span>
+                  <p className="text-2xl font-bold text-emerald-600 tabular-nums">
                     {selectedAssessment.reportData?.totalScore ? `${Math.round(selectedAssessment.reportData.totalScore)}%` : 'N/A'}
                   </p>
                 </div>
-                <div className="text-center p-3 border-x border-slate-200">
-                  <span className="block text-[10px] text-slate-400 uppercase font-black">{language === 'ar' ? 'نوع المحاكاة' : 'Process Mode'}</span>
-                  <p className="text-sm font-extrabold text-slate-800 mt-2">
-                    {selectedAssessment.assessmentType === 'verbal' ? (language === 'ar' ? '🎤 تقييم صوتي ذكي' : '🎤 Speech Transcript') : (language === 'ar' ? '✍️ استبيان تحريري خبير' : '✍️ Multiple Choice')}
+                <div className="bg-white p-3 text-start">
+                  <span className="block text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">{language === 'ar' ? 'نوع المحاكاة' : 'Process Mode'}</span>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {selectedAssessment.assessmentType === 'verbal' ? (
+                      <span className="flex items-center gap-1">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></svg>
+                        {language === 'ar' ? 'تقييم صوتي' : 'Speech'}
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                        {language === 'ar' ? 'تحريري' : 'Written'}
+                      </span>
+                    )}
                   </p>
                 </div>
-                <div className="text-center p-3">
-                  <span className="block text-[10px] text-slate-400 uppercase font-black">{language === 'ar' ? 'تاريخ الحفظ' : 'Saved Date'}</span>
-                  <p className="text-xs font-semibold text-slate-500 mt-2">
+                <div className="bg-white p-3 text-start">
+                  <span className="block text-[10px] text-slate-500 uppercase tracking-wider font-bold mb-1">{language === 'ar' ? 'تاريخ الحفظ' : 'Saved Date'}</span>
+                  <p className="text-xs font-semibold text-slate-600">
                     {new Date(selectedAssessment.timestamp).toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-US')}
                   </p>
                 </div>
@@ -2159,17 +2150,17 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {/* Competency Scores Breakdown */}
               {selectedAssessment.reportData?.competencyScores && (
-                <div className="border border-slate-200/85 p-5 rounded-2xl space-y-3 bg-white">
-                  <h4 className="font-extrabold text-slate-800 mb-2">📊 {language === 'ar' ? 'تحليل نتائج الجدارات والذكاء الوظيفي' : 'Competency & IQ Ratings'}</h4>
+                <div className="border border-slate-200 p-4 rounded-lg space-y-3 bg-white">
+                  <h4 className="font-bold text-slate-800 mb-2 text-sm">{language === 'ar' ? 'تحليل نتائج الجدارات والذكاء الوظيفي' : 'Competency & IQ Ratings'}</h4>
                   <div className="space-y-3">
                     {selectedAssessment.reportData.competencyScores.map((c: any) => (
                       <div key={c.competency}>
                         <div className="flex justify-between text-xs mb-1 font-bold">
                           <span className="text-slate-700">{c.competency}</span>
-                          <span className="text-emerald-600">{Math.round(c.score)}%</span>
+                          <span className="text-slate-600 tabular-nums">{Math.round(c.score)}%</span>
                         </div>
-                        <div className="w-full bg-slate-100 rounded-full h-2">
-                          <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 h-2 rounded-full" style={{ width: `${c.score}%` }}></div>
+                        <div className="hw-progress">
+                          <div className="hw-progress-bar" style={{ width: `${c.score}%` }}></div>
                         </div>
                       </div>
                     ))}
@@ -2179,14 +2170,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {/* Strengths & Weaknesses */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-4 bg-emerald-50/50 border border-emerald-100 rounded-xl space-y-1">
-                  <span className="text-emerald-800 font-extrabold text-xs flex items-center gap-1">💪 {language === 'ar' ? 'مواطن القوة والتميز' : 'Strategic Strengths'}</span>
+                <div className="p-4 bg-green-50 border border-green-100 rounded-lg space-y-1">
+                  <span className="text-green-800 font-bold text-xs flex items-center gap-1">{language === 'ar' ? 'مواطن القوة والتميز' : 'Strategic Strengths'}</span>
                   <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed mt-1">
                     {selectedAssessment.reportData?.strengths || 'N/A'}
                   </p>
                 </div>
-                <div className="p-4 bg-amber-50/50 border border-amber-100 rounded-xl space-y-1">
-                  <span className="text-amber-800 font-extrabold text-xs flex items-center gap-1">⚠️ {language === 'ar' ? 'فرص التطوير والتحسين' : 'Areas for Improvement'}</span>
+                <div className="p-4 bg-amber-50 border border-amber-100 rounded-lg space-y-1">
+                  <span className="text-amber-800 font-bold text-xs flex items-center gap-1">{language === 'ar' ? 'فرص التطوير والتحسين' : 'Areas for Improvement'}</span>
                   <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed mt-1">
                     {selectedAssessment.reportData?.weaknesses || 'N/A'}
                   </p>
@@ -2195,8 +2186,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {/* Recommendations */}
               {selectedAssessment.reportData?.recommendations && (
-                <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl">
-                  <h5 className="font-extrabold text-xs text-slate-800 uppercase tracking-wider mb-2">💡 {language === 'ar' ? 'استشارات وتوصيات الحوكمة الإدارية' : 'Governance & Development Roadmap'}</h5>
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                  <h5 className="font-bold text-xs text-slate-700 uppercase tracking-wider mb-2">{language === 'ar' ? 'استشارات وتوصيات الحوكمة الإدارية' : 'Governance & Development Roadmap'}</h5>
                   <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">
                     {selectedAssessment.reportData.recommendations}
                   </p>
@@ -2205,8 +2196,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {/* Holland Summary */}
               {selectedAssessment.reportData?.birkmanHollandSummary && (
-                <div className="p-5 bg-blue-50/30 border border-blue-100 rounded-2xl">
-                  <h5 className="font-extrabold text-xs text-blue-900 uppercase tracking-wider mb-2">🎓 {language === 'ar' ? 'تحليل جدارات هولاند وبريكمان وحوكمة السلوك' : 'Holland RIASEC & Birkman Behavioral Mapping'}</h5>
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                  <h5 className="font-bold text-xs text-slate-700 uppercase tracking-wider mb-2">{language === 'ar' ? 'تحليل جدارات هولاند وبريكمان وحوكمة السلوك' : 'Holland RIASEC & Birkman Behavioral Mapping'}</h5>
                   <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">
                     {selectedAssessment.reportData.birkmanHollandSummary}
                   </p>
@@ -2215,14 +2206,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
               {/* Human Evaluator & Quality Override Form */}
               <div className="border-t-2 border-dashed border-slate-200 pt-6 space-y-4">
-                <div className="bg-gradient-to-br from-emerald-50/70 to-blue-50/50 border border-emerald-100 rounded-2xl p-5 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">⭐</span>
-                    <h5 className="font-extrabold text-sm text-emerald-950 uppercase tracking-wider">
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-5 space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+                    <h5 className="font-bold text-sm text-slate-900">
                       {language === 'ar' ? 'نموذج تقييم واعتماد المقيّم البشري والجودة' : 'Human Expert Evaluation & Validation Override'}
                     </h5>
                   </div>
-                  <p className="text-xs text-emerald-800 leading-relaxed font-semibold">
+                  <p className="text-xs text-slate-500 leading-relaxed">
                     {language === 'ar'
                       ? 'بصفتك مستشارًا بشريًا أو ممثل جودة في Ailigent.ai، يمكنك تدوين ملاحظات تدقيق إضافية، وتعديل حالة الملاءمة والدرجة التقديرية لإقرار هذا الموظف.'
                       : 'As a verified organizational consultant, you can register validation reports, alter active fit statuses, and sign-off on competencies below.'}
@@ -2239,7 +2229,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         value={revName}
                         onChange={(e) => setRevName(e.target.value)}
                         placeholder={language === 'ar' ? 'مثال: أ. أحمد الهاشمي' : 'e.g. Dr. Alex Thorne'}
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-1 focus:ring-emerald-500"
+                        className="hw-input text-xs"
                         required
                       />
                     </div>
@@ -2253,7 +2243,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         value={revEmail}
                         onChange={(e) => setRevEmail(e.target.value)}
                         placeholder="consultant@corporate.com"
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-1 focus:ring-emerald-500"
+                        className="hw-input text-xs"
                         required
                       />
                     </div>
@@ -2268,11 +2258,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       <select
                         value={revStatus}
                         onChange={(e) => setRevStatus(e.target.value as any)}
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-1 focus:ring-emerald-500"
+                        className="hw-input text-xs"
                       >
-                        <option value="approved">✅ {language === 'ar' ? 'معتمد ومناسب للمنصب' : 'Approved & High Fit'}</option>
-                        <option value="needs_revision">⚠️ {language === 'ar' ? 'مراجعة إضافية مع العميل' : 'Needs Further Review'}</option>
-                        <option value="rejected">❌ {language === 'ar' ? 'غير مناسب للمنصب حالياً' : 'Do Not Approve'}</option>
+                        <option value="approved">{language === 'ar' ? 'معتمد ومناسب للمنصب' : 'Approved & High Fit'}</option>
+                        <option value="needs_revision">{language === 'ar' ? 'مراجعة إضافية مع العميل' : 'Needs Further Review'}</option>
+                        <option value="rejected">{language === 'ar' ? 'غير مناسب للمنصب حالياً' : 'Do Not Approve'}</option>
                       </select>
                     </div>
 
@@ -2307,7 +2297,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       value={revComments}
                       onChange={(e) => setRevComments(e.target.value)}
                       placeholder={language === 'ar' ? 'اكتب تبريرات جدارات الذكاء وتأثيرات هولاند هنا...' : 'Provide background context explaining the evaluation override...'}
-                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 focus:ring-1 focus:ring-emerald-500 leading-relaxed"
+                      className="hw-textarea text-xs"
                     />
                   </div>
 
@@ -2317,7 +2307,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       type="button"
                       onClick={handleSaveReview}
                       disabled={isSavingReview}
-                      className="py-2.5 px-6 bg-emerald-600 hover:bg-slate-900 text-white font-extrabold text-[11px] rounded-xl shadow-xs transition-colors flex items-center gap-2"
+                      className="hw-btn hw-btn-primary flex items-center gap-2"
                     >
                       {isSavingReview ? (
                         <>
@@ -2329,7 +2319,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                         </>
                       ) : (
                         <>
-                          <span>💾</span>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                           <span>{language === 'ar' ? 'تأكيد وحفظ مراجعة المقيّم بـ Firestore' : 'Authorize & Write Evaluator Review'}</span>
                         </>
                       )}
@@ -2343,7 +2333,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
             <div className="border-t border-slate-100 pt-4 flex justify-end">
               <button
                 onClick={() => setSelectedAssessment(null)}
-                className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-all"
+                className="hw-btn hw-btn-ghost"
               >
                 {language === 'ar' ? 'إغلاق المعاينة' : 'Close Details'}
               </button>

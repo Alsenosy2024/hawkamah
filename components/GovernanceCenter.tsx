@@ -86,12 +86,12 @@ const SEV_COLOR: Record<string, string> = {
   critical: 'bg-rose-50 text-rose-700 border-rose-200',
 };
 
-const DIAG_KINDS: { kind: GovDiagramKind; ar: string; en: string; icon: string }[] = [
-  { kind: 'flowchart', ar: 'تدفق الإجراءات', en: 'Procedure flow', icon: '🔀' },
-  { kind: 'swimlane', ar: 'مسارات المسؤوليات', en: 'Responsibility lanes', icon: '🏊' },
-  { kind: 'state', ar: 'مخطط الحالات', en: 'State diagram', icon: '🔄' },
-  { kind: 'orgchart', ar: 'الهيكل التنظيمي', en: 'Org chart', icon: '🏢' },
-  { kind: 'raci', ar: 'مصفوفة RACI', en: 'RACI matrix', icon: '🧮' },
+const DIAG_KINDS: { kind: GovDiagramKind; ar: string; en: string; icon: React.ReactNode }[] = [
+  { kind: 'flowchart', ar: 'تدفق الإجراءات', en: 'Procedure flow', icon: <svg key="dg-flow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg> },
+  { kind: 'swimlane', ar: 'مسارات المسؤوليات', en: 'Responsibility lanes', icon: <svg key="dg-swim" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg> },
+  { kind: 'state', ar: 'مخطط الحالات', en: 'State diagram', icon: <svg key="dg-state" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> },
+  { kind: 'orgchart', ar: 'الهيكل التنظيمي', en: 'Org chart', icon: <svg key="dg-org" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> },
+  { kind: 'raci', ar: 'مصفوفة RACI', en: 'RACI matrix', icon: <svg key="dg-raci" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg> },
 ];
 
 const LEVEL_AR: Record<string, string> = {
@@ -99,18 +99,18 @@ const LEVEL_AR: Record<string, string> = {
 };
 const STATUS_AR: Record<string, string> = { draft: 'مسودة', in_review: 'قيد المراجعة', approved: 'معتمد' };
 
-// Library folders: doc kind → {emoji, ar, en}. Unknown kinds fall back to a generic folder.
-const KIND_FOLDER: Record<string, { icon: string; ar: string; en: string }> = {
-  governance:  { icon: '📘', ar: 'أدلة الحوكمة', en: 'Governance manuals' },
-  policy:      { icon: '📋', ar: 'السياسات', en: 'Policies' },
-  procedure:   { icon: '🔧', ar: 'الإجراءات', en: 'Procedures' },
-  workflow:    { icon: '🔁', ar: 'سلاسل العمليات', en: 'Workflows' },
-  orgchart:    { icon: '🏢', ar: 'الهياكل التنظيمية', en: 'Org structures' },
-  jobdesc:     { icon: '🧰', ar: 'الوصف الوظيفي', en: 'Job descriptions' },
-  gapfix:      { icon: '🩹', ar: 'معالجات الفجوات', en: 'Gap fixes' },
-  charter:     { icon: '📜', ar: 'المواثيق', en: 'Charters' },
+// Library folders: doc kind → {icon, ar, en}. Unknown kinds fall back to a generic folder.
+const KIND_FOLDER: Record<string, { icon: React.ReactNode; ar: string; en: string }> = {
+  governance:  { icon: <svg key="kf-gov" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>, ar: 'أدلة الحوكمة', en: 'Governance manuals' },
+  policy:      { icon: <svg key="kf-pol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>, ar: 'السياسات', en: 'Policies' },
+  procedure:   { icon: <svg key="kf-prc" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>, ar: 'الإجراءات', en: 'Procedures' },
+  workflow:    { icon: <svg key="kf-wf" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>, ar: 'سلاسل العمليات', en: 'Workflows' },
+  orgchart:    { icon: <svg key="kf-org" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>, ar: 'الهياكل التنظيمية', en: 'Org structures' },
+  jobdesc:     { icon: <svg key="kf-jd" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>, ar: 'الوصف الوظيفي', en: 'Job descriptions' },
+  gapfix:      { icon: <svg key="kf-gf" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>, ar: 'معالجات الفجوات', en: 'Gap fixes' },
+  charter:     { icon: <svg key="kf-ch" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>, ar: 'المواثيق', en: 'Charters' },
 };
-const folderFor = (kind: string) => KIND_FOLDER[kind] || { icon: '📁', ar: kind || 'أخرى', en: kind || 'Other' };
+const folderFor = (kind: string) => KIND_FOLDER[kind] || { icon: <svg key="kf-def" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>, ar: kind || 'أخرى', en: kind || 'Other' };
 
 const GovernanceCenter: React.FC<Props> = ({ documents, settings, language, onBack, onAddDocument, onDeleteDocument, onUpdateSettings, allAssessments = [] }) => {
   const ar = language === 'ar';
@@ -325,7 +325,7 @@ ${content.slice(0, 8000)}`;
         toast.error(t(`فشل تحليل ${file.name}: `, `Failed to analyze ${file.name}: `) + (e?.message || e));
       }
     }
-    if (saved > 0) { await loadAll(); toast.success(t(`✅ تم تحليل وحفظ ${saved} تقييم ورقي.`, `✅ ${saved} written assessment(s) analyzed and saved.`)); }
+    if (saved > 0) { await loadAll(); toast.success(t(`تم تحليل وحفظ ${saved} تقييم ورقي.`, `${saved} written assessment(s) analyzed and saved.`)); }
     setUploadingWrittenAssess(false);
     if (writtenAssessInputRef.current) writtenAssessInputRef.current.value = '';
   };
@@ -564,7 +564,7 @@ ${content.slice(0, 8000)}`;
     const m = appendAudit(model, ADMIN_ACTOR, 'approve_model', `اعتماد النموذج v${model.version} — ${companyName}`);
     try {
       await saveModel(m); setModel(m);
-      toast.success(t('✅ تم اعتماد النموذج رسميًا — انتقل لتوليد الوثائق.', 'Model approved — moving to document generation.'));
+      toast.success(t('تم اعتماد النموذج رسميًا — انتقل لتوليد الوثائق.', 'Model approved — moving to document generation.'));
       // N8: the CTA promises «والانتقال للتنفيذ» — actually take the user there
       // (Build → document generation) instead of just toasting.
       setStage(2); setBuildTab('docs');
@@ -643,8 +643,8 @@ ${content.slice(0, 8000)}`;
           : s.label === 'negative' ? t('سلبية', 'negative')
           : s.label === 'mixed' ? t('مختلطة', 'mixed') : t('محايدة', 'neutral');
         alertMsg(t(
-          `تم استيراد ${docs.length} وثيقة (${totalChunks} مقطع). النبرة العامة: ${tone} (😊${s.positive} · 😐${s.neutral} · 😟${s.negative} · ⚖️${s.mixed}). تم توليد المتجهات وتحليل النبرة والكيانات تلقائيًا.`,
-          `Ingested ${docs.length} docs (${totalChunks} chunks). Overall tone: ${tone} (😊${s.positive} · 😐${s.neutral} · 😟${s.negative} · ⚖️${s.mixed}). Embeddings, sentiment & entities auto-processed.`));
+          `تم استيراد ${docs.length} وثيقة (${totalChunks} مقطع). النبرة العامة: ${tone} (إيجابي ${s.positive} · محايد ${s.neutral} · سلبي ${s.negative} · مختلط ${s.mixed}). تم توليد المتجهات وتحليل النبرة والكيانات تلقائيًا.`,
+          `Ingested ${docs.length} docs (${totalChunks} chunks). Overall tone: ${tone} (positive ${s.positive} · neutral ${s.neutral} · negative ${s.negative} · mixed ${s.mixed}). Embeddings, sentiment & entities auto-processed.`));
       }
     } catch (e: any) {
       surfaceError(e, t('فشل الاستيراد: ', 'Ingest failed: '));
@@ -756,8 +756,8 @@ ${content.slice(0, 8000)}`;
             await saveModel(fm);
             setModel(fm);
             await loadAll();
-            toast.success(t(`✅ أُغلقت ${fixedCount} من ${openGaps.length} فجوة تلقائياً وحُفظت في المكتبة.`,
-                            `✅ ${fixedCount} of ${openGaps.length} gap(s) auto-fixed and saved to library.`));
+            toast.success(t(`أُغلقت ${fixedCount} من ${openGaps.length} فجوة تلقائياً وحُفظت في المكتبة.`,
+                            `${fixedCount} of ${openGaps.length} gap(s) auto-fixed and saved to library.`));
           }
         } catch { /* non-critical */ }
         setProgress(null);
@@ -925,7 +925,7 @@ ${content.slice(0, 8000)}`;
             setGovDocs(prev => [...prev, rec]); // update in-memory even if Firestore save failed
             setGenDoc(doc);
             okCount++;
-            setBatchLog(prev => [...prev, t(`✅ «${d.ar}» جاهزة ومحفوظة بالمكتبة.`, `✅ "${d.en}" done & saved.`)]);
+            setBatchLog(prev => [...prev, t(`«${d.ar}» جاهزة ومحفوظة بالمكتبة.`, `"${d.en}" done & saved.`)]);
             return;
           } catch (e: any) {
             if (ac.signal.aborted) return;
@@ -934,7 +934,7 @@ ${content.slice(0, 8000)}`;
               setBatchLog(prev => [...prev, t(`↻ إعادة محاولة «${d.ar}» (${attempt + 1}/${MAX_RETRY})...`, `↻ Retry "${d.en}" (${attempt + 1}/${MAX_RETRY})...`)]);
               await new Promise(r => setTimeout(r, backoff));
             } else {
-              setBatchLog(prev => [...prev, t(`❌ فشل «${d.ar}»: `, `❌ "${d.en}" failed: `) + (e?.message || e)]);
+              setBatchLog(prev => [...prev, t(`فشل «${d.ar}»: `, `"${d.en}" failed: `) + (e?.message || e)]);
             }
           }
         }
@@ -1543,7 +1543,7 @@ ${content.slice(0, 8000)}`;
       // GAP4: agent proposed actions under manual-approval mode — surface them in the review gate
       if (!agentAutoApply && res.pendingActions?.length) {
         setProposedActions(res.pendingActions);
-        setAgentAnswer(prev => `${prev}\n\n${t(`📋 ${res.pendingActions!.length} تعديل مقترح بانتظار اعتمادك في وضع «تعديل النموذج».`, `📋 ${res.pendingActions!.length} proposed change(s) awaiting your approval in Edit-model mode.`)}`);
+        setAgentAnswer(prev => `${prev}\n\n${t(`${res.pendingActions!.length} تعديل مقترح بانتظار اعتمادك في وضع «تعديل النموذج».`, `${res.pendingActions!.length} proposed change(s) awaiting your approval in Edit-model mode.`)}`);
       }
       // persist any documents the agent generated into the library so they surface in UI
       const docs = res.generatedDocuments || [];
@@ -1561,9 +1561,9 @@ ${content.slice(0, 8000)}`;
         }
         await loadAll();
         const made = [
-          docs.length ? t(`📄 ${docs.length} وثيقة محفوظة في المكتبة`, `📄 ${docs.length} doc(s) saved to library`) : '',
-          (res.generatedDiagrams?.length || 0) ? t(`📊 ${res.generatedDiagrams!.length} مخطّط`, `📊 ${res.generatedDiagrams!.length} diagram(s)`) : '',
-          (res.exportedFiles?.length || 0) ? t(`💾 ${res.exportedFiles!.length} ملف مُصدَّر`, `💾 ${res.exportedFiles!.length} exported file(s)`) : '',
+          docs.length ? t(`${docs.length} وثيقة محفوظة في المكتبة`, `${docs.length} doc(s) saved to library`) : '',
+          (res.generatedDiagrams?.length || 0) ? t(`${res.generatedDiagrams!.length} مخطّط`, `${res.generatedDiagrams!.length} diagram(s)`) : '',
+          (res.exportedFiles?.length || 0) ? t(`${res.exportedFiles!.length} ملف مُصدَّر`, `${res.exportedFiles!.length} exported file(s)`) : '',
         ].filter(Boolean).join(' · ');
         if (made) setAgentAnswer(prev => `${prev}\n\n${made}`);
       }
@@ -1827,11 +1827,11 @@ ${content.slice(0, 8000)}`;
       };
       await setDoc(doc(db, 'assessments', assessmentId), customReport);
       setLocalDiagnostic(customReport); // show immediately in the الواقع الراهن stage
-      toast.success(t(`✅ تقرير الواقع الراهن مبني على ${docNames.length} مستند + ${respCount} رد ومُقيَّم مقابل المعايير. المصادر: ${citedSources.slice(0,4).join('، ')}${citedSources.length>4?'…':''}`,
-                      `✅ Current-state grounded in ${docNames.length} docs + ${respCount} responses, scored vs standards.`));
+      toast.success(t(`تقرير الواقع الراهن مبني على ${docNames.length} مستند + ${respCount} رد ومُقيَّم مقابل المعايير. المصادر: ${citedSources.slice(0,4).join('، ')}${citedSources.length>4?'…':''}`,
+                      `Current-state grounded in ${docNames.length} docs + ${respCount} responses, scored vs standards.`));
     } catch (err: any) {
       console.error('Auto survey report failed:', err);
-      toast.error(ar ? '⚠️ تعذّر توليد تقرير الواقع الراهن — لم يُحفظ أي تقرير. أعد المحاولة.' : '⚠️ Failed to generate the diagnostic — nothing was saved. Please retry.');
+      toast.error(ar ? 'تعذّر توليد تقرير الواقع الراهن — لم يُحفظ أي تقرير. أعد المحاولة.' : 'Failed to generate the diagnostic — nothing was saved. Please retry.');
     } finally {
       setSurveyBusy(false);
     }
@@ -1841,7 +1841,7 @@ ${content.slice(0, 8000)}`;
     refs?.length ? (
       <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2 py-0.5"
             title={refs.map(r => `${r.docName || ''} › ${r.label}`).join('\n')}>
-        🔗 {refs.length} {t('مصدر', 'src')}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 inline-block"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> {refs.length} {t('مصدر', 'src')}
       </span>
     ) : <span className="text-[10px] text-slate-400">{t('بلا سند', 'no source')}</span>;
 
@@ -1870,20 +1870,20 @@ ${content.slice(0, 8000)}`;
     true;
 
   return (
-    <div dir={ar ? 'rtl' : 'ltr'} className="fixed inset-0 z-40 bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 flex flex-col animate-fade-in">
+    <div dir={ar ? 'rtl' : 'ltr'} className="fixed inset-0 z-40 bg-[#F7FAFB] dark:bg-slate-900 text-slate-800 dark:text-slate-100 flex flex-col animate-fade-in">
       {/* top bar */}
-      <header className="shrink-0 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700" style={{boxShadow:'var(--hw-shadow-sm)'}}>
+      <header className="shrink-0 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
         <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3">
           <div className="min-w-0">
-            <h1 className="text-xl font-black text-slate-800 dark:text-slate-100 flex items-center gap-2 tracking-tight">🏛️ {t('مركز الحوكمة', 'Governance Center')}</h1>
+            <h1 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 tracking-tight"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg> {t('مركز الحوكمة', 'Governance Center')}</h1>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-              {t('الشركة', 'Tenant')}: <span className="font-bold text-emerald-600 dark:text-emerald-400">{companyName}</span>
+              {t('المشروع', 'Project')}: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{companyName}</span>
               {sector ? ` · ${sector}` : ''} · {chunkCount} {t('مقطع', 'chunks')}
               {model ? ` · ${t('نموذج v', 'model v')}${model.version}` : ` · ${t('بلا نموذج', 'no model')}`}
             </p>
           </div>
-          <button onClick={onBack} className="hw-btn hw-btn-sm hw-btn-ghost shrink-0">
-            ← {t('بوابة الإدارة', 'Admin Hub')}
+          <button onClick={onBack} className="hw-btn hw-btn-sm hw-btn-ghost shrink-0 whitespace-nowrap">
+            {ar ? '→' : '←'} {t('بوابة الإدارة', 'Admin Hub')}
           </button>
         </div>
         {/* pill stage nav */}
@@ -1893,7 +1893,7 @@ ${content.slice(0, 8000)}`;
             <button onClick={() => setShowProjects(true)}
               className={`hw-tab-pill${showProjects ? ' hw-tab-active' : ''}`}>
               <span className={`inline-flex items-center justify-center w-4.5 h-4.5 rounded-full text-[10px] font-black leading-none px-1.5 py-0.5 ${showProjects ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'}`}>1</span>
-              <span>🏢 {t('المشاريع', 'Projects')}</span>
+              <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block align-middle me-1"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>{t('المشاريع', 'Projects')}</span>
             </button>
             {STAGES.map((s, i) => {
               const active = !showProjects && stage === s.id;
@@ -1907,7 +1907,14 @@ ${content.slice(0, 8000)}`;
                 <button key={s.id} onClick={() => enabled && gotoStage(s.id)} disabled={!enabled} title={lockReason}
                   className={`hw-tab-pill${active ? ' hw-tab-active' : ''}`}>
                   <span className={`inline-flex items-center justify-center rounded-full text-[10px] font-black leading-none px-1.5 py-0.5 ${active ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400'}`}>{i + 2}</span>
-                  <span>{s.icon} {t(s.ar, s.en)}</span>
+                  <span>{({
+                    0: <svg key="i0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block align-middle"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>,
+                    6: <svg key="i6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block align-middle"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+                    7: <svg key="i7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block align-middle"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>,
+                    2: <svg key="i2" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block align-middle"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>,
+                    3: <svg key="i3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block align-middle"><polyline points="20 6 9 17 4 12"/></svg>,
+                    4: <svg key="i4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block align-middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
+                  } as Record<number, React.ReactNode>)[s.id]} {t(s.ar, s.en)}</span>
                 </button>
               );
             })}
@@ -1920,7 +1927,8 @@ ${content.slice(0, 8000)}`;
         <div className="shrink-0 px-4 sm:px-6 py-2.5 bg-rose-50 dark:bg-rose-900/30 border-b border-rose-300 dark:border-rose-700">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <span className="font-bold text-rose-700 dark:text-rose-300 text-sm flex items-center gap-2">
-              ⛔ {t('أنت غير مخوّل لحفظ/تحميل بيانات الحوكمة. سجّل الدخول بحساب أدمن معتمد.',
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 shrink-0"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+              {t('أنت غير مخوّل لحفظ/تحميل بيانات الحوكمة. سجّل الدخول بحساب أدمن معتمد.',
                     'Not authorized to save/load governance data. Sign in with an approved admin account.')}
             </span>
             <span className="flex items-center gap-2 shrink-0">
@@ -1937,12 +1945,12 @@ ${content.slice(0, 8000)}`;
                       toast.error(t(`فشل تسجيل الدخول${e?.code ? ` (${e.code})` : ''}`, `Sign-in failed${e?.code ? ` (${e.code})` : ''}`));
                     }
                   }}
-                  className="text-xs bg-emerald-600 text-white px-3 py-1 rounded-lg font-bold"
+                  className="hw-btn hw-btn-sm hw-btn-primary"
                 >
-                  🔑 {t('تسجيل الدخول', 'Sign in')}
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>{t('تسجيل الدخول', 'Sign in')}
                 </button>
               )}
-              <button onClick={() => loadAll()} className="text-xs bg-rose-600 text-white px-3 py-1 rounded-lg font-bold">
+              <button onClick={() => loadAll()} className="hw-btn hw-btn-sm hw-btn-danger">
                 ↻ {t('إعادة المحاولة', 'Retry')}
               </button>
             </span>
@@ -1952,26 +1960,26 @@ ${content.slice(0, 8000)}`;
 
       {/* busy banner */}
       {(busy || progress) && (
-        <div className="shrink-0 px-4 sm:px-6 py-2 bg-emerald-50 dark:bg-emerald-900/30 border-b border-emerald-200 dark:border-emerald-800">
+        <div className="shrink-0 px-4 sm:px-6 py-2 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
           <div className="flex items-center justify-between">
-            <span className="font-bold text-emerald-700 dark:text-emerald-300 text-sm flex items-center gap-2"><span className="animate-spin">⏳</span> {busy}</span>
-            <button onClick={stop} className="text-xs bg-rose-600 text-white px-3 py-1 rounded-lg font-bold">⏹ {t('إيقاف', 'Stop')}</button>
+            <span className="font-semibold text-emerald-700 dark:text-emerald-300 text-sm flex items-center gap-2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin shrink-0"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> {busy}</span>
+            <button onClick={stop} className="hw-btn hw-btn-sm hw-btn-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>{t('إيقاف', 'Stop')}</button>
           </div>
           {progress && (
             <div className="mt-1.5">
               {(['ingest','embed','sentiment','entities'] as const).includes(progress.phase as any) && (
                 <div className="flex items-center gap-1 mb-1.5 flex-wrap">
                   {([
-                    { k: 'ingest', ar: '📄 تقطيع', en: '📄 Chunk' },
-                    { k: 'embed', ar: '🧬 متجهات', en: '🧬 Embed' },
-                    { k: 'sentiment', ar: '🎭 النبرة', en: '🎭 Sentiment' },
-                    { k: 'entities', ar: '🕸️ الكيانات', en: '🕸️ Entities' },
+                    { k: 'ingest', ar: 'تقطيع', en: 'Chunk' },
+                    { k: 'embed', ar: 'متجهات', en: 'Embed' },
+                    { k: 'sentiment', ar: 'النبرة', en: 'Sentiment' },
+                    { k: 'entities', ar: 'الكيانات', en: 'Entities' },
                   ] as const).map((p, idx, arr) => {
                     const order = arr.findIndex(x => x.k === progress.phase);
                     const state = idx < order ? 'done' : idx === order ? 'active' : 'todo';
                     return (
                       <span key={p.k} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${state === 'active' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : state === 'done' ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
-                        {state === 'done' ? '✓ ' : ''}{ar ? p.ar : p.en}
+                        {state === 'done' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5 inline-block me-0.5"><polyline points="20 6 9 17 4 12"/></svg> : null}{ar ? p.ar : p.en}
                       </span>
                     );
                   })}
@@ -1987,7 +1995,7 @@ ${content.slice(0, 8000)}`;
       )}
 
       {/* stage content */}
-      <main className="flex-1 overflow-auto p-4 sm:p-6">
+      <main className="flex-1 overflow-auto p-4 sm:p-6 bg-[#F7FAFB] dark:bg-slate-900">
         <div className="max-w-6xl mx-auto">
 
           {/* STAGE 0 — المشاريع (project-first gate) */}
@@ -2000,16 +2008,16 @@ ${content.slice(0, 8000)}`;
           {!showProjects && stage === 0 && (
             <section className="space-y-5">
               <div className="flex items-start justify-between gap-3 flex-wrap">
-                <StageHead icon="📥" title={t(`مصادر الحوكمة · ${companyName}`, `Governance sources · ${companyName}`)}
-                  desc={t('ثلاث فئات تُغذّي بناء النموذج: مركز ملفات المشروع · مشاريع مرجعية · مخرجات الاستبيانات. الملفات معزولة لكل مشروع. استبعد أي مصدر من المشاركة في البناء بالضغط على 🚫.', 'Three categories feed the model build: project file center · reference projects · survey outputs. Files are isolated per project. Exclude any source from the build with 🚫.')} />
+                <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>} title={t(`مصادر الحوكمة · ${companyName}`, `Governance sources · ${companyName}`)}
+                  desc={t('ثلاث فئات تُغذّي بناء النموذج: مركز ملفات المشروع · مشاريع مرجعية · مخرجات الاستبيانات. الملفات معزولة لكل مشروع. استبعد أي مصدر من المشاركة في البناء بزر الاستبعاد.', 'Three categories feed the model build: project file center · reference projects · survey outputs. Files are isolated per project. Exclude any source from the build with the exclude button.')} />
                 <div className="flex gap-1 shrink-0 mt-1">
                   <button onClick={() => setSrcView('list')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${srcView === 'list' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
-                    ☰ {t('قائمة', 'List')}
+                    className={`hw-btn hw-btn-sm ${srcView === 'list' ? 'hw-btn-primary' : 'hw-btn-ghost'}`}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>{t('قائمة', 'List')}
                   </button>
                   <button onClick={() => setSrcView('map')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${srcView === 'map' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700'}`}>
-                    🗺️ {t('خريطة', 'Map')}
+                    className={`hw-btn hw-btn-sm ${srcView === 'map' ? 'hw-btn-primary' : 'hw-btn-ghost'}`}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>{t('خريطة', 'Map')}
                   </button>
                 </div>
               </div>
@@ -2023,7 +2031,7 @@ ${content.slice(0, 8000)}`;
 
               {/* ── MAP VIEW ─────────────────────────────────── */}
               {srcView === 'map' && (
-                <div dir="rtl" className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5 space-y-4">
+                <div dir="rtl" className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5 space-y-4">
                   <div>
                     <div className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-wide">{t('معمارية المدخلات والمسار', 'Inputs & pipeline architecture')}</div>
                     <div className="text-[12px] text-slate-500 dark:text-slate-400 mt-1">{t('أربعة مدخلات مستقلة تتجمّع في «تقرير الواقع الراهن»، ثم يتدفّق المسار باستمرار إلى «الهيكل التنظيمي» فـ«البناء».', 'Four independent inputs converge into the current-state report, then flow continuously into structure, then build.')}</div>
@@ -2033,9 +2041,9 @@ ${content.slice(0, 8000)}`;
                   <div className="text-[11px] font-black text-slate-400 dark:text-slate-500">① {t('المدخلات (مستقلة)', 'Inputs (independent)')}</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                     {/* Input 1 — surveys & interviews */}
-                    <div className="rounded-xl border-2 border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/10 p-3 space-y-2 flex flex-col">
+                    <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10 p-3 space-y-2 flex flex-col">
                       <div className="flex items-center gap-2">
-                        <span className="text-lg">📊</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 shrink-0 text-amber-600"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
                         <span className="font-black text-amber-700 dark:text-amber-300 text-sm leading-tight">{t('الاستبيانات والمقابلات', 'Surveys & interviews')}</span>
                         <span className="mr-auto text-[11px] font-mono text-amber-600 dark:text-amber-400">{assessmentsForSource.length}</span>
                       </div>
@@ -2056,9 +2064,9 @@ ${content.slice(0, 8000)}`;
                     </div>
 
                     {/* Input 2 — files & attachments */}
-                    <div className="rounded-xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 p-3 space-y-2 flex flex-col">
+                    <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-3 space-y-2 flex flex-col">
                       <div className="flex items-center gap-2">
-                        <span className="text-lg">📁</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 shrink-0 text-emerald-600"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                         <span className="font-black text-emerald-700 dark:text-emerald-300 text-sm leading-tight">{t('الملفات والمرفقات', 'Files & attachments')}</span>
                         <span className="mr-auto text-[11px] font-mono text-emerald-600 dark:text-emerald-400">{documents.length - excludedDocIds.size}/{documents.length}</span>
                       </div>
@@ -2068,7 +2076,7 @@ ${content.slice(0, 8000)}`;
                             <span className="truncate flex-1 text-slate-700 dark:text-slate-200">{d.name}</span>
                             <button title={excludedDocIds.has(d.id) ? t('تضمين', 'Include') : t('استبعاد', 'Exclude')}
                               onClick={() => setExcludedDocIds(prev => { const n = new Set(prev); n.has(d.id) ? n.delete(d.id) : n.add(d.id); return n; })}
-                              className="shrink-0 text-base">{excludedDocIds.has(d.id) ? '✅' : '🚫'}</button>
+                              className="shrink-0">{excludedDocIds.has(d.id) ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-emerald-600"><polyline points="20 6 9 17 4 12"/></svg> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-rose-500"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>}</button>
                           </div>
                         ))}
                         {!documents.length && <div className="text-slate-400 text-xs">{t('لا ملفات بعد', 'No files yet')}</div>}
@@ -2076,19 +2084,19 @@ ${content.slice(0, 8000)}`;
                       <div className="flex gap-1.5">
                         <button onClick={() => fileRef.current?.click()} disabled={extracting || !!busy}
                           className="flex-1 text-xs font-bold text-emerald-600 border border-emerald-200 dark:border-emerald-700 rounded-lg py-1.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 disabled:opacity-50">
-                          ⬆️ {t('ملف', 'File')}
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>{t('ملف', 'File')}
                         </button>
                         <button onClick={() => folderRef.current?.click()} disabled={extracting || !!busy}
                           className="flex-1 text-xs font-bold text-emerald-600 border border-emerald-200 dark:border-emerald-700 rounded-lg py-1.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 disabled:opacity-50">
-                          📁 {t('مجلد', 'Folder')}
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>{t('مجلد', 'Folder')}
                         </button>
                       </div>
                     </div>
 
                     {/* Input 3 — standards (alone) */}
-                    <div className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-900/10 p-3 space-y-2 flex flex-col">
+                    <div className="rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-900/10 p-3 space-y-2 flex flex-col">
                       <div className="flex items-center gap-2">
-                        <span className="text-lg">📏</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 shrink-0 text-violet-600"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                         <span className="font-black text-violet-700 dark:text-violet-300 text-sm leading-tight">{t('المعايير لوحدها', 'Standards alone')}</span>
                       </div>
                       <div className="space-y-1 max-h-40 overflow-auto flex-1">
@@ -2101,14 +2109,14 @@ ${content.slice(0, 8000)}`;
                       </div>
                       <button onClick={handleSeedStandards} disabled={!!seedBusy}
                         className="w-full text-xs font-bold text-violet-600 border border-violet-200 dark:border-violet-700 rounded-lg py-1.5 hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-50">
-                        {seedBusy ? '⏳' : '📥 ' + t('تحميل خريطة المعايير', 'Seed standards map')}
+                        {seedBusy ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin inline-block"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>{t('تحميل خريطة المعايير', 'Seed standards map')}</>}
                       </button>
                     </div>
 
                     {/* Input 4 — reference projects */}
-                    <div className="rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-3 space-y-2 flex flex-col">
+                    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/40 p-3 space-y-2 flex flex-col">
                       <div className="flex items-center gap-2">
-                        <span className="text-lg">🏛️</span>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 shrink-0 text-slate-600"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>
                         <span className="font-black text-slate-700 dark:text-slate-200 text-sm leading-tight">{t('المشاريع المرجعية', 'Reference projects')}</span>
                         <span className="mr-auto text-[11px] font-mono text-slate-500">{refProjects.length}</span>
                       </div>
@@ -2134,8 +2142,8 @@ ${content.slice(0, 8000)}`;
                   </div>
 
                   {/* ── current-state report node (full width) ── */}
-                  <button onClick={() => gotoStage(6)} className="w-full rounded-xl border-2 border-emerald-400 dark:border-emerald-600 bg-emerald-100 dark:bg-emerald-900/30 p-3 flex items-center justify-center gap-3 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors">
-                    <span className="text-2xl">📋</span>
+                  <button onClick={() => gotoStage(6)} className="w-full rounded-xl border border-emerald-300 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 p-3 flex items-center justify-center gap-3 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-7 h-7 text-emerald-600"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1" ry="1"/></svg>
                     <span className="font-black text-emerald-700 dark:text-emerald-300 text-base">② {t('تقرير الواقع الراهن', 'Current-state report')}</span>
                     {chunkCount > 0 && <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">{chunkCount} {t('مقطع', 'chunks')}</span>}
                   </button>
@@ -2146,27 +2154,27 @@ ${content.slice(0, 8000)}`;
                     <span className="text-[11px] font-black text-slate-400 dark:text-slate-500">{t('ثم يتدفّق باستمرار', 'then flows continuously')}</span>
                   </div>
                   <div className="flex items-stretch gap-2">
-                    <button onClick={() => gotoStage(7)} className="flex-1 rounded-xl border-2 border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20 p-3 flex flex-col items-center gap-1 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
-                      <span className="text-xl">🏗️</span>
-                      <span className="font-black text-blue-700 dark:text-blue-300 text-sm">③ {t('الهيكل التنظيمي', 'Org structure')}</span>
+                    <button onClick={() => gotoStage(7)} className="flex-1 rounded-xl border border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20 p-3 flex flex-col items-center gap-1 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6 text-blue-600"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>
+                      <span className="font-bold text-blue-700 dark:text-blue-300 text-sm">③ {t('الهيكل التنظيمي', 'Org structure')}</span>
                     </button>
                     <div className="flex items-center text-2xl text-slate-300 dark:text-slate-600">←</div>
-                    <button onClick={() => gotoStage(2)} className="flex-1 rounded-xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 flex flex-col items-center gap-1 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors">
-                      <span className="text-xl">🧱</span>
-                      <span className="font-black text-amber-700 dark:text-amber-300 text-sm">④ {t('البناء', 'Build')}</span>
+                    <button onClick={() => gotoStage(2)} className="flex-1 rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 flex flex-col items-center gap-1 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6 text-amber-600"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                      <span className="font-bold text-amber-700 dark:text-amber-300 text-sm">④ {t('البناء', 'Build')}</span>
                     </button>
                   </div>
 
                   {/* Action bar */}
                   <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
                     <button onClick={handleIngest} disabled={!!busy || generating}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm disabled:opacity-50">
+                      className="hw-btn hw-btn-primary hw-btn-sm">
                       ↻ {t('فهرسة المصادر', 'Index sources')}
                     </button>
                     {excludedDocIds.size > 0 && (
                       <button onClick={() => setExcludedDocIds(new Set())}
-                        className="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-xl text-sm">
-                        ✅ {t('تضمين الكل', 'Include all')} (-{excludedDocIds.size})
+                        className="hw-btn hw-btn-sm hw-btn-ghost">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="20 6 9 17 4 12"/></svg>{t('تضمين الكل', 'Include all')} (-{excludedDocIds.size})
                       </button>
                     )}
                     <span className="self-center text-xs text-slate-500 dark:text-slate-400 font-mono">
@@ -2181,30 +2189,30 @@ ${content.slice(0, 8000)}`;
 
               {/* الفئة 1 — ملفات الشركة والملفات السابقة */}
               <div className="text-xs font-black text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 pt-1">
-                <span className="text-base">📁</span> {t('١ · مركز ملفات المشروع', '1 · Project file center')}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> {t('١ · مركز ملفات المشروع', '1 · Project file center')}
               </div>
               <div className="grid sm:grid-cols-4 gap-3">
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                  <div className="text-3xl font-black text-emerald-600 dark:text-emerald-400">{documents.length}</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">{t('وثيقة متاحة', 'docs available')}</div>
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 flex items-center gap-3">
+                  <span className="text-lg font-bold text-slate-700 dark:text-slate-200">{documents.length}</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">{t('وثيقة متاحة', 'docs available')}</span>
                 </div>
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                  <div className="text-3xl font-black text-emerald-600 dark:text-emerald-400">{chunkCount}</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">{t('مقطع مفهرس', 'indexed chunks')}</div>
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 flex items-center gap-3">
+                  <span className="text-lg font-bold text-slate-700 dark:text-slate-200">{chunkCount}</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">{t('مقطع مفهرس', 'indexed chunks')}</span>
                 </div>
                 <button onClick={() => fileRef.current?.click()} disabled={extracting || !!busy}
-                  className="rounded-2xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 p-4 text-start disabled:opacity-50 transition-colors">
-                  <div className="text-lg font-black text-emerald-700 dark:text-emerald-300">{extracting ? '⏳' : '⬆️'} {t('رفع ملفات', 'Upload files')}</div>
+                  className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 p-4 text-start disabled:opacity-50 transition-colors">
+                  <div className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{extracting ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin inline-block me-1"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>} {t('رفع ملفات', 'Upload files')}</div>
                   <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{extracting ? t('استخلاص…', 'extracting…') : t('ملف واحد للمعاينة · عدة ملفات = فهرسة تلقائية', 'one to review · many = auto-index')}</div>
                 </button>
                 <button onClick={() => folderRef.current?.click()} disabled={extracting || !!busy}
-                  className="rounded-2xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 p-4 text-start disabled:opacity-50 transition-colors">
-                  <div className="text-lg font-black text-emerald-700 dark:text-emerald-300">📁 {t('رفع مجلد كامل', 'Upload folder')}</div>
+                  className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 p-4 text-start disabled:opacity-50 transition-colors">
+                  <div className="text-sm font-bold text-emerald-700 dark:text-emerald-300"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>{t('رفع مجلد كامل', 'Upload folder')}</div>
                   <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{t('المجلد كله دفعة واحدة · فهرسة تلقائية بلا اختيار', 'whole folder at once · auto-index, no picking')}</div>
                 </button>
                 <button onClick={handleIngest} disabled={!!busy || generating}
-                  className="rounded-2xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 p-4 text-start disabled:opacity-50 transition-colors">
-                  <div className="text-lg font-black text-emerald-700 dark:text-emerald-300">↻ {t('استيراد / فهرسة', 'Ingest / index')}</div>
+                  className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 p-4 text-start disabled:opacity-50 transition-colors">
+                  <div className="text-sm font-bold text-emerald-700 dark:text-emerald-300">↻ {t('استيراد / فهرسة', 'Ingest / index')}</div>
                   <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{t('تقطيع + متجهات + كيانات', 'chunk + vectors + entities')}</div>
                 </button>
               </div>
@@ -2215,14 +2223,14 @@ ${content.slice(0, 8000)}`;
                 for (const c of ingestedChunks) if (!seen.has(c.docId)) seen.set(c.docId, c);
                 const byDoc = Array.from(seen.values());
                 return (
-                  <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 p-4">
-                    <div className="font-bold text-emerald-700 dark:text-emerald-300 text-sm mb-2">
-                      ✅ {t('الوثائق المفهرسة', 'Indexed documents')} ({byDoc.length})
+                  <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-4">
+                    <div className="font-bold text-emerald-700 dark:text-emerald-300 text-sm mb-2 flex items-center gap-1.5">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polyline points="20 6 9 17 4 12"/></svg>{t('الوثائق المفهرسة', 'Indexed documents')} ({byDoc.length})
                     </div>
                     <div className="space-y-1 max-h-[28vh] overflow-auto">
                       {byDoc.map(c => (
                         <div key={c.docId} className="flex items-center justify-between gap-2 text-sm py-1 border-b border-emerald-100 dark:border-emerald-800/40 last:border-0">
-                          <span className="truncate text-slate-700 dark:text-slate-200">📄 {c.docName}</span>
+                          <span className="truncate text-slate-700 dark:text-slate-200 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{c.docName}</span>
                           <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0 font-mono">
                             {ingestedChunks.filter(x => x.docId === c.docId).length} {t('مقطع', 'chunks')}
                           </span>
@@ -2234,15 +2242,15 @@ ${content.slice(0, 8000)}`;
               })()}
 
               {/* Manual paste — for content without a file (single place, same ingest pipeline) */}
-              <details className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                <summary className="font-bold text-slate-700 dark:text-slate-200 text-sm cursor-pointer">✍️ {t('لصق نص يدوي (بدون ملف)', 'Paste text manually (no file)')}</summary>
+              <details className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                <summary className="font-bold text-slate-700 dark:text-slate-200 text-sm cursor-pointer flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>{t('لصق نص يدوي (بدون ملف)', 'Paste text manually (no file)')}</summary>
                 <div className="mt-3 space-y-2">
                   <input value={pasteName} onChange={e => setPasteName(e.target.value)} placeholder={t('اسم المستند', 'Document name')}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-sm font-bold" />
                   <div className="flex gap-2 flex-wrap">
                     {(['identity','current_state','general','infrastructure'] as DocCategory[]).map(c => (
                       <button key={c} onClick={() => setPasteCat(c)}
-                        className={`px-3 py-1 rounded-lg text-xs font-bold border ${pasteCat === c ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600'}`}>
+                        className={`hw-tab-pill ${pasteCat === c ? 'hw-tab-active' : ''}`}>
                         {CAT_LABEL(c, ar)}
                       </button>
                     ))}
@@ -2253,21 +2261,21 @@ ${content.slice(0, 8000)}`;
                     if (!pasteName.trim() || !pasteContent.trim()) { alertMsg(t('أدخل اسماً ومحتوى.', 'Enter a name and content.')); return; }
                     setExtracted({ name: pasteName.trim(), content: pasteContent.trim(), category: pasteCat, size: `${Math.round(pasteContent.length / 1024)} KB`, type: 'text/plain' });
                     setPasteName(''); setPasteContent('');
-                  }} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-sm">
+                  }} className="hw-btn hw-btn-sm hw-btn-primary">
                     {t('مراجعة ثم حفظ', 'Review then save')}
                   </button>
                 </div>
               </details>
 
               {extracted && (
-                <div className="rounded-2xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/60 dark:bg-emerald-900/20 p-4 space-y-2">
-                  <div className="font-bold text-emerald-800 dark:text-emerald-200 text-sm">✨ {t('مراجعة المستند قبل الحفظ', 'Review document before saving')}</div>
+                <div className="rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/60 dark:bg-emerald-900/20 p-4 space-y-2">
+                  <div className="font-bold text-emerald-800 dark:text-emerald-200 text-sm flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>{t('مراجعة المستند قبل الحفظ', 'Review document before saving')}</div>
                   <input value={extracted.name} onChange={e => setExtracted({ ...extracted, name: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-sm font-bold" placeholder={t('اسم المستند', 'Document name')} />
                   <div className="flex gap-2 flex-wrap">
                     {(['identity','current_state','general','infrastructure'] as DocCategory[]).map(c => (
                       <button key={c} onClick={() => setExtracted({ ...extracted, category: c })}
-                        className={`px-3 py-1 rounded-lg text-xs font-bold border ${extracted.category === c ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600'}`}>
+                        className={`hw-tab-pill ${extracted.category === c ? 'hw-tab-active' : ''}`}>
                         {CAT_LABEL(c, ar)}
                       </button>
                     ))}
@@ -2275,13 +2283,13 @@ ${content.slice(0, 8000)}`;
                   <textarea value={extracted.content} onChange={e => setExtracted({ ...extracted, content: e.target.value })} rows={6}
                     className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 text-sm" />
                   <div className="flex gap-2">
-                    <button onClick={confirmExtracted} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-sm">{t('حفظ بالسحابة', 'Save to cloud')}</button>
-                    <button onClick={() => setExtracted(null)} className="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-lg text-sm">{t('إلغاء', 'Cancel')}</button>
+                    <button onClick={confirmExtracted} className="hw-btn hw-btn-sm hw-btn-primary">{t('حفظ بالسحابة', 'Save to cloud')}</button>
+                    <button onClick={() => setExtracted(null)} className="hw-btn hw-btn-sm hw-btn-ghost">{t('إلغاء', 'Cancel')}</button>
                   </div>
                 </div>
               )}
 
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
                 <div className="font-bold text-slate-700 dark:text-slate-200 text-sm mb-2">{t('الوثائق', 'Documents')}</div>
                 <div className="space-y-1 max-h-[40vh] overflow-auto">
                   {documents.map(d => (
@@ -2291,9 +2299,9 @@ ${content.slice(0, 8000)}`;
                         <span className="text-[11px] text-slate-400">{(d.content || '').length} {t('حرف', 'chars')}</span>
                         <button title={excludedDocIds.has(d.id) ? t('تضمين في البناء', 'Include in build') : t('استبعاد من البناء', 'Exclude from build')}
                           onClick={() => setExcludedDocIds(prev => { const n = new Set(prev); n.has(d.id) ? n.delete(d.id) : n.add(d.id); return n; })}
-                          className="text-base leading-none">{excludedDocIds.has(d.id) ? '✅' : '🚫'}</button>
+                          className="">{excludedDocIds.has(d.id) ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-emerald-600"><polyline points="20 6 9 17 4 12"/></svg> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-rose-500"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>}</button>
                         <button onClick={async () => { if (confirm(t('حذف هذه الوثيقة؟', 'Delete this document?'))) { await onDeleteDocument(d.id); await deleteDocChunks(tenantId, d.id).catch(() => {}); await loadAll(); } }}
-                          className="text-rose-400 hover:text-rose-600 text-xs">🗑</button>
+                          className="text-rose-400 hover:text-rose-600 text-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                       </span>
                     </div>
                   ))}
@@ -2303,9 +2311,9 @@ ${content.slice(0, 8000)}`;
 
               {/* الفئة 2 — قوالب ونماذج مشاريع سابقة */}
               <div className="text-xs font-black text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 pt-2">
-                <span className="text-base">📐</span> {t('٢ · قوالب ونماذج مشاريع سابقة', '2 · Templates from previous projects')}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> {t('٢ · قوالب ونماذج مشاريع سابقة', '2 · Templates from previous projects')}
               </div>
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 flex items-center justify-between gap-3">
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 flex items-center justify-between gap-3">
                 <div className="flex gap-6">
                   <div>
                     <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{refProjects.filter(p => !p.id.startsWith('std_')).length}</div>
@@ -2323,9 +2331,9 @@ ${content.slice(0, 8000)}`;
 
               {/* الفئة 3 — مخرجات الاستبيانات والتقييمات */}
               <div className="text-xs font-black text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 pt-2">
-                <span className="text-base">📊</span> {t('٣ · مخرجات الاستبيانات والتقييمات', '3 · Survey & assessment outputs')}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> {t('٣ · مخرجات الاستبيانات والتقييمات', '3 · Survey & assessment outputs')}
               </div>
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 space-y-3">
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 space-y-3">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div className="text-xs text-slate-500 dark:text-slate-400 max-w-md">
                     {t('نتائج تقييمات الموظفين والاستبيانات (نقاط القوة/الضعف/الفجوات/التوصيات) تُستخدم كمصدر بيانات يُحقن في بناء النموذج.', 'Employee assessment & survey results (strengths/weaknesses/gaps/recommendations) used as a source injected into model build.')}
@@ -2346,7 +2354,7 @@ ${content.slice(0, 8000)}`;
                         <summary className="flex items-center justify-between gap-2 text-sm py-1.5 cursor-pointer list-none">
                           <span className="flex items-center gap-2 min-w-0">
                             <span className={`inline-block px-1.5 py-0.5 text-[9px] font-black rounded uppercase leading-none shrink-0 ${isSurvey ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>
-                              {isWritten ? '📄' : isSurvey ? (ar ? 'استبيان' : 'survey') : (ar ? 'تقييم' : 'assess')}
+                              {isWritten ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 inline-block"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> : isSurvey ? (ar ? 'استبيان' : 'survey') : (ar ? 'تقييم' : 'assess')}
                             </span>
                             <span className="truncate text-slate-700 dark:text-slate-200">{a.userName || a.jobTitle}</span>
                           </span>
@@ -2354,14 +2362,14 @@ ${content.slice(0, 8000)}`;
                             {typeof r.totalScore === 'number' && <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400">{Math.round(r.totalScore)}%</span>}
                             <span className="text-[10px] text-slate-400">{a.timestamp ? new Date(a.timestamp).toLocaleDateString(ar ? 'ar-EG' : 'en-US') : ''}</span>
                             <button onClick={async (e) => { e.preventDefault(); if (confirm(t('حذف هذا التقييم؟', 'Delete this assessment?'))) { await deleteDoc(doc(db, 'assessments', a.id)).catch(() => {}); await loadAll(); } }}
-                              className="text-rose-400 hover:text-rose-600 text-xs leading-none">🗑</button>
+                              className="text-rose-400 hover:text-rose-600 leading-none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                           </span>
                         </summary>
                         <div className="pb-2 ps-2 text-xs text-slate-600 dark:text-slate-300 space-y-0.5">
-                          {r.strengths && <div>💪 {r.strengths}</div>}
-                          {r.weaknesses && <div>⚠️ {r.weaknesses}</div>}
-                          {r.recommendations && <div>🎯 {r.recommendations}</div>}
-                          {isWritten && a.sourceFile && <div className="text-slate-400">📄 {a.sourceFile}</div>}
+                          {r.strengths && <div className="flex gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0 mt-0.5 text-emerald-600"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg> {r.strengths}</div>}
+                          {r.weaknesses && <div className="flex gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> {r.weaknesses}</div>}
+                          {r.recommendations && <div className="flex gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0 mt-0.5 text-blue-600"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> {r.recommendations}</div>}
+                          {isWritten && a.sourceFile && <div className="text-slate-400 flex gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0 mt-0.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{a.sourceFile}</div>}
                         </div>
                       </details>
                     );
@@ -2374,7 +2382,7 @@ ${content.slice(0, 8000)}`;
                   onChange={e => handleUploadWrittenAssessment(e.target.files)} />
                 <button onClick={() => writtenAssessInputRef.current?.click()} disabled={uploadingWrittenAssess}
                   className="mt-1 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-dashed border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-900/10 text-emerald-700 dark:text-emerald-300 text-xs font-bold hover:bg-emerald-50 disabled:opacity-50">
-                  {uploadingWrittenAssess ? '⏳ ' + t('يحلّل التقييم الورقي…', 'Analysing paper assessment…') : '📄 ' + t('رفع تقييم ورقي (صورة/PDF)', 'Upload written assessment (image/PDF)')}
+                  {uploadingWrittenAssess ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin inline-block me-1"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('يحلّل التقييم الورقي…', 'Analysing paper assessment…')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{t('رفع تقييم ورقي (صورة/PDF)', 'Upload written assessment (image/PDF)')}</>}
                 </button>
               </div>
               </>)}
@@ -2398,19 +2406,19 @@ ${content.slice(0, 8000)}`;
           {/* STAGE 6 — الواقع الراهن (detailed diagnostic + feedback canvas) */}
           {!showProjects && stage === 6 && (
             <section className="space-y-5">
-              <StageHead icon="📊" title={t('الواقع الراهن', 'Current state')}
+              <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>} title={t('الواقع الراهن', 'Current state')}
                 desc={t('تقرير تشخيصي مرجعي دقيق يتقاطع مصادر الشركة + المعايير + مخرجات الاستبيان، يغطّي القوة والضعف والفجوات والتوصيات. راجِع وعلّق قبل المتابعة.', 'A precise reference diagnostic crossing company sources + standards + survey outputs — strengths, weaknesses, gaps, recommendations. Review and comment before continuing.')} />
 
               {/* N6 — interactive shaping: length · depth · axes before generating */}
-              <details open={diagOptsOpen} onToggle={(e) => setDiagOptsOpen((e.target as HTMLDetailsElement).open)} className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                <summary className="font-bold text-slate-800 dark:text-slate-100 text-sm cursor-pointer">⚙️ {t('خيارات التقرير (طول · عمق · محاور)', 'Report options (length · depth · axes)')}</summary>
+              <details open={diagOptsOpen} onToggle={(e) => setDiagOptsOpen((e.target as HTMLDetailsElement).open)} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                <summary className="font-bold text-slate-800 dark:text-slate-100 text-sm cursor-pointer flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 1.79 2.09m0 9.96a10 10 0 0 1-1.79 2.09M4.93 4.93a10 10 0 0 0-1.79 2.09m0 9.96a10 10 0 0 0 1.79 2.09M12 2v2m0 18v-2m10-8h-2M4 12H2m15.07-6.07-1.41 1.41M8.34 15.66l-1.41 1.41M15.66 15.66l1.41 1.41M8.34 8.34 6.93 6.93"/></svg>{t('خيارات التقرير (طول · عمق · محاور)', 'Report options (length · depth · axes)')}</summary>
                 <div className="mt-3 space-y-3">
                   <div className="grid sm:grid-cols-2 gap-3">
                     <div>
                       <div className="text-[11px] font-bold text-slate-500 mb-1">{t('الطول', 'Length')}</div>
                       <div className="flex gap-1.5">
                         {([['concise', 'موجز'], ['standard', 'قياسي'], ['detailed', 'مفصّل'], ['comprehensive', 'شامل استشاري']] as const).map(([v, lbl]) => (
-                          <button key={v} onClick={() => setDiagPages(v)} className={`flex-1 px-2 py-1.5 text-xs font-bold rounded-lg border ${diagPages === v ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600'}`}>{t(lbl, v)}</button>
+                          <button key={v} onClick={() => setDiagPages(v)} className={`hw-tab-pill flex-1 ${diagPages === v ? 'hw-tab-active' : ''}`}>{t(lbl, v)}</button>
                         ))}
                       </div>
                     </div>
@@ -2418,7 +2426,7 @@ ${content.slice(0, 8000)}`;
                       <div className="text-[11px] font-bold text-slate-500 mb-1">{t('العمق', 'Depth')}</div>
                       <div className="flex gap-1.5">
                         {([['executive', 'تنفيذي'], ['analytical', 'تحليلي'], ['deep', 'عميق']] as const).map(([v, lbl]) => (
-                          <button key={v} onClick={() => setDiagDepth(v)} className={`flex-1 px-2 py-1.5 text-xs font-bold rounded-lg border ${diagDepth === v ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600'}`}>{t(lbl, v)}</button>
+                          <button key={v} onClick={() => setDiagDepth(v)} className={`hw-tab-pill flex-1 ${diagDepth === v ? 'hw-tab-active' : ''}`}>{t(lbl, v)}</button>
                         ))}
                       </div>
                     </div>
@@ -2428,7 +2436,7 @@ ${content.slice(0, 8000)}`;
                     <div className="flex flex-wrap gap-1.5">
                       {DIAG_AXES.map(ax => {
                         const on = diagAxes.includes(ax);
-                        return <button key={ax} onClick={() => setDiagAxes(on ? diagAxes.filter(x => x !== ax) : [...diagAxes, ax])} className={`px-2.5 py-1 text-[11px] font-bold rounded-full border ${on ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700' : 'bg-slate-50 dark:bg-slate-700 text-slate-500 border-slate-200 dark:border-slate-600'}`}>{on ? '✓ ' : ''}{ax}</button>;
+                        return <button key={ax} onClick={() => setDiagAxes(on ? diagAxes.filter(x => x !== ax) : [...diagAxes, ax])} className={`px-2.5 py-1 text-[11px] font-bold rounded-full border flex items-center gap-1 ${on ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700' : 'bg-slate-50 dark:bg-slate-700 text-slate-500 border-slate-200 dark:border-slate-600'}`}>{on ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><polyline points="20 6 9 17 4 12"/></svg> : null}{ax}</button>;
                       })}
                     </div>
                   </div>
@@ -2436,13 +2444,13 @@ ${content.slice(0, 8000)}`;
               </details>
 
               <div className="flex flex-wrap gap-2">
-                <button onClick={() => triggerAutoSurveyReport(diagFeedback)} disabled={surveyBusy || (chunkCount === 0 && !model)} className={UI.btnPrimary + ' whitespace-nowrap'}>
-                  {surveyBusy ? t('⏳ يولّد التقرير…', '⏳ Generating…') : latestDiagnostic ? t('♻️ إعادة توليد التقرير', '♻️ Regenerate report') : t('🚀 توليد تقرير الواقع الراهن', '🚀 Generate diagnostic')}
+                <button onClick={() => triggerAutoSurveyReport(diagFeedback)} disabled={surveyBusy || (chunkCount === 0 && !model)} className="hw-btn hw-btn-primary whitespace-nowrap">
+                  {surveyBusy ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin inline-block me-1"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('يولّد التقرير…', 'Generating…')}</> : latestDiagnostic ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>{t('إعادة توليد التقرير', 'Regenerate report')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>{t('توليد تقرير الواقع الراهن', 'Generate diagnostic')}</>}
                 </button>
                 {latestDiagnostic?.reportData && (
-                  <button onClick={exportDiagnosticPdf} disabled={surveyBusy} className={UI.btnGhost + ' whitespace-nowrap'}
+                  <button onClick={exportDiagnosticPdf} disabled={surveyBusy} className="hw-btn hw-btn-ghost whitespace-nowrap"
                     title={t('تصدير التقرير PDF مرتّب بهوية الشركة (الشعار + الاسم)', 'Export an organized PDF with the company identity (logo + name)')}>
-                    {t('📄 تصدير PDF بالهوية', '📄 Export branded PDF')}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{t('تصدير PDF بالهوية', 'Export branded PDF')}
                   </button>
                 )}
                 {chunkCount === 0 && !model && <span className="text-xs text-amber-600 self-center">{t('افهرس المصادر أولاً من مرحلة المدخلات.', 'Index sources first from the Inputs stage.')}</span>}
@@ -2455,7 +2463,7 @@ ${content.slice(0, 8000)}`;
                     <div className={UI.sectionAccent + ' flex items-center justify-between'}>
                       <div>
                         <div className="text-xs text-slate-500 dark:text-slate-400">{t('درجة الحوكمة الكلية', 'Overall governance score')}</div>
-                        <div className="text-4xl font-black text-emerald-600 dark:text-emerald-400">{Math.round(rd.totalScore)}%</div>
+                        <div className="text-2xl font-bold text-slate-800 dark:text-slate-100">{Math.round(rd.totalScore)}<span className="text-base font-medium text-slate-500 dark:text-slate-400 ms-0.5">%</span></div>
                       </div>
                       {Array.isArray(rd.competencyScores) && (
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 flex-1 max-w-xl">
@@ -2469,7 +2477,7 @@ ${content.slice(0, 8000)}`;
                       )}
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      {[['💪 نقاط القوة', '💪 Strengths', rd.strengths], ['⚠️ نقاط الضعف', '⚠️ Weaknesses', rd.weaknesses], ['🎯 التوصيات', '🎯 Recommendations', rd.recommendations]].map(([a, e, body], i) => (
+                      {[['نقاط القوة', 'Strengths', rd.strengths, 'strength'], ['نقاط الضعف', 'Weaknesses', rd.weaknesses, 'warn'], ['التوصيات', 'Recommendations', rd.recommendations, 'target']].map(([a, e, body, ic], i) => (
                         <div key={i} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
                           <div className="font-black text-slate-700 dark:text-slate-200 text-sm mb-2">{t(a as string, e as string)}</div>
                           <div className="text-[13px] text-slate-600 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">{body as string}</div>
@@ -2478,7 +2486,7 @@ ${content.slice(0, 8000)}`;
                     </div>
                     {rd.gapReport && (
                       <details open className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                        <summary className="font-black text-slate-700 dark:text-slate-200 text-sm cursor-pointer">📉 {t('تقرير الفجوات وخطة التطوير', 'Gap report & development plan')}</summary>
+                        <summary className="font-black text-slate-700 dark:text-slate-200 text-sm cursor-pointer flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="14"/><line x1="6" y1="20" x2="6" y2="4"/><polyline points="6 4 12 14 18 10"/></svg>{t('تقرير الفجوات وخطة التطوير', 'Gap report & development plan')}</summary>
                         <div className="mt-3 space-y-2 text-[13px] text-slate-600 dark:text-slate-300">
                           {rd.gapReport.overallGapSummary && <p><b>{t('الملخص:', 'Summary:')}</b> {rd.gapReport.overallGapSummary}</p>}
                           {rd.gapReport.developmentPlan && <p><b>{t('خطة التطوير:', 'Development plan:')}</b> {rd.gapReport.developmentPlan}</p>}
@@ -2493,20 +2501,20 @@ ${content.slice(0, 8000)}`;
 
                     {/* Feedback canvas — comment then regenerate with higher precision */}
                     <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-900/20 p-4">
-                      <div className="font-black text-emerald-700 dark:text-emerald-300 text-sm mb-2">📝 {t('كانفاس الملاحظات', 'Feedback canvas')}</div>
+                      <div className="font-black text-emerald-700 dark:text-emerald-300 text-sm mb-2 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>{t('كانفاس الملاحظات', 'Feedback canvas')}</div>
                       <p className="text-[12px] text-slate-500 dark:text-slate-400 mb-2">{t('اكتب ملاحظاتك على التقرير ثم أعد التوليد — سيُعاد صياغته بدقة أعلى مراعياً ملاحظاتك حرفياً.', 'Write your notes, then regenerate — the report is rewritten with higher precision honoring them.')}</p>
                       <textarea value={diagFeedback} onChange={e => setDiagFeedback(e.target.value)} rows={3}
                         className={UI.textarea + ' w-full'} placeholder={t('مثال: ركّز أكثر على فجوات إدارة المشاريع، أضف بُعد الامتثال التنظيمي…', 'e.g. focus more on project-management gaps, add a regulatory-compliance dimension…')} />
                       <div className="mt-2">
-                        <button onClick={() => triggerAutoSurveyReport(diagFeedback)} disabled={surveyBusy || !diagFeedback.trim()} className={UI.btnPrimarySm}>
-                          {surveyBusy ? t('⏳ يعيد الصياغة…', '⏳ Rewriting…') : t('♻️ أعد الصياغة بملاحظاتي', '♻️ Rewrite with my notes')}
+                        <button onClick={() => triggerAutoSurveyReport(diagFeedback)} disabled={surveyBusy || !diagFeedback.trim()} className="hw-btn hw-btn-sm hw-btn-primary">
+                          {surveyBusy ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin inline-block me-1"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('يعيد الصياغة…', 'Rewriting…')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>{t('أعد الصياغة بملاحظاتي', 'Rewrite with my notes')}</>}
                         </button>
                       </div>
                     </div>
                   </div>
                 );
               })() : (
-                <div className="text-slate-400 text-sm rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-6 text-center">
+                <div className="text-slate-400 text-sm rounded-lg border border-dashed border-slate-200 dark:border-slate-700 p-8 text-center bg-white dark:bg-slate-800">
                   {t('لا يوجد تقرير واقع راهن بعد — اضغط «توليد تقرير الواقع الراهن».', 'No diagnostic yet — click "Generate diagnostic".')}
                 </div>
               )}
@@ -2518,14 +2526,14 @@ ${content.slice(0, 8000)}`;
           {/* STAGE 7 — الهيكل التنظيمي (build + draw together) */}
           {!showProjects && stage === 7 && (
             <section className="space-y-5">
-              <StageHead icon="🏢" title={t('الهيكل التنظيمي', 'Org structure')}
+              <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>} title={t('الهيكل التنظيمي', 'Org structure')}
                 desc={t('يُبنى ويُرسَم سوياً: شجرة الوحدات التنظيمية التفاعلية + المخطط الهيكلي. مخرجه يغذّي مرحلة البناء.', 'Built and drawn together: an interactive org-unit tree + org chart. Its output feeds the Build stage.')} />
 
               {/* FIX A — تعليمات/برومبت مخصّص قبل البناء: المالك يوجّه التركيز والأولويات والأسلوب
                   (مع الالتزام بالأدلة)؛ يُحقن في برومبت buildModel عبر customInstructions. */}
-              <details className="rounded-2xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20 p-4" open={!!buildInstructions}>
-                <summary className="cursor-pointer select-none font-black text-indigo-800 dark:text-indigo-200 text-sm">
-                  ⚙️ {t('تعليمات مخصّصة قبل بناء الهيكل (اختياري)', 'Custom instructions before building (optional)')}
+              <details className="rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20 p-4" open={!!buildInstructions}>
+                <summary className="cursor-pointer select-none font-black text-indigo-800 dark:text-indigo-200 text-sm flex items-center gap-1.5">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 1.79 2.09m0 9.96a10 10 0 0 1-1.79 2.09M4.93 4.93a10 10 0 0 0-1.79 2.09m0 9.96a10 10 0 0 0 1.79 2.09M12 2v2m0 18v-2m10-8h-2M4 12H2m15.07-6.07-1.41 1.41M8.34 15.66l-1.41 1.41M15.66 15.66l1.41 1.41M8.34 8.34 6.93 6.93"/></svg>{t('تعليمات مخصّصة قبل بناء الهيكل (اختياري)', 'Custom instructions before building (optional)')}
                 </summary>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 mb-2">
                   {t('وجّه المحلّل: ركّز على إدارات معيّنة، اتبع إطارًا (COSO/EFQM)، أسلوب الأسماء، عمق التفصيل… تُطبَّق مع الالتزام الصارم بأدلة الشركة دون اختراع.', 'Steer the analyst: focus on certain units, follow a framework (COSO/EFQM), naming style, depth… applied strictly against company evidence, no fabrication.')}
@@ -2539,17 +2547,17 @@ ${content.slice(0, 8000)}`;
 
               <div className="flex flex-wrap gap-2">
                 <button onClick={handleBuild} disabled={!!busy || generating || chunkCount === 0}
-                  className={UI.btnPrimary}>
-                  {model ? t('♻️ إعادة بناء الهيكل', '♻️ Rebuild structure') : t('🏗️ بناء الهيكل التنظيمي', '🏗️ Build org structure')}
+                  className="hw-btn hw-btn-primary">
+                  {model ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>{t('إعادة بناء الهيكل', 'Rebuild structure')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>{t('بناء الهيكل التنظيمي', 'Build org structure')}</>}
                 </button>
                 {model && (
-                  <button onClick={() => handleGenDiagram('orgchart')} disabled={diagBusy !== null} className={UI.btnGhost}>
-                    {diagBusy === 'orgchart' ? t('⏳ يرسم…', '⏳ Drawing…') : t('📐 ارسم المخطط الهيكلي', '📐 Draw org chart')}
+                  <button onClick={() => handleGenDiagram('orgchart')} disabled={diagBusy !== null} className="hw-btn hw-btn-ghost">
+                    {diagBusy === 'orgchart' ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin inline-block me-1"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('يرسم…', 'Drawing…')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>{t('ارسم المخطط الهيكلي', 'Draw org chart')}</>}
                   </button>
                 )}
                 {model && (
-                  <button onClick={() => setStage(1)} className={UI.btnSubtle}>
-                    {t('🧩 تفاصيل النموذج الكامل', '🧩 Full model details')}
+                  <button onClick={() => setStage(1)} className="hw-btn hw-btn-subtle">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>{t('تفاصيل النموذج الكامل', 'Full model details')}
                   </button>
                 )}
                 {chunkCount === 0 && !model && <span className="text-xs text-amber-600 self-center">{t('افهرس المصادر أولاً من مرحلة المدخلات.', 'Index sources first from the Inputs stage.')}</span>}
@@ -2559,22 +2567,22 @@ ${content.slice(0, 8000)}`;
                   roles, draw connections, or auto-layout — every edit writes back to
                   the real model. "أرسم بنفسي" + "أعدّل عليه" live here. */}
               {model && (
-                <div className="rounded-2xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-4">
+                <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-4">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
-                      <div className="font-black text-emerald-800 dark:text-emerald-200 text-sm">✏️ {t('تحرير الهيكل (كانفاس حي)', 'Edit structure (live canvas)')}</div>
+                      <div className="font-bold text-emerald-800 dark:text-emerald-200 text-sm flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>{t('تحرير الهيكل (كانفاس حي)', 'Edit structure (live canvas)')}</div>
                       <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('أضِف وحدة/دور، أعد التسمية، احذف، اربط بالسحب، أو رتّب تلقائيًا — كل تعديل يُحفظ في النموذج فورًا.', 'Add a unit/role, rename, delete, drag-connect, or auto-layout — every edit saves to the model instantly.')}</div>
                     </div>
                     <div className="flex gap-2 shrink-0">
                       {modelCanvas && (
                         <button onClick={handleAutoLayout}
-                          className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 text-sm font-bold">
+                          className="hw-btn hw-btn-sm hw-btn-ghost">
                           ⊞ {t('ترتيب تلقائي', 'Auto-layout')}
                         </button>
                       )}
                       <button onClick={openModelCanvas}
-                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold">
-                        {modelCanvas ? t('إخفاء المحرّر', 'Hide editor') : t('✏️ افتح المحرّر', '✏️ Open editor')}
+                        className="hw-btn hw-btn-sm hw-btn-primary">
+                        {modelCanvas ? t('إخفاء المحرّر', 'Hide editor') : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>{t('افتح المحرّر', 'Open editor')}</>}
                       </button>
                     </div>
                   </div>
@@ -2594,7 +2602,7 @@ ${content.slice(0, 8000)}`;
 
               {model && model.orgUnits.length > 0 && (
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                  <div className="font-black text-slate-700 dark:text-slate-200 text-sm mb-3">🌳 {t('شجرة الوحدات التنظيمية', 'Org-unit tree')} <span className="text-slate-400">({model.orgUnits.length})</span></div>
+                  <div className="font-black text-slate-700 dark:text-slate-200 text-sm mb-3 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>{t('شجرة الوحدات التنظيمية', 'Org-unit tree')} <span className="text-slate-400">({model.orgUnits.length})</span></div>
                   <OrgUnitTree units={model.orgUnits} ar={ar} />
                 </div>
               )}
@@ -2606,7 +2614,7 @@ ${content.slice(0, 8000)}`;
               )}
 
               {!model && (
-                <div className="text-slate-400 text-sm rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-6 text-center">
+                <div className="text-slate-400 text-sm rounded-lg border border-dashed border-slate-200 dark:border-slate-700 p-8 text-center bg-white dark:bg-slate-800">
                   {t('لم يُبنَ الهيكل بعد — اضغط «بناء الهيكل التنظيمي».', 'No structure yet — click "Build org structure".')}
                 </div>
               )}
@@ -2618,12 +2626,12 @@ ${content.slice(0, 8000)}`;
           {/* STAGE 1 — model */}
           {!showProjects && stage === 1 && (
             <section className="space-y-5">
-              <StageHead icon="🧩" title={t('نموذج الحوكمة', 'Governance model')}
+              <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>} title={t('نموذج الحوكمة', 'Governance model')}
                 desc={t('المصدر الوحيد للحقيقة: يتقاطع واقع الشركة + ملفاتها + المشاريع السابقة لبناء الوحدات والأدوار والسياسات والفجوات.', 'The single source of truth: company reality + files + previous projects → units, roles, policies, gaps.')} />
               <div className="flex flex-wrap gap-2">
                 <button onClick={handleBuild} disabled={!!busy || generating || chunkCount === 0}
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm disabled:opacity-50">
-                  {model ? t('♻️ إعادة بناء النموذج', '♻️ Rebuild model') : t('🧩 بناء النموذج', '🧩 Build model')}
+                  className="hw-btn hw-btn-primary">
+                  {model ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>{t('إعادة بناء النموذج', 'Rebuild model')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>{t('بناء النموذج', 'Build model')}</>}
                 </button>
                 {chunkCount === 0 && <span className="text-xs text-amber-600 self-center">{t('استورد الوثائق أولاً من مرحلة المصادر.', 'Ingest documents first from the Sources stage.')}</span>}
                 {model && (
@@ -2638,15 +2646,15 @@ ${content.slice(0, 8000)}`;
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 sm:grid-cols-7 gap-2 text-center">
                     {[['الوحدات', 'Units', model.orgUnits.length], ['الأدوار', 'Roles', model.roles.length], ['السياسات', 'Policies', model.policies.length], ['الإجراءات', 'Procedures', (model.procedures || []).length], ['الصلاحيات', 'Authorities', (model.authorities || []).length], ['المؤشرات', 'KPIs', (model.kpis || []).length], ['الفجوات', 'Gaps', model.gaps.length]].map(([a, e, n], i) => (
-                      <div key={i} className="rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-3">
-                        <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{n as number}</div>
+                      <div key={i} className="rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-3">
+                        <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{n as number}</div>
                         <div className="text-[11px] text-slate-500 dark:text-slate-400">{t(a as string, e as string)}</div>
                       </div>
                     ))}
                   </div>
                   {model.orgUnits.length > 0 && (
                     <details open className="rounded-xl border border-slate-200 bg-white p-3">
-                      <summary className="font-bold text-slate-700 cursor-pointer text-sm">🏢 {t('الوحدات التنظيمية', 'Org units')}</summary>
+                      <summary className="font-bold text-slate-700 cursor-pointer text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> {t('الوحدات التنظيمية', 'Org units')}</summary>
                       <div className="mt-2 space-y-1">
                         {model.orgUnits.map(u => (
                           <div key={u.id} className="flex items-center justify-between gap-2 text-sm py-1 border-b border-slate-100">
@@ -2659,7 +2667,7 @@ ${content.slice(0, 8000)}`;
                   )}
                   {model.roles.length > 0 && (
                     <details className="rounded-xl border border-slate-200 bg-white p-3">
-                      <summary className="font-bold text-slate-700 cursor-pointer text-sm">👤 {t('الأدوار', 'Roles')}</summary>
+                      <summary className="font-bold text-slate-700 cursor-pointer text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> {t('الأدوار', 'Roles')}</summary>
                       <div className="mt-2 space-y-1">
                         {model.roles.map(r => (
                           <div key={r.id} className="flex items-center justify-between gap-2 text-sm py-1 border-b border-slate-100">
@@ -2672,7 +2680,7 @@ ${content.slice(0, 8000)}`;
                   )}
                   {model.policies.length > 0 && (
                     <details className="rounded-xl border border-slate-200 bg-white p-3">
-                      <summary className="font-bold text-slate-700 cursor-pointer text-sm">📜 {t('السياسات الحالية', 'Existing policies')}</summary>
+                      <summary className="font-bold text-slate-700 cursor-pointer text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> {t('السياسات الحالية', 'Existing policies')}</summary>
                       <div className="mt-2 space-y-1">
                         {model.policies.map(pl => (
                           <div key={pl.id} className="flex items-center justify-between gap-2 text-sm py-1 border-b border-slate-100">
@@ -2685,7 +2693,7 @@ ${content.slice(0, 8000)}`;
                   )}
                   {(model.procedures || []).length > 0 && (
                     <details className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
-                      <summary className="font-bold text-slate-700 dark:text-slate-200 cursor-pointer text-sm">⚙️ {t('الإجراءات', 'Procedures')}</summary>
+                      <summary className="font-bold text-slate-700 dark:text-slate-200 cursor-pointer text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg> {t('الإجراءات', 'Procedures')}</summary>
                       <div className="mt-2 space-y-1">
                         {(model.procedures || []).map(pr => (
                           <div key={pr.id} className="flex items-center justify-between gap-2 text-sm py-1 border-b border-slate-100 dark:border-slate-700">
@@ -2698,7 +2706,7 @@ ${content.slice(0, 8000)}`;
                   )}
                   {(model.authorities || []).length > 0 && (
                     <details className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
-                      <summary className="font-bold text-slate-700 dark:text-slate-200 cursor-pointer text-sm">🔑 {t('مصفوفة الصلاحيات (RACI)', 'Authorities (RACI)')}</summary>
+                      <summary className="font-bold text-slate-700 dark:text-slate-200 cursor-pointer text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg> {t('مصفوفة الصلاحيات (RACI)', 'Authorities (RACI)')}</summary>
                       <div className="mt-2 overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead><tr className="text-[11px] text-slate-500 border-b border-slate-200 dark:border-slate-700">
@@ -2721,7 +2729,7 @@ ${content.slice(0, 8000)}`;
                   )}
                   {(model.kpis || []).length > 0 && (
                     <details className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
-                      <summary className="font-bold text-slate-700 dark:text-slate-200 cursor-pointer text-sm">📈 {t('مؤشرات الأداء (KPIs)', 'KPIs')}</summary>
+                      <summary className="font-bold text-slate-700 dark:text-slate-200 cursor-pointer text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg> {t('مؤشرات الأداء (KPIs)', 'KPIs')}</summary>
                       <div className="mt-2 space-y-1">
                         {(model.kpis || []).map(k => (
                           <div key={k.id} className="flex items-center justify-between gap-2 text-sm py-1 border-b border-slate-100 dark:border-slate-700">
@@ -2734,23 +2742,23 @@ ${content.slice(0, 8000)}`;
                   )}
                   {model.gaps.length > 0 && (
                     <details open className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
-                      <summary className="font-bold text-slate-700 dark:text-slate-200 cursor-pointer text-sm">⚠️ {t('الفجوات والمخاطر', 'Gaps & risks')}</summary>
+                      <summary className="font-bold text-slate-700 dark:text-slate-200 cursor-pointer text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> {t('الفجوات والمخاطر', 'Gaps & risks')}</summary>
                       <div className="mt-2 space-y-2">
                         {model.gaps.map(g => (
                           <div key={g.id} className={`rounded-lg border p-2 text-sm ${g.resolved ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : SEV_COLOR[g.severity] || SEV_COLOR.medium}`}>
                             <div className="flex items-center justify-between gap-2">
-                              <span className="font-bold">{g.resolved ? '✅ ' : ''}{g.area} <span className="text-[10px] uppercase">[{g.severity}]</span></span>
+                              <span className="font-bold flex items-center gap-1">{g.resolved ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-emerald-600"><polyline points="20 6 9 17 4 12"/></svg> : null}{g.area} <span className="text-[10px] uppercase">[{g.severity}]</span></span>
                               <ProvBadge refs={g.provenance} />
                             </div>
                             <div className="text-slate-600 mt-1">{g.description}</div>
                             {g.recommendation && <div className="text-slate-700 mt-1">↪ {g.recommendation}</div>}
                             {g.matchedProjectIds.length > 0 && (
-                              <div className="text-[10px] text-emerald-600 mt-1">📚 {t('مبني على', 'based on')}: {g.matchedProjectIds.map(id => refProjects.find(p => p.id === id)?.name || id).join('، ')}</div>
+                              <div className="text-[10px] text-emerald-600 mt-1 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> {t('مبني على', 'based on')}: {g.matchedProjectIds.map(id => refProjects.find(p => p.id === id)?.name || id).join('، ')}</div>
                             )}
                             {!g.resolved && (
                               <button onClick={() => handleGapFix(g)} disabled={generating || !!busy}
-                                className="mt-2 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold disabled:opacity-50">
-                                {fixingGap === g.id ? t('⏳ توليد الإصلاح…', '⏳ generating fix…') : t('🛠 ولّد سياسة + إجراء لإغلاقها', '🛠 Generate fix')}
+                                className="hw-btn hw-btn-sm hw-btn-primary mt-2">
+                                {fixingGap === g.id ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('توليد الإصلاح…', 'generating fix…')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>{t('ولّد سياسة + إجراء لإغلاقها', 'Generate fix')}</>}
                               </button>
                             )}
                           </div>
@@ -2760,9 +2768,9 @@ ${content.slice(0, 8000)}`;
                   )}
                 </div>
               ) : (
-                <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 p-10 text-center text-sm">
+                <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 p-8 text-center text-sm">
                   {busy
-                    ? <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center justify-center gap-2"><span className="animate-spin">⏳</span> {t('جارٍ بناء النموذج تلقائياً من مصادرك…', 'Building the model automatically from your sources…')}</span>
+                    ? <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center justify-center gap-2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> {t('جارٍ بناء النموذج تلقائياً من مصادرك…', 'Building the model automatically from your sources…')}</span>
                     : chunkCount > 0
                       ? <span className="text-slate-500 dark:text-slate-400">{t('اضغط «بناء النموذج» لتوليده من المقاطع المفهرسة.', 'Press "Build model" to generate it from the indexed chunks.')}</span>
                       : <span className="text-amber-600 dark:text-amber-400">{t('لا توجد مقاطع مفهرسة بعد — عُد لمرحلة المصادر واستورد الوثائق أولاً.', 'No indexed chunks yet — go back to Sources and ingest documents first.')}</span>}
@@ -2776,9 +2784,9 @@ ${content.slice(0, 8000)}`;
           {!showProjects && stage === 2 && (
             <div className="mb-2 text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
               {t('«البناء» ثلاثة مخرجات من نفس النموذج: ', 'Build = three outputs from one model: ')}
-              <span className="font-bold text-emerald-700 dark:text-emerald-300">🎨 {t('مخططات', 'diagrams')}</span>{' · '}
-              <span className="font-bold text-emerald-700 dark:text-emerald-300">📑 {t('وثائق', 'documents')}</span>{' · '}
-              <span className="font-bold text-emerald-700 dark:text-emerald-300">🏢 {t('حزم الإدارات', 'department packages')}</span>
+              <span className="font-bold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block"><circle cx="12" cy="12" r="10"/><path d="M8.56 2.75c4.37 6.03 6.02 9.42 8.03 17.72m2.54-15.38c-3.72 4.35-8.94 5.66-16.88 5.85m19.5 1.9c-3.5-.93-6.63-.82-8.94 0-2.58.92-5.01 2.86-7.44 6.32"/></svg> {t('مخططات', 'diagrams')}</span>{' · '}
+              <span className="font-bold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> {t('وثائق', 'documents')}</span>{' · '}
+              <span className="font-bold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> {t('حزم الإدارات', 'department packages')}</span>
             </div>
           )}
           {!showProjects && stage === 2 && (
@@ -2787,13 +2795,13 @@ ${content.slice(0, 8000)}`;
                 onClick={() => setBuildTab('diagrams')}
                 className={buildTab === 'diagrams' ? UI.tabActive : UI.tabIdle}
               >
-                🎨 {t('المخططات', 'Diagrams')}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><circle cx="12" cy="12" r="10"/><path d="M8.56 2.75c4.37 6.03 6.02 9.42 8.03 17.72m2.54-15.38c-3.72 4.35-8.94 5.66-16.88 5.85m19.5 1.9c-3.5-.93-6.63-.82-8.94 0-2.58.92-5.01 2.86-7.44 6.32"/></svg>{t('المخططات', 'Diagrams')}
               </button>
               <button
                 onClick={() => setBuildTab('docs')}
                 className={buildTab === 'docs' ? UI.tabActive : UI.tabIdle}
               >
-                📑 {t('توليد الوثائق', 'Document generation')}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{t('توليد الوثائق', 'Document generation')}
               </button>
               {/* W7: الإدارات folded into البناء as an entry into the package builder. */}
               <button
@@ -2802,7 +2810,7 @@ ${content.slice(0, 8000)}`;
                 title={!model ? t('ابنِ الهيكل التنظيمي أولاً.', 'Build the org structure first.') : undefined}
                 className={UI.tabIdle + ' disabled:opacity-40'}
               >
-                🏢 {t('حزم الإدارات', 'Departments')}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>{t('حزم الإدارات', 'Departments')}
               </button>
             </div>
           )}
@@ -2810,7 +2818,7 @@ ${content.slice(0, 8000)}`;
           {/* STAGE 2 — diagrams & canvas */}
           {!showProjects && stage === 2 && buildTab === 'diagrams' && (
             <section className="space-y-5">
-              <StageHead icon="🎨" title={t('الدياجرامات والـCanvas', 'Diagrams & canvas')}
+              <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><circle cx="12" cy="12" r="10"/><path d="M8.56 2.75c4.37 6.03 6.02 9.42 8.03 17.72m2.54-15.38c-3.72 4.35-8.94 5.66-16.88 5.85m19.5 1.9c-3.5-.93-6.63-.82-8.94 0-2.58.92-5.01 2.86-7.44 6.32"/></svg>} title={t('الدياجرامات والـCanvas', 'Diagrams & canvas')}
                 desc={t('ولّد مخططات SVG عالية الجودة من النموذج، ثم حوّلها لـCanvas تفاعلي تحرّكه وتعدّله وتربطه.', 'Generate high-quality SVG diagrams from the model, then turn them into an interactive canvas you can drag, edit and connect.')} />
               {!model && <div className="text-xs text-amber-600">{t('ابنِ الهيكل التنظيمي أولاً.', 'Build the org structure first.')}</div>}
 
@@ -2818,7 +2826,7 @@ ${content.slice(0, 8000)}`;
                   Build stage = SVG diagram generation. Pointer sends user there to edit. */}
               {model && (
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-4 py-3 text-[12px] text-slate-600 dark:text-slate-300 flex items-center gap-2">
-                  <span>🧷</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                   <span>{t('لتحرير الوحدات والأدوار يدويًا، استخدم «كانفاس النموذج الحي» في مرحلة الهيكل التنظيمي. هنا تولّد المخططات فقط.', 'To hand-edit units/roles, use the “live model canvas” in the Org-structure stage. Here you only generate diagrams.')}</span>
                 </div>
               )}
@@ -2828,26 +2836,25 @@ ${content.slice(0, 8000)}`;
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {DIAG_KINDS.filter(k => k.kind !== 'orgchart').map(k => (
                   <button key={k.kind} onClick={() => handleGenDiagram(k.kind)} disabled={!model || diagBusy !== null}
-                    className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 hover:bg-emerald-100 p-3 text-start disabled:opacity-50 transition-colors">
-                    <div className="text-base font-black text-emerald-700">{k.icon} {t(k.ar, k.en)}</div>
-                    <div className="text-[11px] text-slate-500 mt-1">{diagBusy === k.kind ? t('جارٍ التوليد…', 'generating…') : t('توليد SVG', 'generate SVG')}</div>
+                    className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 p-3 text-start disabled:opacity-50 transition-colors">
+                    <div className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{k.icon} {t(k.ar, k.en)}</div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{diagBusy === k.kind ? t('جارٍ التوليد…', 'generating…') : t('توليد SVG', 'generate SVG')}</div>
                   </button>
                 ))}
               </div>
               <button onClick={() => setStage(7)}
                 className="w-full text-start rounded-xl border border-dashed border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-800 px-3 py-2 text-[11px] text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
-                🏢 {t('المخطط الهيكلي يُبنى ويُحرَّر في مرحلة «الهيكل التنظيمي» — اضغط للانتقال إليها (مصدر واحد، بلا تكرار).', 'The org chart is built & edited in the “Org structure” stage — click to go there (single source, no duplication).')}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1 shrink-0"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>{t('المخطط الهيكلي يُبنى ويُحرَّر في مرحلة «الهيكل التنظيمي» — اضغط للانتقال إليها (مصدر واحد، بلا تكرار).', 'The org chart is built & edited in the "Org structure" stage — click to go there (single source, no duplication).')}
               </button>
 
               {/* saved diagrams */}
               {diagrams.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {diagrams.map(d => (
-                    <span key={d.id} className={`inline-flex items-center gap-1 text-xs rounded-full px-3 py-1 border cursor-pointer
-                      ${activeDiag?.id === d.id ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300'}`}
+                    <span key={d.id} className={`hw-tab-pill inline-flex items-center gap-1 cursor-pointer ${activeDiag?.id === d.id ? 'hw-tab-active' : ''}`}
                       onClick={() => { setActiveDiag(d); setCanvasMode(false); }}>
                       {DIAG_KINDS.find(k => k.kind === d.kind)?.icon} {d.title}
-                      <button onClick={(e) => { e.stopPropagation(); handleDeleteDiagram(d.id); }} className="ms-1 opacity-60 hover:opacity-100">✕</button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDeleteDiagram(d.id); }} className="ms-1 opacity-60 hover:opacity-100" aria-label="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
                     </span>
                   ))}
                 </div>
@@ -2860,8 +2867,8 @@ ${content.slice(0, 8000)}`;
                     <h3 className="font-black text-slate-800">{activeDiag.title}</h3>
                     {activeDiag.kind !== 'swimlane' && (
                       <div className="ms-auto flex gap-1 bg-slate-200 rounded-xl p-1">
-                        <button onClick={() => setCanvasMode(false)} className={`px-3 py-1 rounded-lg text-xs font-bold ${!canvasMode ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}>🖼 SVG</button>
-                        <button onClick={handleConvertToCanvas} className={`px-3 py-1 rounded-lg text-xs font-bold ${canvasMode ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}>🎛 Canvas</button>
+                        <button onClick={() => setCanvasMode(false)} className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 ${!canvasMode ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg> SVG</button>
+                        <button onClick={handleConvertToCanvas} className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 ${canvasMode ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Canvas</button>
                       </div>
                     )}
                   </div>
@@ -2881,7 +2888,7 @@ ${content.slice(0, 8000)}`;
                 </div>
               )}
               {!activeDiag && model && (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-slate-400 text-sm">
+                <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-8 text-center text-slate-400 text-sm">
                   {t('اختر نوع مخطط بالأعلى لتوليده.', 'Pick a diagram type above to generate.')}
                 </div>
               )}
@@ -2892,19 +2899,19 @@ ${content.slice(0, 8000)}`;
           {/* STAGE 3 — doc generation */}
           {!showProjects && stage === 2 && buildTab === 'docs' && (
             <section className="space-y-5">
-              <StageHead icon="📑" title={t('توليد الوثائق', 'Document generation')}
+              <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>} title={t('توليد الوثائق', 'Document generation')}
                 desc={t('وثيقة طويلة مترابطة مُسندة بالمصادر. اختر طريقة الإنشاء ثم اضغط "توليد".', 'A long, coherent, source-cited document. Choose a creation mode then press generate.')} />
 
               {/* Mode selector — 3 clean options */}
-              <div className="flex rounded-2xl border border-slate-200 bg-slate-50 dark:bg-slate-800/40 p-1 gap-1">
+              <div className="flex rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-1 gap-1">
                 {([
-                  { k: 'batch', icon: '🗂️', ar: 'دُفعة محدَّدة', en: 'Batch' },
-                  { k: 'custom', icon: '📑', ar: 'وثيقة مخصّصة', en: 'Custom' },
-                  { k: 'bulk',   icon: '⚡', ar: 'توليد بالجملة', en: 'Bulk' },
-                ] as { k: 'batch' | 'custom' | 'bulk'; icon: string; ar: string; en: string }[]).map(m => (
+                  { k: 'batch', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>, ar: 'دُفعة محدَّدة', en: 'Batch' },
+                  { k: 'custom', icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>, ar: 'وثيقة مخصّصة', en: 'Custom' },
+                  { k: 'bulk',   icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>, ar: 'توليد بالجملة', en: 'Bulk' },
+                ] as { k: 'batch' | 'custom' | 'bulk'; icon: React.ReactNode; ar: string; en: string }[]).map(m => (
                   <button key={m.k} onClick={() => setDocMode(m.k)}
-                    className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all ${docMode === m.k ? 'bg-white dark:bg-slate-700 shadow text-emerald-700 dark:text-emerald-300 border border-emerald-200' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
-                    {m.icon} {t(m.ar, m.en)}
+                    className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-1 ${docMode === m.k ? 'bg-white dark:bg-slate-700 shadow text-emerald-700 dark:text-emerald-300 border border-emerald-200' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+                    {m.icon}{t(m.ar, m.en)}
                   </button>
                 ))}
               </div>
@@ -2918,9 +2925,9 @@ ${content.slice(0, 8000)}`;
                   : GOV_DOC_CATALOG;
                 const selectedCount = GOV_DOC_CATALOG.filter(d => createSel[d.key]?.on).length;
                 return (
-                  <div className="rounded-2xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-4 space-y-3">
+                  <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-4 space-y-3">
                     <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="font-black text-emerald-800 dark:text-emerald-200 text-sm">🗂️ {t('فهرس الوثائق المؤسسية', 'Governance Document Catalog')}</div>
+                      <div className="font-bold text-emerald-800 dark:text-emerald-200 text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> {t('فهرس الوثائق المؤسسية', 'Governance Document Catalog')}</div>
                       <div className="flex gap-2 text-[11px]">
                         <button onClick={() => setCreateSel(prev => { const n = {...prev}; GOV_DOC_CATALOG.forEach(d => { n[d.key] = {...n[d.key], on: true}; }); return n; })}
                           className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold hover:bg-emerald-200 dark:hover:bg-emerald-800/50">
@@ -2936,7 +2943,7 @@ ${content.slice(0, 8000)}`;
                     {/* AI Recommendations */}
                     {recs.length > 0 && (
                       <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 p-3 space-y-2">
-                        <div className="text-[11px] font-black text-amber-700 dark:text-amber-300">✨ {t('مقترحة بالذكاء الاصطناعي بناءً على نموذجك', 'AI-recommended based on your model')}</div>
+                        <div className="text-[11px] font-black text-amber-700 dark:text-amber-300 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> {t('مقترحة بالذكاء الاصطناعي بناءً على نموذجك', 'AI-recommended based on your model')}</div>
                         <div className="flex flex-wrap gap-1.5">
                           {recs.slice(0, 6).map(r => {
                             const entry = GOV_DOC_CATALOG.find(d => d.key === r.key);
@@ -2958,14 +2965,14 @@ ${content.slice(0, 8000)}`;
                     {/* Category filter */}
                     <div className="flex flex-wrap gap-1.5">
                       <button onClick={() => setCatFilter('')}
-                        className={`px-3 py-1 rounded-full text-[11px] font-bold border transition-all ${catFilter === '' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:border-emerald-400'}`}>
+                        className={`hw-tab-pill ${catFilter === '' ? 'hw-tab-active' : ''}`}>
                         {t('الكل', 'All')} ({GOV_DOC_CATALOG.length})
                       </button>
                       {CATALOG_CATEGORIES.map(cat => {
                         const count = GOV_DOC_CATALOG.filter(d => d.category === cat.key).length;
                         return (
                           <button key={cat.key} onClick={() => setCatFilter(cat.key)}
-                            className={`px-3 py-1 rounded-full text-[11px] font-bold border transition-all ${catFilter === cat.key ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:border-emerald-400'}`}>
+                            className={`hw-tab-pill ${catFilter === cat.key ? 'hw-tab-active' : ''}`}>
                             {cat.icon} {t(cat.ar, cat.en)} ({count})
                           </button>
                         );
@@ -2984,7 +2991,7 @@ ${content.slice(0, 8000)}`;
                                 onChange={e => setCreateSel(prev => ({ ...prev, [d.key]: { ...sel, on: e.target.checked } }))}
                                 className="w-4 h-4 accent-emerald-600 shrink-0" />
                               <span className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{d.icon} {t(d.ar, d.en)}</span>
-                              {isRec && <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700">✨ {t('مقترح', 'Rec')}</span>}
+                              {isRec && <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 inline-flex items-center gap-0.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> {t('مقترح', 'Rec')}</span>}
                               {d.priority === 'critical' && <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-700">{t('أساسي', 'Core')}</span>}
                             </label>
                             <div className={`flex items-center gap-1.5 shrink-0 ${sel.on ? '' : 'opacity-40'}`}>
@@ -3005,11 +3012,11 @@ ${content.slice(0, 8000)}`;
                       </span>
                       {!batchRunning ? (
                         <button onClick={handleCreateBatch} disabled={!model || !!busy || selectedCount === 0}
-                          className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm disabled:opacity-50">
-                          🗂️ {t('إنشاء المُحدَّد', 'Create selected')} {selectedCount > 0 ? `(${selectedCount})` : ''}
+                          className="hw-btn hw-btn-primary">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>{t('إنشاء المُحدَّد', 'Create selected')} {selectedCount > 0 ? `(${selectedCount})` : ''}
                         </button>
                       ) : (
-                        <button onClick={stop} className="px-5 py-2.5 bg-rose-600 text-white font-bold rounded-xl text-sm">⏹ {t('إيقاف', 'Stop')}</button>
+                        <button onClick={stop} className="hw-btn hw-btn-danger flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>{t('إيقاف', 'Stop')}</button>
                       )}
                     </div>
                     {batchLog.length > 0 && (
@@ -3023,37 +3030,37 @@ ${content.slice(0, 8000)}`;
 
               {/* ── CUSTOM MODE ── */}
               {docMode === 'custom' && (
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 space-y-3">
-                  <div className="font-black text-slate-800 dark:text-slate-200 text-sm">📑 {t('وثيقة مخصّصة', 'Custom document')}</div>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 space-y-3">
+                  <div className="font-black text-slate-800 dark:text-slate-200 text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> {t('وثيقة مخصّصة', 'Custom document')}</div>
                   <input value={docTitle} onChange={e => setDocTitle(e.target.value)} placeholder={t('عنوان الوثيقة', 'Document title')} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-sm font-bold" />
                   <textarea value={docGoal} onChange={e => setDocGoal(e.target.value)} rows={3} placeholder={t('هدف الوثيقة وما تتضمّنه', 'Document goal and contents')} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-sm resize-none" />
                   <div className="flex flex-wrap gap-2 pt-1">
                     {!generating ? (
                       <button onClick={handleGenerate} disabled={!model || !!busy}
-                        className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm disabled:opacity-50">
-                        📑 {t('توليد', 'Generate')}
+                        className="hw-btn hw-btn-primary">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{t('توليد', 'Generate')}
                       </button>
                     ) : (
-                      <button onClick={stop} className="px-5 py-2.5 bg-rose-600 text-white font-bold rounded-xl text-sm">⏹ {t('إيقاف', 'Stop')}</button>
+                      <button onClick={stop} className="hw-btn hw-btn-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>{t('إيقاف', 'Stop')}</button>
                     )}
                     {genDoc && (
                       <>
-                        <button onClick={() => handleExport('docx')} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm">⬇ Word</button>
-                        <button onClick={() => handleExport('pdf')} className="px-4 py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-bold rounded-xl text-sm">⬇ PDF</button>
-                        <button onClick={handleSaveToLibrary} disabled={!!busy} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm disabled:opacity-50">💾 {t('حفظ', 'Save')}</button>
+                        <button onClick={() => handleExport('docx')} className="hw-btn hw-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Word</button>
+                        <button onClick={() => handleExport('pdf')} className="hw-btn hw-btn-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> PDF</button>
+                        <button onClick={handleSaveToLibrary} disabled={!!busy} className="hw-btn hw-btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>{t('حفظ', 'Save')}</button>
                         {(genDoc as any)._gapFix && (
-                          <button onClick={approveGapFixToModel} disabled={!!busy} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm disabled:opacity-50">✅ {t('اعتماد في النموذج', 'Approve to model')}</button>
+                          <button onClick={approveGapFixToModel} disabled={!!busy} className="hw-btn hw-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد في النموذج', 'Approve to model')}</button>
                         )}
                       </>
                     )}
                   </div>
                   {model && (
                     <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-                      <span className="text-xs text-slate-500 dark:text-slate-400 self-center font-bold">{t('أدلّة جاهزة:', 'Ready manuals:')}</span>
-                      <button onClick={handleExportManual} disabled={!model || !!busy} className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl text-xs disabled:opacity-50">📘 {t('دليل الحوكمة', 'Full manual')}</button>
-                      <button onClick={handleExportWorkflow} disabled={!!busy} className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl text-xs disabled:opacity-50">🔄 {t('دورة العمل', 'Workflow')}</button>
-                      <button onClick={handleExportJDs} disabled={!!busy} className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl text-xs disabled:opacity-50">👤 {t('الأوصاف الوظيفية', 'Job desc.')}</button>
-                      <button onClick={handleExportPolicies} disabled={!!busy} className="px-3.5 py-2 bg-amber-700 hover:bg-amber-800 text-white font-bold rounded-xl text-xs disabled:opacity-50">📋 {t('السياسات', 'Policies')}</button>
+                      <span className="text-xs text-slate-500 dark:text-slate-400 self-center font-semibold">{t('أدلّة جاهزة:', 'Ready manuals:')}</span>
+                      <button onClick={handleExportManual} disabled={!model || !!busy} className="hw-btn hw-btn-sm hw-btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>{t('دليل الحوكمة', 'Full manual')}</button>
+                      <button onClick={handleExportWorkflow} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>{t('دورة العمل', 'Workflow')}</button>
+                      <button onClick={handleExportJDs} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>{t('الأوصاف الوظيفية', 'Job desc.')}</button>
+                      <button onClick={handleExportPolicies} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-subtle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>{t('السياسات', 'Policies')}</button>
                     </div>
                   )}
                 </div>
@@ -3061,26 +3068,32 @@ ${content.slice(0, 8000)}`;
 
               {/* ── BULK MODE ── */}
               {docMode === 'bulk' && (
-                <div className="rounded-2xl border-2 border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20 p-4 space-y-3">
-                  <div className="font-black text-amber-800 dark:text-amber-200 text-sm">⚡ {t('توليد بالجملة', 'Bulk generation')}</div>
+                <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20 p-4 space-y-3">
+                  <div className="font-bold text-amber-800 dark:text-amber-200 text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> {t('توليد بالجملة', 'Bulk generation')}</div>
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('يولّد كل الكيانات دفعة واحدة مُسندة بالنموذج والمصادر. قد يستغرق وقتاً.', 'Generates all entities at once, grounded in the model. May take a while.')}</div>
                   <div className="flex flex-wrap gap-2">
-                    {([['policies', 'السياسات', 'Policies', '📜'], ['procedures', 'الإجراءات', 'Procedures', '⚙️'], ['departments', 'الإدارات', 'Departments', '🏢'], ['authorities', 'الصلاحيات', 'Authorities', '🔑'], ['kpis', 'المؤشرات', 'KPIs', '📈']] as [BulkScope, string, string, string][]).map(([sc, a, e, ic]) => (
+                    {([
+                      ['policies', 'السياسات', 'Policies', <svg key="pol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>],
+                      ['procedures', 'الإجراءات', 'Procedures', <svg key="pro" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>],
+                      ['departments', 'الإدارات', 'Departments', <svg key="dep" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>],
+                      ['authorities', 'الصلاحيات', 'Authorities', <svg key="aut" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>],
+                      ['kpis', 'المؤشرات', 'KPIs', <svg key="kpi" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>],
+                    ] as [BulkScope, string, string, React.ReactNode][]).map(([sc, a, e, ic]) => (
                       <button key={sc} onClick={() => setBulkScope(sc)}
-                        className={`px-4 py-2 rounded-xl text-sm font-bold border ${bulkScope === sc ? 'bg-amber-600 text-white border-amber-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600'}`}>
-                        {ic} {t(a, e)}
+                        className={`px-4 py-2 rounded-xl text-sm font-bold border flex items-center ${bulkScope === sc ? 'bg-amber-600 text-white border-amber-600' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-600'}`}>
+                        {ic}{t(a, e)}
                       </button>
                     ))}
                   </div>
                   <div className="pt-1">
                     {generating ? (
-                      <button onClick={stop} className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-sm">
-                        ⏹ {t('إيقاف التوليد', 'Stop generation')}
+                      <button onClick={stop} className="hw-btn hw-btn-danger flex items-center gap-1">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>{t('إيقاف التوليد', 'Stop generation')}
                       </button>
                     ) : (
                       <button onClick={handleBulkGenerate} disabled={!model || !!busy}
-                        className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-sm disabled:opacity-50">
-                        ⚡ {t('توليد الآن', 'Generate now')}
+                        className="hw-btn hw-btn-primary">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>{t('توليد الآن', 'Generate now')}
                       </button>
                     )}
                   </div>
@@ -3092,10 +3105,10 @@ ${content.slice(0, 8000)}`;
               {(generating || genSections.length > 0) && <ArtifactProgress progress={genProgress} sections={genSections} language={language} />}
 
               {genDoc && (
-                <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 max-h-[60vh] overflow-auto">
+                <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 max-h-[60vh] overflow-auto">
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-lg font-black text-slate-800 dark:text-slate-100">{genDoc.title}</h3>
-                    {!genDoc.complete && <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg">⚠️ {t('جزئية', 'Partial')}</span>}
+                    {!genDoc.complete && <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>{t('جزئية', 'Partial')}</span>}
                   </div>
                   {genDoc.executiveSummary && (
                     <Markdown text={genDoc.executiveSummary} rtl={ar} className="mb-4 p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg text-sm leading-relaxed" />
@@ -3105,16 +3118,16 @@ ${content.slice(0, 8000)}`;
                       <Markdown text={s.content} rtl={ar} className="text-sm leading-relaxed text-slate-700 dark:text-slate-200" />
                       {genDoc.citations[s.id]?.length > 0 && (
                         <div className="mt-2 text-[10px] text-emerald-600 dark:text-emerald-400">
-                          🔗 {t('المصادر', 'Sources')}: {genDoc.citations[s.id].map((c, i) => `[${i + 1}] ${c.docName || ''}›${c.label}`).join(' · ')}
+                          <span className="inline-flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>{t('المصادر', 'Sources')}: {genDoc.citations[s.id].map((c, i) => `[${i + 1}] ${c.docName || ''}›${c.label}`).join(' · ')}</span>
                         </div>
                       )}
                     </div>
                   ))}
 
                   {/* Canvas feedback — reply with notes, revise the doc in place */}
-                  <div className="mt-5 pt-4 border-t-2 border-dashed border-emerald-200 dark:border-emerald-800">
+                  <div className="mt-5 pt-4 border-t border-slate-200 dark:border-slate-700">
                     <div className="flex items-center gap-2 mb-2 text-xs font-bold text-emerald-700 dark:text-emerald-300">
-                      ✍️ {t('ملاحظاتك على الوثيقة', 'Your notes on the document')}
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>{t('ملاحظاتك على الوثيقة', 'Your notes on the document')}
                     </div>
                     <textarea
                       value={feedbackText}
@@ -3129,13 +3142,13 @@ ${content.slice(0, 8000)}`;
                       <button
                         onClick={handleReviseGenDoc}
                         disabled={revising || !feedbackText.trim()}
-                        className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold disabled:opacity-40"
+                        className="hw-btn hw-btn-sm hw-btn-primary"
                       >
-                        {revising ? t('⏳ جارٍ التعديل...', '⏳ Revising...') : t('🔁 طبّق الملاحظات', '🔁 Apply notes')}
+                        {revising ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('جارٍ التعديل...', 'Revising...')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>{t('طبّق الملاحظات', 'Apply notes')}</>}
                       </button>
                       {revising && (
                         <button onClick={() => abortRef.current?.abort()}
-                          className="px-3 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-bold">
+                          className="hw-btn hw-btn-sm hw-btn-ghost">
                           {t('إيقاف', 'Stop')}
                         </button>
                       )}
@@ -3150,19 +3163,19 @@ ${content.slice(0, 8000)}`;
           {/* STAGE 5 — assurance & intelligence */}
           {!showProjects && stage === 3 && (
             <section className="space-y-5">
-              <StageHead icon="🧠" title={t('التحقق والذكاء', 'Assurance & intelligence')}
+              <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="12" r="10"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} title={t('التحقق والذكاء', 'Assurance & intelligence')}
                 desc={t('محرك التماسك + درجة النضج + محاذاة الأطر + التعديل الذكي + اسأل حوكمتك + التتبّع + المكتبة والاعتماد.', 'Integrity engine + maturity + framework alignment + agentic edits + Q&A + traceability + library & approval.')} />
               {!model ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-slate-400 text-sm">{t('ابنِ النموذج أولاً.', 'Build the model first.')}</div>
+                <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-8 text-center text-slate-400 text-sm">{t('ابنِ النموذج أولاً.', 'Build the model first.')}</div>
               ) : (
                 <div className="space-y-5">
 
                   {/* Maturity */}
                   {maturityReport && (
-                    <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-4">
+                    <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-4">
                       <div className="flex items-center justify-between">
-                        <div className="font-black text-emerald-800 dark:text-emerald-200 text-sm">📊 {t('درجة نضج الحوكمة', 'Governance maturity')}</div>
-                        <div className="text-2xl font-black text-emerald-700 dark:text-emerald-300">{maturityReport.overall}% · {maturityReport.label}</div>
+                        <div className="font-bold text-emerald-800 dark:text-emerald-200 text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> {t('درجة نضج الحوكمة', 'Governance maturity')}</div>
+                        <div className="text-xl font-bold text-emerald-700 dark:text-emerald-300">{maturityReport.overall}% · {maturityReport.label}</div>
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
                         {maturityReport.domains.map(d => (
@@ -3177,56 +3190,56 @@ ${content.slice(0, 8000)}`;
                   )}
 
                   {/* N5 — governance-process artifacts: charter · risk register · roadmap + model sign-off */}
-                  <div className="rounded-2xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20 p-4 space-y-3">
+                  <div className="rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-900/20 p-4 space-y-3">
                     <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="font-black text-indigo-800 dark:text-indigo-200 text-sm">🏛 {t('خطوات الحوكمة الرسمية', 'Governance-process artifacts')}</div>
-                      <div className={`text-[11px] px-2.5 py-1 rounded-full font-bold ${modelApproved ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
-                        {modelApproved ? `✅ ${t('النموذج معتمد', 'Model approved')} v${model.version}` : `⏳ ${t('بانتظار الاعتماد', 'Awaiting approval')}`}
+                      <div className="font-black text-indigo-800 dark:text-indigo-200 text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg> {t('خطوات الحوكمة الرسمية', 'Governance-process artifacts')}</div>
+                      <div className={`text-[11px] px-2.5 py-1 rounded-full font-bold flex items-center gap-1 ${modelApproved ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
+                        {modelApproved ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><polyline points="20 6 9 17 4 12"/></svg>{t('النموذج معتمد', 'Model approved')} v{model.version}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('بانتظار الاعتماد', 'Awaiting approval')}</>}
                       </div>
                     </div>
                     <div className="grid sm:grid-cols-3 gap-3">
                       {/* Charter */}
                       <div className="rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-3 flex flex-col">
-                        <div className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1">📜 {t('ميثاق الحوكمة', 'Charter')}</div>
+                        <div className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> {t('ميثاق الحوكمة', 'Charter')}</div>
                         <div className="text-[11px] text-slate-500 mb-2 flex-1">{t('الأهداف والنطاق والرعاة — مولّد من النموذج.', 'Objectives, scope, sponsors — from the model.')}</div>
                         {!charterArt ? (
-                          <button onClick={genCharter} disabled={!!busy} className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg disabled:opacity-50">⚙️ {t('توليد', 'Generate')}</button>
+                          <button onClick={genCharter} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>{t('توليد', 'Generate')}</button>
                         ) : (
                           <div className="flex gap-1.5">
-                            <button onClick={() => exportArt(charterArt, 'docx')} disabled={!!busy} className="flex-1 px-2 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg disabled:opacity-50">Word</button>
-                            <button onClick={() => exportArt(charterArt, 'pdf')} disabled={!!busy} className="flex-1 px-2 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg disabled:opacity-50">PDF</button>
+                            <button onClick={() => exportArt(charterArt, 'docx')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">Word</button>
+                            <button onClick={() => exportArt(charterArt, 'pdf')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">PDF</button>
                           </div>
                         )}
                       </div>
                       {/* Risk register */}
                       <div className="rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-3 flex flex-col">
-                        <div className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1">⚠️ {t('سجل المخاطر', 'Risk register')}</div>
+                        <div className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> {t('سجل المخاطر', 'Risk register')}</div>
                         <div className="text-[11px] text-slate-500 mb-2 flex-1">{t(`مشتق من ${(model.gaps||[]).length} فجوة — احتمال/أثر/تخفيف/مالك.`, `From ${(model.gaps||[]).length} gaps — likelihood/impact/owner.`)}</div>
                         {riskArt && <div className="flex gap-1.5">
-                          <button onClick={() => exportArt(riskArt, 'docx')} disabled={!!busy} className="flex-1 px-2 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg disabled:opacity-50">Word</button>
-                          <button onClick={() => exportArt(riskArt, 'pdf')} disabled={!!busy} className="flex-1 px-2 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg disabled:opacity-50">PDF</button>
+                          <button onClick={() => exportArt(riskArt, 'docx')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">Word</button>
+                          <button onClick={() => exportArt(riskArt, 'pdf')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">PDF</button>
                         </div>}
                       </div>
                       {/* Roadmap */}
                       <div className="rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-3 flex flex-col">
-                        <div className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1">🗺 {t('خارطة الطريق', 'Roadmap')}</div>
+                        <div className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg> {t('خارطة الطريق', 'Roadmap')}</div>
                         <div className="text-[11px] text-slate-500 mb-2 flex-1">{t('معالجة الفجوات على 3 مراحل زمنية.', 'Gaps across 3 time horizons.')}</div>
                         {roadmapArt && <div className="flex gap-1.5">
-                          <button onClick={() => exportArt(roadmapArt, 'docx')} disabled={!!busy} className="flex-1 px-2 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg disabled:opacity-50">Word</button>
-                          <button onClick={() => exportArt(roadmapArt, 'pdf')} disabled={!!busy} className="flex-1 px-2 py-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-lg disabled:opacity-50">PDF</button>
+                          <button onClick={() => exportArt(roadmapArt, 'docx')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">Word</button>
+                          <button onClick={() => exportArt(roadmapArt, 'pdf')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">PDF</button>
                         </div>}
                       </div>
                     </div>
                     {!modelApproved && (
-                      <button onClick={approveModel} disabled={!!busy} className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-sm disabled:opacity-50">✅ {t('اعتماد النموذج رسميًا والانتقال للتنفيذ', 'Approve model & proceed to execution')}</button>
+                      <button onClick={approveModel} disabled={!!busy} className="hw-btn hw-btn-primary hw-btn-w flex items-center justify-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد النموذج رسميًا والانتقال للتنفيذ', 'Approve model & proceed to execution')}</button>
                     )}
                   </div>
 
                   {/* Integrity issues */}
-                  <details open className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                    <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer">🔍 {t('محرك التماسك', 'Integrity engine')} <span className="text-slate-400">({integrity.length})</span></summary>
+                  <details open className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                    <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>{t('محرك التماسك', 'Integrity engine')} <span className="text-slate-400">({integrity.length})</span></summary>
                     <div className="mt-2 space-y-1">
-                      {integrity.length === 0 && <div className="text-sm text-emerald-600">✅ {t('لا مشاكل تماسك مكتشفة.', 'No integrity issues found.')}</div>}
+                      {integrity.length === 0 && <div className="text-sm text-emerald-600 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polyline points="20 6 9 17 4 12"/></svg>{t('لا مشاكل تماسك مكتشفة.', 'No integrity issues found.')}</div>}
                       {integrity.map(iss => (
                         <div key={iss.id} className={`rounded-lg border p-2 text-sm ${SEV_COLOR[iss.severity] || SEV_COLOR.medium}`}>
                           <div className="font-bold">{iss.message} <span className="text-[10px] uppercase">[{iss.severity}]</span></div>
@@ -3238,8 +3251,8 @@ ${content.slice(0, 8000)}`;
 
                   {/* Coverage matrix */}
                   {coverage.length > 0 && (
-                    <details className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                      <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer">🗂 {t('مصفوفة التغطية', 'Coverage matrix')}</summary>
+                    <details className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                      <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>{t('مصفوفة التغطية', 'Coverage matrix')}</summary>
                       <div className="mt-2 overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead><tr className="text-[11px] text-slate-500 border-b border-slate-200 dark:border-slate-700">
@@ -3263,8 +3276,8 @@ ${content.slice(0, 8000)}`;
                   )}
 
                   {/* Framework alignment */}
-                  <details className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                    <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer">🧭 {t('محاذاة الأطر المرجعية', 'Framework alignment')}</summary>
+                  <details className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                    <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>{t('محاذاة الأطر المرجعية', 'Framework alignment')}</summary>
                     <div className="mt-2 space-y-3">
                       {alignment.map(fw => (
                         <div key={fw.frameworkId}>
@@ -3286,8 +3299,8 @@ ${content.slice(0, 8000)}`;
                   </details>
 
                   {/* Traceability (#13) */}
-                  <details className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                    <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer">🧬 {t('التتبّع الترابطي', 'Traceability')}</summary>
+                  <details className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                    <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>{t('التتبّع الترابطي', 'Traceability')}</summary>
                     <div className="mt-2">
                       <div className="text-[11px] text-slate-500 mb-1">{t('اختر وحدة لعرض كل المرتبط بها:', 'Pick a unit to trace everything linked:')}</div>
                       <div className="flex flex-wrap gap-1">
@@ -3299,12 +3312,12 @@ ${content.slice(0, 8000)}`;
                       {trace && (
                         <div className="mt-3 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-3 text-sm space-y-1">
                           <div className="font-black text-emerald-700 dark:text-emerald-300">{trace.rootLabel}</div>
-                          {trace.roles.length > 0 && <div>👤 {t('أدوار', 'Roles')}: {trace.roles.map(r => r.title).join('، ')}</div>}
-                          {trace.policies && (trace as any).policy && <div>📜 {t('سياسة', 'Policy')}: {(trace as any).policy.title}</div>}
-                          {trace.procedures.length > 0 && <div>⚙️ {t('إجراءات', 'Procedures')}: {trace.procedures.map(p => p.title).join('، ')}</div>}
-                          {trace.authorities.length > 0 && <div>🔑 {t('صلاحيات', 'Authorities')}: {trace.authorities.map(a => `${a.decision} (${LEVEL_AR[a.level] || a.level})`).join('، ')}</div>}
-                          {trace.kpis.length > 0 && <div>📈 KPIs: {trace.kpis.map(k => `${k.name}=${k.target}`).join('، ')}</div>}
-                          {trace.gaps.length > 0 && <div>⚠️ {t('فجوات', 'Gaps')}: {trace.gaps.map(g => g.area).join('، ')}</div>}
+                          {trace.roles.length > 0 && <div className="flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span>{t('أدوار', 'Roles')}: {trace.roles.map(r => r.title).join('، ')}</span></div>}
+                          {trace.policies && (trace as any).policy && <div className="flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg><span>{t('سياسة', 'Policy')}: {(trace as any).policy.title}</span></div>}
+                          {trace.procedures.length > 0 && <div className="flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg><span>{t('إجراءات', 'Procedures')}: {trace.procedures.map(p => p.title).join('، ')}</span></div>}
+                          {trace.authorities.length > 0 && <div className="flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg><span>{t('صلاحيات', 'Authorities')}: {trace.authorities.map(a => `${a.decision} (${LEVEL_AR[a.level] || a.level})`).join('، ')}</span></div>}
+                          {trace.kpis.length > 0 && <div className="flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg><span>KPIs: {trace.kpis.map(k => `${k.name}=${k.target}`).join('، ')}</span></div>}
+                          {trace.gaps.length > 0 && <div className="flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>{t('فجوات', 'Gaps')}: {trace.gaps.map(g => g.area).join('، ')}</span></div>}
                         </div>
                       )}
                     </div>
@@ -3319,18 +3332,18 @@ ${content.slice(0, 8000)}`;
           {/* STAGE 4 — reference library */}
           {!showProjects && stage === 4 && (
             <section className="space-y-5">
-              <StageHead icon="📚" title={t('المكتبة المرجعية', 'Reference library')}
+              <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>} title={t('المكتبة المرجعية', 'Reference library')}
                 desc={t('مشاريع حوكمة سابقة تُطابَق بالتشابه الدلالي + السياق لإثراء التوصيات وسد الفجوات.', 'Previous governance projects matched by semantic similarity + context to enrich recommendations and close gaps.')} />
 
               <div className="hw-tabs-line mb-4">
                 <button onClick={() => setLibTab('docs')} className={libTab === 'docs' ? UI.tabActive : UI.tabIdle}>
-                  📚 {t('الوثائق المولّدة', 'Generated docs')} <span className="opacity-60">({govDocs.length})</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>{t('الوثائق المولّدة', 'Generated docs')} <span className="opacity-60">({govDocs.length})</span>
                 </button>
                 <button onClick={() => setLibTab('refs')} className={libTab === 'refs' ? UI.tabActive : UI.tabIdle}>
-                  📥 {t('المراجع والمعايير', 'References & standards')} <span className="opacity-60">({refProjects.length})</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('المراجع والمعايير', 'References & standards')} <span className="opacity-60">({refProjects.length})</span>
                 </button>
                 <button onClick={() => setLibTab('history')} className={libTab === 'history' ? UI.tabActive : UI.tabIdle}>
-                  🕑 {t('السجل والتدقيق', 'History & audit')}
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('السجل والتدقيق', 'History & audit')}
                 </button>
               </div>
 
@@ -3338,37 +3351,37 @@ ${content.slice(0, 8000)}`;
               {/* v6-D: dedicated reference-projects home. Diagnostic generation lives in
                   the current-state stage — this tab is purely import → review → manage. */}
               <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-4 py-3 text-[12px] text-slate-600 dark:text-slate-300 flex items-start gap-2">
-                <span>📚</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0 mt-0.5"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                 <span>{t('هذا هو مقرّ المشاريع والمعايير المرجعية. كل مرجع تحفظه هنا يُسحب تلقائيًا أثناء بناء النموذج وتوليد الوثائق (مطابقة دلالية بالقطاع). استورد جماعيًا، راجِع التصنيف، ثم تصفّح وأدِر أدناه.', 'This is the home for reference projects & standards. Every reference saved here is auto-pulled during model build & document generation (sector-aware semantic match). Import in bulk, review the classification, then browse & manage below.')}</span>
               </div>
 
               {/* Pre-seeded institutional standards (ISO + frameworks + regulations) */}
-              <div className="rounded-2xl border-2 border-emerald-300 dark:border-emerald-700 bg-gradient-to-l from-emerald-50 to-white dark:from-emerald-900/20 dark:to-slate-800 p-5">
+              <div className="rounded-xl border border-emerald-200 dark:border-emerald-700 bg-emerald-50/60 dark:bg-emerald-900/20 p-4">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                   <div className="flex-1">
-                    <div className="font-extrabold text-sm text-emerald-800 dark:text-emerald-200">📐 {t('المعايير المرجعية المؤسسية', 'Institutional standards')}</div>
+                    <div className="font-bold text-sm text-emerald-800 dark:text-emerald-200 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{t('المعايير المرجعية المؤسسية', 'Institutional standards')}</div>
                     <div className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">{t('حمّل خريطة المعايير الكاملة (ISO، COSO، EFQM، التنظيمات، المعايير المهنية) لـ16 إدارة دفعة واحدة — تُخزَّن في المكتبة ويأخذ منها البناء والتوليد تلقائيًا.', 'Load the full standards map (ISO, COSO, EFQM, regulations, professional bodies) for 16 departments — stored in the library and pulled automatically by build & generation.')}</div>
                   </div>
                   <button onClick={handleSeedStandards} disabled={!!seedBusy}
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-sm whitespace-nowrap">
-                    {seedBusy ? '⏳ ' + seedBusy : t('📥 تحميل المعايير للمكتبة', '📥 Seed standards')}
+                    className="hw-btn hw-btn-primary whitespace-nowrap">
+                    {seedBusy ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{seedBusy}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('تحميل المعايير للمكتبة', 'Seed standards')}</>}
                   </button>
                 </div>
               </div>
 
               {/* م4 — batch drop: 10/20/30 files → auto-classify */}
-              <div className="rounded-2xl border-2 border-dashed border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-900/10 p-5">
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                   <div className="flex-1">
-                    <div className="font-extrabold text-sm text-emerald-800 dark:text-emerald-200">📥 {t('استيراد جماعي ذكي للمكتبة', 'Smart batch import')}</div>
+                    <div className="font-bold text-sm text-slate-800 dark:text-slate-100 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('استيراد جماعي ذكي للمكتبة', 'Smart batch import')}</div>
                     <div className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">{t('أسقط 10 أو 20 أو 30 ملفًا دفعة واحدة — يُصنَّف كل ملف تلقائيًا (النوع، القطاع، الحجم، الوسوم) ويُرتَّب للمراجعة.', 'Drop 10/20/30 files at once — each is auto-classified (kind, sector, size, tags) and ordered for review.')}</div>
                   </div>
                   <input ref={refBatchInputRef} type="file" multiple className="hidden"
                     accept=".txt,.md,.csv,.json,.xml,.htm,.html,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.mp3,.m4a,.wav,.ogg,.aac,.flac,.webm,.opus,image/*,audio/*"
                     onChange={e => { const fs = Array.from(e.target.files || []) as File[]; if (fs.length) handleRefBatchFiles(fs); if (refBatchInputRef.current) refBatchInputRef.current.value = ''; }} />
                   <button onClick={() => refBatchInputRef.current?.click()} disabled={refBatchBusy}
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-sm whitespace-nowrap">
-                    {refBatchBusy ? t('⏳ يحلّل…', '⏳ Analyzing…') : t('📂 اختر ملفات متعددة', '📂 Choose files')}
+                    className="hw-btn hw-btn-ghost whitespace-nowrap">
+                    {refBatchBusy ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('يحلّل…', 'Analyzing…')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>{t('اختر ملفات متعددة', 'Choose files')}</>}
                   </button>
                 </div>
                 {refBatchProg && (
@@ -3385,21 +3398,21 @@ ${content.slice(0, 8000)}`;
 
               {/* batch review list — editable before save */}
               {refDrafts.length > 0 && (
-                <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-slate-800 p-4 space-y-3">
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <div className="font-black text-sm text-slate-800 dark:text-slate-100">🔍 {t('مراجعة التصنيف التلقائي', 'Review auto-classification')} <span className="text-slate-400">({refDrafts.length})</span></div>
+                    <div className="font-black text-sm text-slate-800 dark:text-slate-100 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>{t('مراجعة التصنيف التلقائي', 'Review auto-classification')} <span className="text-slate-400">({refDrafts.length})</span></div>
                     <div className="flex gap-2">
-                      <button onClick={() => setRefDrafts([])} className="px-3 py-1.5 text-xs rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold">{t('إلغاء', 'Discard')}</button>
-                      <button onClick={handleSaveRefDrafts} disabled={!!busy} className="px-4 py-1.5 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold disabled:opacity-50">💾 {t('حفظ الكل بالمكتبة', 'Save all')}</button>
+                      <button onClick={() => setRefDrafts([])} className="hw-btn hw-btn-sm hw-btn-ghost">{t('إلغاء', 'Discard')}</button>
+                      <button onClick={handleSaveRefDrafts} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-primary flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>{t('حفظ الكل بالمكتبة', 'Save all')}</button>
                     </div>
                   </div>
                   <div className="space-y-2 max-h-[420px] overflow-auto">
                     {refDrafts.map((d, i) => (
                       <div key={i} className={`rounded-xl border p-3 ${d.ok ? 'border-slate-200 dark:border-slate-700' : 'border-amber-300 bg-amber-50/50 dark:bg-amber-900/10'}`}>
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="text-[10px] text-slate-400 shrink-0">📄 {d.fileName}</span>
-                          {!d.ok && <span className="text-[10px] text-amber-600 font-bold">⚠ {t('راجِع يدويًا', 'review')}</span>}
-                          <button onClick={() => removeRefDraft(i)} className="ms-auto text-rose-400 hover:text-rose-600 text-xs">🗑</button>
+                          <span className="text-[10px] text-slate-400 shrink-0 flex items-center gap-0.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{d.fileName}</span>
+                          {!d.ok && <span className="text-[10px] text-amber-600 font-bold flex items-center gap-0.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>{t('راجِع يدويًا', 'review')}</span>}
+                          <button onClick={() => removeRefDraft(i)} className="ms-auto text-rose-400 hover:text-rose-600 text-xs flex items-center"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           <input value={d.name} onChange={e => updateRefDraft(i, { name: e.target.value })} placeholder={t('الاسم', 'Name')} className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-xs" />
@@ -3421,29 +3434,29 @@ ${content.slice(0, 8000)}`;
                 </div>
               )}
 
-              <button onClick={() => setShowRefForm(s => !s)} className="px-5 py-2.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold rounded-xl text-sm">
-                {showRefForm ? t('إغلاق النموذج', 'Close form') : t('✍️ إضافة مرجع يدوي (اختياري)', '✍️ Add one manually (optional)')}
+              <button onClick={() => setShowRefForm(s => !s)} className="hw-btn hw-btn-ghost">
+                {showRefForm ? t('إغلاق النموذج', 'Close form') : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>{t('إضافة مرجع يدوي (اختياري)', 'Add one manually (optional)')}</>}
               </button>
               {showRefForm && (
-                <div className="rounded-2xl border border-emerald-200 bg-white p-4 space-y-2">
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 space-y-2">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <input value={rp.name} onChange={e => setRp({ ...rp, name: e.target.value })} placeholder={t('اسم المشروع/الشركة', 'Project/company name')} className="px-3 py-2 rounded-lg border border-slate-300 text-sm" />
-                    <input value={rp.sector} onChange={e => setRp({ ...rp, sector: e.target.value })} placeholder={t('القطاع', 'Sector')} className="px-3 py-2 rounded-lg border border-slate-300 text-sm" />
-                    <input value={rp.tags} onChange={e => setRp({ ...rp, tags: e.target.value })} placeholder={t('وسوم (مفصولة بفاصلة)', 'tags, comma-separated')} className="px-3 py-2 rounded-lg border border-slate-300 text-sm" />
+                    <input value={rp.name} onChange={e => setRp({ ...rp, name: e.target.value })} placeholder={t('اسم المشروع/الشركة', 'Project/company name')} className="hw-input text-sm" />
+                    <input value={rp.sector} onChange={e => setRp({ ...rp, sector: e.target.value })} placeholder={t('القطاع', 'Sector')} className="hw-input text-sm" />
+                    <input value={rp.tags} onChange={e => setRp({ ...rp, tags: e.target.value })} placeholder={t('وسوم (مفصولة بفاصلة)', 'tags, comma-separated')} className="hw-input text-sm" />
                   </div>
-                  <input value={rp.summary} onChange={e => setRp({ ...rp, summary: e.target.value })} placeholder={t('ملخص قصير', 'Short summary')} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
-                  <textarea value={rp.content} onChange={e => setRp({ ...rp, content: e.target.value })} placeholder={t('المحتوى القابل لإعادة الاستخدام (سياسة/هيكل/مصفوفة...)', 'reusable content (policy/structure/matrix...)')} rows={5} className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm" />
-                  <button onClick={handleAddRef} disabled={!!busy} className="px-4 py-2 bg-emerald-600 text-white font-bold rounded-lg text-sm disabled:opacity-50">{t('حفظ', 'Save')}</button>
+                  <input value={rp.summary} onChange={e => setRp({ ...rp, summary: e.target.value })} placeholder={t('ملخص قصير', 'Short summary')} className="hw-input w-full text-sm" />
+                  <textarea value={rp.content} onChange={e => setRp({ ...rp, content: e.target.value })} placeholder={t('المحتوى القابل لإعادة الاستخدام (سياسة/هيكل/مصفوفة...)', 'reusable content (policy/structure/matrix...)')} rows={5} className="hw-textarea w-full text-sm" />
+                  <button onClick={handleAddRef} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-primary">{t('حفظ', 'Save')}</button>
                 </div>
               )}
               {/* v6-D: managed browse — grouped by sector, delete wired, auto-used badge */}
               {/* Sub-tabs: standards vs reference projects */}
               <div className="hw-tabs-line mb-2">
                 <button onClick={() => setLibRefTab('projects')} className={libRefTab === 'projects' ? UI.tabActive : UI.tabIdle}>
-                  📐 {t('مشاريع مرجعية', 'Reference projects')} <span className="opacity-60">({refProjects.filter(p => !p.id.startsWith('std_')).length})</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{t('مشاريع مرجعية', 'Reference projects')} <span className="opacity-60">({refProjects.filter(p => !p.id.startsWith('std_')).length})</span>
                 </button>
                 <button onClick={() => setLibRefTab('standards')} className={libRefTab === 'standards' ? UI.tabActive : UI.tabIdle}>
-                  🏛 {t('المعايير', 'Standards')} <span className="opacity-60">({refProjects.filter(p => p.id.startsWith('std_')).length})</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>{t('المعايير', 'Standards')} <span className="opacity-60">({refProjects.filter(p => p.id.startsWith('std_')).length})</span>
                 </button>
               </div>
               {(() => {
@@ -3470,10 +3483,10 @@ ${content.slice(0, 8000)}`;
                   <div className="space-y-4">
                     <div className="flex items-center justify-between text-[12px]">
                       <span className="font-black text-slate-700 dark:text-slate-200">
-                        {libRefTab === 'standards' ? '🏛 ' + t('المعايير المحفوظة', 'Saved standards') : '📚 ' + t('المشاريع المرجعية', 'Reference projects')}
+                        {libRefTab === 'standards' ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>{t('المعايير المحفوظة', 'Saved standards')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>{t('المشاريع المرجعية', 'Reference projects')}</>}
                         <span className="text-slate-400 ms-1">({filtered.length})</span>
                       </span>
-                      {usedRefIds.size > 0 && <span className="text-emerald-600 dark:text-emerald-400">✅ {t(`${usedRefIds.size} مُستخدَم في النموذج الحالي`, `${usedRefIds.size} used in current model`)}</span>}
+                      {usedRefIds.size > 0 && <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"/></svg>{t(`${usedRefIds.size} مُستخدَم في النموذج الحالي`, `${usedRefIds.size} used in current model`)}</span>}
                     </div>
                     {sectors.map(sec => (
                       <div key={sec}>
@@ -3487,10 +3500,10 @@ ${content.slice(0, 8000)}`;
                             return (
                               <div key={p.id} className={`group relative rounded-xl border bg-white dark:bg-slate-800 p-3 ${used ? 'border-emerald-300 dark:border-emerald-700' : 'border-slate-200 dark:border-slate-700'}`}>
                                 <button onClick={() => handleDeleteRef(p.id, p.name)} title={t('حذف المرجع', 'Delete reference')}
-                                  className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity text-rose-400 hover:text-rose-600 text-sm">🗑</button>
+                                  className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity text-rose-400 hover:text-rose-600 text-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                                 <div className="font-bold text-slate-800 dark:text-slate-100 text-sm pe-6">
                                   {p.name}
-                                  {used && <span className="ms-1.5 align-middle text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700">✅ {t('مُستخدَم', 'In use')}</span>}
+                                  {used && <span className="ms-1.5 align-middle text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700 inline-flex items-center gap-0.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5"><polyline points="20 6 9 17 4 12"/></svg>{t('مُستخدَم', 'In use')}</span>}
                                 </div>
                                 {p.summary && <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{p.summary}</div>}
                                 {p.tags.length > 0 && <div className="mt-1">{p.tags.map(tg => <span key={tg} className="inline-block text-[10px] bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-full px-2 py-0.5 m-0.5">{tg}</span>)}</div>}
@@ -3507,8 +3520,8 @@ ${content.slice(0, 8000)}`;
 
               {libTab === 'docs' && (
               /* Generated documents library + approval (moved from Assurance) */
-              <details open className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer">📚 {t('مكتبة الوثائق المولّدة', 'Generated documents library')} <span className="text-slate-400">({govDocs.length})</span></summary>
+              <details open className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>{t('مكتبة الوثائق المولّدة', 'Generated documents library')} <span className="text-slate-400">({govDocs.length})</span></summary>
                 <div className="mt-2 space-y-3">
                   {govDocs.length === 0 && <div className="text-sm text-slate-400">{t('لا وثائق محفوظة بعد. ولّد وثيقة ثم "احفظ بالمكتبة".', 'No saved documents yet. Generate then "Save to library".')}</div>}
 
@@ -3525,16 +3538,16 @@ ${content.slice(0, 8000)}`;
                         <option value="separate">{t('ملفات منفصلة', 'Separate files')}</option>
                         <option value="merged">{t('ملف مجمّع', 'One merged file')}</option>
                       </select>
-                      <button onClick={() => handleBatchExport(govDocs, t('وثائق الحوكمة', 'governance_documents'))} disabled={!!busy} className="text-xs px-3 py-1 rounded-lg bg-emerald-600 text-white font-bold disabled:opacity-50">⬇️ {t('تصدير الكل', 'Export all')} ({govDocs.length})</button>
-                      <button onClick={() => { setZipReady(null); handleZipExport(govDocs); }} disabled={!!busy} title={t('حزمة مجلدات منظَّمة باسم الإصدار، مقسومة حسب النوع', 'Organized folder package named by version, split by type')} className="text-xs px-3 py-1 rounded-lg bg-indigo-600 text-white font-bold disabled:opacity-50">🗂️ {t(`حزمة مجلدات (v${model?.version || 1})`, `Folder package (v${model?.version || 1})`)}</button>
+                      <button onClick={() => handleBatchExport(govDocs, t('وثائق الحوكمة', 'governance_documents'))} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-primary disabled:opacity-50 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('تصدير الكل', 'Export all')} ({govDocs.length})</button>
+                      <button onClick={() => { setZipReady(null); handleZipExport(govDocs); }} disabled={!!busy} title={t('حزمة مجلدات منظَّمة باسم الإصدار، مقسومة حسب النوع', 'Organized folder package named by version, split by type')} className="hw-btn hw-btn-sm hw-btn-ghost disabled:opacity-50 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>{t(`حزمة مجلدات (v${model?.version || 1})`, `Folder package (v${model?.version || 1})`)}</button>
                       {zipReady && (
                         <a
                           href={zipReady.url}
                           download={zipReady.fileName}
                           onClick={() => setTimeout(() => { URL.revokeObjectURL(zipReady.url); setZipReady(null); }, 2000)}
-                          className="text-xs px-3 py-1 rounded-lg bg-emerald-500 text-white font-bold animate-pulse"
+                          className="text-xs px-3 py-1 rounded-lg bg-emerald-500 text-white font-bold animate-pulse flex items-center gap-1"
                         >
-                          ⬇️ {t(`حمّل الحزمة (${zipReady.count} وثيقة)`, `Download package (${zipReady.count} docs)`)}
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t(`حمّل الحزمة (${zipReady.count} وثيقة)`, `Download package (${zipReady.count} docs)`)}
                         </a>
                       )}
                     </div>
@@ -3549,7 +3562,7 @@ ${content.slice(0, 8000)}`;
                       <details key={kind} open className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-900/30">
                         <summary className="flex items-center justify-between gap-2 px-3 py-2 cursor-pointer text-sm font-black text-slate-700 dark:text-slate-200">
                           <span>{f.icon} {ar ? f.ar : f.en} <span className="text-slate-400 font-bold">({recs.length})</span></span>
-                          <button onClick={(e) => { e.preventDefault(); handleBatchExport(recs, ar ? f.ar : f.en); }} disabled={!!busy} className="text-[11px] px-2 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold disabled:opacity-50">⬇️ {t('تصدير المجلد', 'Export folder')}</button>
+                          <button onClick={(e) => { e.preventDefault(); handleBatchExport(recs, ar ? f.ar : f.en); }} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-subtle disabled:opacity-50 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('تصدير المجلد', 'Export folder')}</button>
                         </summary>
                         <div className="px-3 pb-3 space-y-2">
                           {recs.map(d => (
@@ -3559,12 +3572,12 @@ ${content.slice(0, 8000)}`;
                                 <span className="text-[10px] text-slate-400 shrink-0">v{d.version} · {new Date(d.updatedAt).toLocaleDateString()}</span>
                               </div>
                               <div className="flex flex-wrap gap-1 mt-2">
-                                <button onClick={() => reopenDoc(d)} className="text-xs px-2 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold">👁 {t('استعراض/تحرير', 'Preview/edit')}</button>
-                                <button onClick={() => handleBatchExport([d], d.title)} className="text-xs px-2 py-1 rounded-lg bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 font-bold">⬇️ {t('تصدير', 'Export')}</button>
-                                {d.status !== 'in_review' && <button onClick={() => setDocStatus(d, 'in_review')} className="text-xs px-2 py-1 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-bold">⏳ {t('للمراجعة', 'To review')}</button>}
-                                {d.status !== 'approved' && <button onClick={() => setDocStatus(d, 'approved')} className="text-xs px-2 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold">✅ {t('اعتماد', 'Approve')}</button>}
-                                <button onClick={() => { const c = window.prompt(t('أضف تعليقاً', 'Add a comment')); if (c) addDocComment(d, c); }} className="text-xs px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold">💬 {t('تعليق', 'Comment')}{d.comments?.length ? ` (${d.comments.length})` : ''}</button>
-                                <button onClick={() => removeDoc(d.id)} className="text-xs px-2 py-1 rounded-lg text-rose-400 hover:text-rose-600">🗑</button>
+                                <button onClick={() => reopenDoc(d)} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>{t('استعراض/تحرير', 'Preview/edit')}</button>
+                                <button onClick={() => handleBatchExport([d], d.title)} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('تصدير', 'Export')}</button>
+                                {d.status !== 'in_review' && <button onClick={() => setDocStatus(d, 'in_review')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('للمراجعة', 'To review')}</button>}
+                                {d.status !== 'approved' && <button onClick={() => setDocStatus(d, 'approved')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد', 'Approve')}</button>}
+                                <button onClick={() => { const c = window.prompt(t('أضف تعليقاً', 'Add a comment')); if (c) addDocComment(d, c); }} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('تعليق', 'Comment')}{d.comments?.length ? ` (${d.comments.length})` : ''}</button>
+                                <button onClick={() => removeDoc(d.id)} className="hw-btn hw-btn-sm hw-btn-danger flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                               </div>
                               {d.comments && d.comments.length > 0 && (
                                 <div className="mt-2 space-y-1">
@@ -3589,15 +3602,15 @@ ${content.slice(0, 8000)}`;
               )}
               {/* History: snapshots / rollback (moved from Assurance) */}
               {snapshots.length > 0 && (
-                <details className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                  <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer">🕑 {t('النسخ والاسترجاع', 'Snapshots & rollback')} <span className="text-slate-400">({snapshots.length})</span></summary>
+                <details className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                  <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('النسخ والاسترجاع', 'Snapshots & rollback')} <span className="text-slate-400">({snapshots.length})</span></summary>
                   <div className="mt-2 space-y-1">
                     {snapshots.map(s => (
                       <div key={s.id} className="flex items-center justify-between gap-2 text-sm py-1 border-b border-slate-100 dark:border-slate-700">
                         <span className="text-slate-600 dark:text-slate-300">v{s.version} · {s.reason} · <span className="text-slate-400">{new Date(s.at).toLocaleString()}</span></span>
                         <span className="flex gap-1 shrink-0">
-                          <button onClick={() => handleRollback(s)} className="text-xs px-2 py-1 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-bold">↩ {t('استرجاع', 'Restore')}</button>
-                          <button onClick={async () => { await deleteSnapshot(s.id); await loadAll(); }} className="text-rose-400 hover:text-rose-600 text-xs">🗑</button>
+                          <button onClick={() => handleRollback(s)} className="hw-btn hw-btn-sm hw-btn-ghost">↩ {t('استرجاع', 'Restore')}</button>
+                          <button onClick={async () => { await deleteSnapshot(s.id); await loadAll(); }} className="text-rose-400 hover:text-rose-600 text-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                         </span>
                       </div>
                     ))}
@@ -3607,8 +3620,8 @@ ${content.slice(0, 8000)}`;
 
               {/* Audit log (moved from Assurance) */}
               {model?.auditLog && model.auditLog.length > 0 && (
-                <details className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                  <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer">📜 {t('سجل التدقيق', 'Audit log')} <span className="text-slate-400">({model.auditLog.length})</span></summary>
+                <details className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                  <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>{t('سجل التدقيق', 'Audit log')} <span className="text-slate-400">({model.auditLog.length})</span></summary>
                   <div className="mt-2 space-y-1 max-h-64 overflow-auto">
                     {[...model.auditLog].reverse().map(a => (
                       <div key={a.id} className="text-[11px] text-slate-500 border-b border-slate-100 dark:border-slate-700 py-1">
@@ -3627,7 +3640,7 @@ ${content.slice(0, 8000)}`;
           {/* STAGE 5 — department packages */}
           {!showProjects && stage === 5 && model && (
             <section className="space-y-5">
-              <StageHead icon="🏢" title={t('حزم الإدارات', 'Department Packages')}
+              <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>} title={t('حزم الإدارات', 'Department Packages')}
                 desc={t('توليد الحزمة الكاملة لكل إدارة: الهدف، الهيكل، السياسات، الإجراءات، المؤشرات، الوصف الوظيفي، RACI، سجل المخاطر.', 'Generate a full package per department: goal, org chart, policies, procedures, KPIs, job descriptions, RACI, risk register.')} />
               <DepartmentBuilder model={model} tenantId={tenantId} language={language} />
               <StageNav back={() => setStage(2)} ar={ar} />
@@ -3674,17 +3687,17 @@ ${content.slice(0, 8000)}`;
   );
 };
 
-const StageHead: React.FC<{ icon: string; title: string; desc: string }> = ({ icon, title, desc }) => (
-  <div>
-    <h2 className="text-2xl font-black text-slate-800 dark:text-slate-100">{icon} {title}</h2>
-    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-3xl">{desc}</p>
+const StageHead: React.FC<{ icon: React.ReactNode; title: string; desc: string }> = ({ icon, title, desc }) => (
+  <div className="pb-1">
+    <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">{icon} {title}</h2>
+    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-3xl leading-relaxed">{desc}</p>
   </div>
 );
 
 const StageNav: React.FC<{ back?: () => void; next?: () => void; nextLabel?: string; nextDisabled?: boolean; nextTitle?: string; ar: boolean }> = ({ back, next, nextLabel, nextDisabled, nextTitle, ar }) => (
-  <div className="flex items-center justify-between pt-2">
-    {back ? <button onClick={back} className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-xl text-sm">{ar ? '→ السابق' : '← Back'}</button> : <span />}
-    {next && <button onClick={next} disabled={nextDisabled} title={nextTitle} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-sm disabled:opacity-40 disabled:cursor-not-allowed">{nextLabel} {ar ? '←' : '→'}</button>}
+  <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-700/50">
+    {back ? <button onClick={back} className="hw-btn hw-btn-ghost">{ar ? '→ السابق' : '← Back'}</button> : <span />}
+    {next && <button onClick={next} disabled={nextDisabled} title={nextTitle} className="hw-btn hw-btn-primary disabled:opacity-40 disabled:cursor-not-allowed">{nextLabel} {ar ? '←' : '→'}</button>}
   </div>
 );
 
@@ -3701,7 +3714,7 @@ const OrgUnitTree: React.FC<{ units: any[]; ar: boolean }> = ({ units, ar }) => 
   const Branch: React.FC<{ unit: any; depth: number }> = ({ unit, depth }) => {
     const children = byParent.get(unit.id) || [];
     return (
-      <div className={depth > 0 ? 'border-r-2 border-emerald-200 dark:border-emerald-800 pr-3 mr-1' : ''}>
+      <div className={depth > 0 ? 'border-r border-emerald-200 dark:border-emerald-800 pr-3 mr-1' : ''}>
         <div className="flex items-baseline gap-2 py-1">
           <span className="text-emerald-500">{children.length ? '▾' : '•'}</span>
           <span className="font-bold text-slate-700 dark:text-slate-200 text-sm">{unit.name}</span>

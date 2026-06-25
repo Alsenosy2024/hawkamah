@@ -96,28 +96,34 @@ const GovernanceCanvas: React.FC<Props> = ({ language, initialNodes, initialEdge
 
   const Field = ({ label, value, onChange, area, rows }: { label: string; value: string; onChange: (v: string) => void; area?: boolean; rows?: number }) => (
     <label className="block mb-3">
-      <span className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">{label}</span>
+      <span className="block text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1">{label}</span>
       {area
         ? <textarea value={value} onChange={e => onChange(e.target.value)} rows={rows || 4}
-            className="w-full text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-2 py-1.5 leading-relaxed" />
+            className="hw-textarea text-sm leading-relaxed" />
         : <input value={value} onChange={e => onChange(e.target.value)}
-            className="w-full text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-2 py-1.5" />}
+            className="hw-input text-sm" />}
     </label>
   );
 
   const renderEditor = () => {
     if (!boundEntity) {
-      return <div className="text-xs text-slate-400 dark:text-slate-500 p-3 leading-relaxed">
-        {selectedNode
-          ? t('عقدة حرة غير مرتبطة بعنصر حقيقي. استخدم "تسمية" لتغيير الاسم.', 'Free node, not bound to a real entity. Use "Rename".')
-          : t('اختر عقدة لتحرير العنصر الحقيقي المرتبط بها (الوحدة/الدور/السياسة/الإجراء).', 'Select a node to edit its bound real entity.')}
-      </div>;
+      return (
+        <div className="p-4 flex flex-col items-start gap-2">
+          <div className="text-xs text-slate-400 dark:text-slate-500 leading-relaxed">
+            {selectedNode
+              ? t('عقدة حرة غير مرتبطة بعنصر حقيقي. استخدم "تسمية" لتغيير الاسم.', 'Free node — not bound to a real entity. Use Rename to relabel.')
+              : t('اختر عقدة لتحرير العنصر الحقيقي المرتبط بها.', 'Select a node to edit its bound real entity.')}
+          </div>
+        </div>
+      );
     }
     const e: any = boundEntity;
     return (
-      <div className="p-3">
-        <div className="text-[11px] font-bold text-emerald-600 dark:text-emerald-300 mb-2">
-          {t(KIND_LABEL[refKind!].ar, KIND_LABEL[refKind!].en)}
+      <div className="p-4">
+        <div className="mb-3">
+          <span className="hw-badge-brand text-[10px] uppercase tracking-widest">
+            {t(KIND_LABEL[refKind!].ar, KIND_LABEL[refKind!].en)}
+          </span>
         </div>
         {refKind === 'unit' && <>
           <Field label={t('اسم الوحدة', 'Unit name')} value={e.name || ''} onChange={v => patchModel(m => { const x = m.orgUnits.find(u => u.id === refId); if (!x) return undefined; x.name = v; return v; })} />
@@ -141,16 +147,16 @@ const GovernanceCanvas: React.FC<Props> = ({ language, initialNodes, initialEdge
           <Field label={t('نص الإجراء الكامل (الحقيقة — قابل للتعديل)', 'Full procedure body (editable reality)')} area rows={9}
             value={e.body || ''} onChange={v => patchModel(m => { const x = m.procedures.find(p => p.id === refId); if (!x) return undefined; x.body = v; return undefined; })} />
           <label className="block mb-1">
-            <span className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">{t('الحالة', 'Status')}</span>
+            <span className="block text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1">{t('الحالة', 'Status')}</span>
             <select value={e.status || 'draft'} onChange={ev => patchModel(m => { const x = m.procedures.find(p => p.id === refId); if (!x) return undefined; x.status = ev.target.value as any; return undefined; })}
-              className="w-full text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 px-2 py-1.5">
+              className="hw-input text-sm">
               <option value="draft">{t('مسودة', 'Draft')}</option>
               <option value="in_review">{t('قيد المراجعة', 'In review')}</option>
               <option value="approved">{t('معتمد', 'Approved')}</option>
             </select>
           </label>
         </>}
-        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-2 leading-relaxed">
+        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-3 leading-relaxed border-t border-slate-100 dark:border-slate-700 pt-3">
           {t('التعديلات تُحفظ في نموذج الحوكمة عند الضغط على "حفظ".', 'Edits persist to the governance model on Save.')}
         </p>
       </div>
@@ -160,18 +166,55 @@ const GovernanceCanvas: React.FC<Props> = ({ language, initialNodes, initialEdge
   const showPanel = !!model;
 
   return (
-    <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden" dir="ltr">
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800" dir={ar ? 'rtl' : 'ltr'}>
-        <button onClick={addNode} className="px-3 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold">＋ {t('عقدة', 'Node')}</button>
-        <button onClick={renameSelected} disabled={!selected} className="px-3 h-8 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-bold disabled:opacity-40">✏️ {t('تسمية', 'Rename')}</button>
-        <button onClick={deleteSelected} disabled={!selected} className="px-3 h-8 rounded-lg bg-rose-100 dark:bg-rose-900/40 hover:bg-rose-200 text-rose-700 dark:text-rose-300 text-xs font-bold disabled:opacity-40">🗑 {t('حذف', 'Delete')}</button>
-        <span className="text-[11px] text-slate-400 dark:text-slate-500 mx-1">{t('اسحب لتحريك · اربط من حافة العقدة', 'drag to move · connect from node edge')}</span>
-        <button onClick={save} disabled={saving} className="ms-auto px-4 h-8 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold disabled:opacity-50">
-          {saving ? t('جارٍ الحفظ…', 'Saving…') : `💾 ${t('حفظ', 'Save')}`}
+    <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900" dir="ltr">
+      {/* ── Toolbar ── */}
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900" dir={ar ? 'rtl' : 'ltr'}>
+        {/* Node action group */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={addNode}
+            className="hw-btn hw-btn-primary hw-btn-sm"
+          >
+            + {t('عقدة', 'Node')}
+          </button>
+          <button
+            onClick={renameSelected}
+            disabled={!selected}
+            className="hw-btn hw-btn-ghost hw-btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {t('تسمية', 'Rename')}
+          </button>
+          <button
+            onClick={deleteSelected}
+            disabled={!selected}
+            className="hw-btn hw-btn-danger hw-btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {t('حذف', 'Delete')}
+          </button>
+        </div>
+
+        {/* Separator */}
+        <span className="hidden sm:block w-px h-5 bg-slate-200 dark:bg-slate-700 mx-2 shrink-0" aria-hidden="true" />
+
+        {/* Hint */}
+        <span className="hidden sm:block text-[11px] text-slate-400 dark:text-slate-500 leading-none">
+          {t('اسحب لتحريك · اربط من حافة العقدة', 'drag to move · connect from node edge')}
+        </span>
+
+        {/* Save — ms-auto pushes to end */}
+        <button
+          onClick={save}
+          disabled={saving}
+          className="hw-btn hw-btn-primary hw-btn-sm ms-auto disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {saving ? t('جارٍ الحفظ…', 'Saving…') : t('حفظ', 'Save')}
         </button>
       </div>
+
+      {/* ── Canvas + Inspector ── */}
       <div className="flex" style={{ height: '60vh' }}>
-        <div className="flex-1 bg-slate-50 dark:bg-slate-900">
+        {/* Canvas */}
+        <div className="flex-1 bg-[#F7FAFB] dark:bg-slate-900">
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -188,10 +231,22 @@ const GovernanceCanvas: React.FC<Props> = ({ language, initialNodes, initialEdge
             <MiniMap pannable zoomable />
           </ReactFlow>
         </div>
+
+        {/* Properties inspector panel */}
         {showPanel && (
-          <div className="w-72 shrink-0 border-s border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-y-auto" dir={ar ? 'rtl' : 'ltr'}>
-            <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700 text-xs font-bold text-slate-600 dark:text-slate-300">
-              {t('تحرير العنصر الحقيقي', 'Edit real entity')}
+          <div
+            className="w-72 shrink-0 border-s border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-y-auto flex flex-col"
+            dir={ar ? 'rtl' : 'ltr'}
+          >
+            <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2 shrink-0">
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-200 leading-none">
+                {t('محرر الخصائص', 'Properties')}
+              </span>
+              {selected && (
+                <span className="ms-auto text-[10px] text-slate-400 dark:text-slate-500 font-mono leading-none truncate max-w-[6rem]">
+                  #{selected}
+                </span>
+              )}
             </div>
             {renderEditor()}
           </div>

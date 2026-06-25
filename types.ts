@@ -1089,6 +1089,7 @@ export interface UnifiedAttempt {
   jobTitle: string;
   startedAt: string;
   finishedAt: string;
+  proctorSummary?: import('./services/proctorCore').ProctorSummary;  // live AI proctoring integrity summary
 }
 
 export interface UnifiedEmployeeAnalysis {

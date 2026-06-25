@@ -131,26 +131,31 @@ export default function DepartmentBuilder({ model, tenantId, language }: Props) 
 
   if (loading) return (
     <div className="flex items-center justify-center h-48 gap-2 text-slate-500">
-      <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-      <span>{t('تحميل...', 'Loading…', language)}</span>
+      <div className="w-4 h-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+      <span className="text-sm">{t('تحميل...', 'Loading…', language)}</span>
     </div>
   );
 
   if (departments.length === 0) return (
-    <div className={`${UI.sectionFrame} p-8 text-center text-slate-500`}>
-      <div className="text-4xl mb-3">🏢</div>
-      <p className="font-medium">{t('لا توجد وحدات تنظيمية في النموذج.', 'No org units in the model.', language)}</p>
-      <p className="text-xs mt-1">{t('ابنِ نموذج الحوكمة أولاً في مرحلة المصادر والنموذج.', 'Build the governance model in Sources & Model stages first.', language)}</p>
+    <div className="hw-card rounded-xl p-10 text-center text-slate-500">
+      <svg className="w-10 h-10 mx-auto mb-3 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" />
+      </svg>
+      <p className="font-semibold text-slate-700 dark:text-slate-300">{t('لا توجد وحدات تنظيمية في النموذج.', 'No org units in the model.', language)}</p>
+      <p className="text-xs mt-1 text-slate-400">{t('ابنِ نموذج الحوكمة أولاً في مرحلة المصادر والنموذج.', 'Build the governance model in Sources & Model stages first.', language)}</p>
     </div>
   );
 
   return (
-    <div className="flex gap-4 h-full" dir={ar ? 'rtl' : 'ltr'}>
+    <div className="flex gap-5 h-full" dir={ar ? 'rtl' : 'ltr'}>
       {/* Sidebar — dept list */}
-      <div className="w-56 shrink-0 space-y-1 overflow-y-auto">
-        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide px-2 mb-2">
-          {t('الإدارات', 'Departments', language)} ({departments.length})
-        </h4>
+      <div className="w-52 shrink-0 flex flex-col gap-0 overflow-y-auto">
+        <div className="px-1 pb-2 border-b border-slate-200 dark:border-slate-700 mb-1">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+            {t('الإدارات', 'Departments', language)}
+            <span className="ms-1.5 font-normal text-slate-400">({departments.length})</span>
+          </span>
+        </div>
         {departments.map(dept => {
           const pkg = getPackageForDept(dept.name);
           const doneCount = pkg?.sections.filter(s => s.status === 'done').length ?? 0;
@@ -158,23 +163,23 @@ export default function DepartmentBuilder({ model, tenantId, language }: Props) 
           return (
             <button
               key={dept.id}
-              className={`w-full text-start px-3 py-2.5 rounded-xl text-sm transition-colors ${
+              className={`w-full text-start px-3 py-2 rounded-md text-sm transition-colors duration-150 ${
                 isSelected
-                  ? 'bg-emerald-600 text-white font-semibold shadow'
+                  ? 'bg-emerald-600 text-white font-semibold'
                   : 'hover:bg-slate-100 dark:hover:bg-slate-700/50 text-slate-700 dark:text-slate-300'
               }`}
               onClick={() => setSelectedDept(dept.id)}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="truncate">{dept.name}</span>
+                <span className="truncate leading-snug">{dept.name}</span>
                 {pkg && (
-                  <span className={`text-xs shrink-0 ${isSelected ? 'text-emerald-100' : 'text-slate-400'}`}>
+                  <span className={`text-xs shrink-0 tabular-nums ${isSelected ? 'text-emerald-200' : 'text-slate-400'}`}>
                     {doneCount}/{ALL_SECTION_KEYS.length}
                   </span>
                 )}
               </div>
               {dept.mandate && (
-                <p className={`text-xs truncate mt-0.5 ${isSelected ? 'text-emerald-100' : 'text-slate-400'}`}>
+                <p className={`text-xs truncate mt-0.5 ${isSelected ? 'text-emerald-200' : 'text-slate-400'}`}>
                   {dept.mandate}
                 </p>
               )}
@@ -186,19 +191,21 @@ export default function DepartmentBuilder({ model, tenantId, language }: Props) 
       {/* Main panel */}
       <div className="flex-1 min-w-0 space-y-4 overflow-y-auto">
         {!selectedUnit ? (
-          <div className={`${UI.sectionFrame} p-8 text-center text-slate-500`}>
-            <div className="text-3xl mb-3">👈</div>
-            <p>{t('اختر إدارة من القائمة لبناء حزمتها.', 'Select a department from the list to build its package.', language)}</p>
+          <div className="hw-card rounded-xl p-10 text-center text-slate-400">
+            <svg className="w-8 h-8 mx-auto mb-3 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75a2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" />
+            </svg>
+            <p className="text-sm text-slate-500">{t('اختر إدارة من القائمة لبناء حزمتها.', 'Select a department from the list to build its package.', language)}</p>
           </div>
         ) : (
           <>
-            {/* Dept header */}
-            <div className={`${UI.card} p-4 rounded-xl`}>
-              <div className="flex items-start justify-between gap-3 flex-wrap">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">{selectedUnit.name}</h3>
+            {/* Dept header card */}
+            <div className="hw-card rounded-xl overflow-hidden">
+              <div className="px-5 py-4 flex items-start justify-between gap-4 flex-wrap">
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold text-slate-800 dark:text-slate-100 leading-tight">{selectedUnit.name}</h3>
                   {selectedUnit.mandate && (
-                    <p className="text-sm text-slate-500 mt-1">{selectedUnit.mandate}</p>
+                    <p className="text-sm text-slate-500 mt-0.5 leading-relaxed">{selectedUnit.mandate}</p>
                   )}
                   {standards && (
                     <div className="flex flex-wrap gap-1 mt-2">
@@ -208,46 +215,46 @@ export default function DepartmentBuilder({ model, tenantId, language }: Props) 
                     </div>
                   )}
                 </div>
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex gap-2 flex-wrap shrink-0">
                   <button
                     className={UI.btnPrimary}
-                    onClick={() => handleGenerateAll(selectedUnit.name, selectedUnit.name)}
+                    onClick={() => handleGenerateAll(selectedUnit.name, (selectedUnit as any).nameAr || selectedUnit.name)}
                     disabled={Object.values(generating).some(Boolean)}
                   >
                     {Object.values(generating).some(Boolean)
-                      ? `⏳ ${t('جارٍ التوليد...', 'Generating…', language)}`
-                      : `🚀 ${t('توليد الكل', 'Generate All', language)}`}
+                      ? t('جارٍ التوليد...', 'Generating…', language)
+                      : t('توليد الكل', 'Generate All', language)}
                   </button>
                   {selectedPkg && (
                     <button
                       className={UI.btnGhost}
                       onClick={() => handleDelete(selectedUnit.name)}
                     >
-                      🗑 {t('حذف الحزمة', 'Delete Package', language)}
+                      {t('حذف الحزمة', 'Delete Package', language)}
                     </button>
                   )}
                 </div>
               </div>
               {selectedPkg && (
-                <div className="mt-3">
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className="text-xs text-slate-500">
-                      {selectedPkg.sections.filter(s => s.status === 'done').length} / {ALL_SECTION_KEYS.length} {t('مكتمل', 'complete', language)}
+                <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-700 bg-[#EEF3F5]/60 dark:bg-slate-800/30">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 bg-slate-200 dark:bg-slate-700 rounded-sm h-1">
+                      <div
+                        className="bg-emerald-600 h-1 rounded-sm transition-all duration-300"
+                        style={{ width: `${(selectedPkg.sections.filter(s => s.status === 'done').length / ALL_SECTION_KEYS.length) * 100}%` }}
+                      />
                     </div>
-                    {selectedPkg.complete && <span className={badge('success')}>✅ {t('مكتمل', 'Complete', language)}</span>}
-                  </div>
-                  <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
-                    <div
-                      className="bg-emerald-500 h-1.5 rounded-full transition-all"
-                      style={{ width: `${(selectedPkg.sections.filter(s => s.status === 'done').length / ALL_SECTION_KEYS.length) * 100}%` }}
-                    />
+                    <span className="text-xs text-slate-500 tabular-nums shrink-0">
+                      {selectedPkg.sections.filter(s => s.status === 'done').length} / {ALL_SECTION_KEYS.length} {t('مكتمل', 'complete', language)}
+                    </span>
+                    {selectedPkg.complete && <span className={badge('success')}>{t('مكتمل', 'Complete', language)}</span>}
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Sections */}
-            <div className="space-y-3">
+            {/* Sections — scaffolded instrument rows */}
+            <div className="hw-card rounded-xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-700/70">
               {ALL_SECTION_KEYS.map(key => {
                 const meta = SECTION_META[key];
                 const sec = selectedPkg?.sections.find(s => s.key === key);
@@ -256,49 +263,53 @@ export default function DepartmentBuilder({ model, tenantId, language }: Props) 
                 const isExpanded = expanded === key;
 
                 return (
-                  <div key={key} className={`${UI.card} rounded-xl overflow-hidden`}>
-                    <div className="flex items-center justify-between p-4 gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-xl shrink-0">{meta.icon}</span>
-                        <div>
-                          <div className="font-semibold text-slate-800 dark:text-slate-100 text-sm">
-                            {ar ? meta.arTitle : meta.enTitle}
-                          </div>
-                          {status === 'done' && sec?.content && (
-                            <button
-                              className="text-xs text-emerald-600 hover:underline mt-0.5"
-                              onClick={() => setExpanded(prev => prev === key ? null : key)}
-                            >
-                              {isExpanded ? t('إخفاء', 'Hide', language) : t('عرض المحتوى', 'View content', language)}
-                            </button>
-                          )}
+                  <div key={key}>
+                    <div className="flex items-center gap-3 px-4 py-3">
+                      {/* Icon */}
+                      <span className="text-base shrink-0 w-6 text-center opacity-70">{meta.icon}</span>
+                      {/* Title + expand toggle */}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-slate-800 dark:text-slate-100 text-sm leading-snug">
+                          {ar ? meta.arTitle : meta.enTitle}
                         </div>
+                        {status === 'done' && sec?.content && (
+                          <button
+                            className="text-xs text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 mt-0.5 transition-colors duration-150"
+                            onClick={() => setExpanded(prev => prev === key ? null : key)}
+                          >
+                            {isExpanded ? t('طي', 'Collapse', language) : t('عرض المحتوى', 'View content', language)}
+                          </button>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className={badge(
-                          status === 'done' ? 'success' :
-                          status === 'generating' ? 'info' :
-                          status === 'error' ? 'danger' : 'neutral'
-                        )}>
-                          {status === 'done' ? t('✓ مكتمل', '✓ Done', language) :
-                           status === 'generating' ? t('⏳ جارٍ...', '⏳ Generating…', language) :
-                           status === 'error' ? t('✗ خطأ', '✗ Error', language) :
-                           t('لم يُنفَّذ', 'Pending', language)}
-                        </span>
-                        <button
-                          className={status === 'done' ? UI.btnGhost : UI.btnSubtle}
-                          disabled={isGen}
-                          onClick={() => handleGenerate(selectedUnit.name, selectedUnit.name, key)}
-                        >
-                          {isGen ? '⏳' : status === 'done' ? t('↺ إعادة', '↺ Redo', language) : t('توليد ↗', 'Generate ↗', language)}
-                        </button>
-                      </div>
+                      {/* Status badge */}
+                      <span className={`shrink-0 ${badge(
+                        status === 'done' ? 'success' :
+                        status === 'generating' ? 'info' :
+                        status === 'error' ? 'danger' : 'neutral'
+                      )}`}>
+                        {status === 'done' ? t('مكتمل', 'Done', language) :
+                         status === 'generating' ? t('جارٍ...', 'Generating…', language) :
+                         status === 'error' ? t('خطأ', 'Error', language) :
+                         t('معلَّق', 'Pending', language)}
+                      </span>
+                      {/* Action */}
+                      <button
+                        className={`shrink-0 ${status === 'done' ? UI.btnGhostSm : UI.btnSubtleSm}`}
+                        disabled={!!isGen}
+                        onClick={() => handleGenerate(selectedUnit.name, (selectedUnit as any).nameAr || selectedUnit.name, key)}
+                      >
+                        {isGen
+                          ? <span className="flex items-center gap-1"><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />{t('...', '…', language)}</span>
+                          : status === 'done'
+                            ? t('إعادة', 'Redo', language)
+                            : t('توليد', 'Generate', language)}
+                      </button>
                     </div>
                     {isExpanded && sec?.content && (
-                      <div className="border-t border-slate-100 dark:border-slate-700 px-4 py-3 bg-slate-50/50 dark:bg-slate-800/30">
-                        <pre className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200 font-sans leading-relaxed">
+                      <div className="border-t border-slate-100 dark:border-slate-700 px-5 py-4 bg-[#EEF3F5]/50 dark:bg-slate-800/30">
+                        <div className="whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
                           {sec.content}
-                        </pre>
+                        </div>
                       </div>
                     )}
                   </div>

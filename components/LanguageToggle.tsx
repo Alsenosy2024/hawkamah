@@ -15,22 +15,37 @@ const LanguageToggle: React.FC<LanguageToggleProps> = ({ language, setLanguage }
   };
 
   return (
-    <button
-      onClick={toggleLanguage}
-      className="relative inline-flex items-center h-8 rounded-full w-16 px-1 transition-colors duration-300 ease-in-out focus:outline-none bg-gray-200"
+    <div
+      className="inline-flex items-center rounded-md border border-slate-200 bg-white overflow-hidden"
+      role="group"
+      aria-label="Language selection"
     >
-      <span
-        className={`absolute left-1 transition-transform duration-300 ease-in-out transform ${
-          isEnglish ? 'translate-x-0' : 'translate-x-8'
-        } w-6 h-6 bg-white rounded-full shadow-md flex items-center justify-center`}
-      />
-      <span className={`z-10 w-1/2 text-center text-sm font-semibold ${isEnglish ? 'text-emerald-600' : 'text-gray-500'}`}>
+      <button
+        onClick={() => setLanguage('en')}
+        aria-pressed={isEnglish}
+        aria-label="English"
+        className={`h-7 px-3 text-xs font-semibold tracking-wide transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-1 ${
+          isEnglish
+            ? 'bg-emerald-600 text-white'
+            : 'bg-white text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+        }`}
+      >
         EN
-      </span>
-      <span className={`z-10 w-1/2 text-center text-sm font-semibold ${!isEnglish ? 'text-emerald-600' : 'text-gray-500'}`}>
+      </button>
+      <span className="w-px h-4 bg-slate-200 flex-shrink-0" aria-hidden="true" />
+      <button
+        onClick={() => setLanguage('ar')}
+        aria-pressed={!isEnglish}
+        aria-label="Arabic"
+        className={`h-7 px-3 text-xs font-semibold tracking-wide transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-1 ${
+          !isEnglish
+            ? 'bg-emerald-600 text-white'
+            : 'bg-white text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+        }`}
+      >
         AR
-      </span>
-    </button>
+      </button>
+    </div>
   );
 };
 

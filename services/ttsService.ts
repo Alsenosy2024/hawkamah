@@ -395,12 +395,31 @@ function playBlob(blob: Blob, myGen: number): Promise<void> {
   });
 }
 
-function webSpeechSpeak(text: string, lang: string, myGen: number): Promise<void> {
+// Browser voice names that are male (or female, to exclude). The default Arabic
+// Web Speech voice is female on most platforms, so when we want the male voice we
+// must actively prefer a known-male voice and avoid the known-female ones.
+const MALE_VOICE_HINTS = /\b(male|man|hamed|naayf|tarik|fahad|majed|hamza|david|daniel|george|james|fred|alex|mark|guy|rishi|ryan|will)\b/i;
+const FEMALE_VOICE_HINTS = /\b(female|woman|hoda|salma|laila|zariyah|amira|naayf?a|zira|samantha|susan|karen|tessa|fiona|moira|serena|google عربي|عربية)\b/i;
+
+function pickVoice(voices: SpeechSynthesisVoice[], lang: string, gender: TtsGender): SpeechSynthesisVoice | undefined {
+  const inLang = voices.filter(v => v.lang?.toLowerCase().startsWith(lang.slice(0, 2)));
+  if (inLang.length === 0) return undefined;
+  if (gender === 'male') {
+    return (
+      inLang.find(v => MALE_VOICE_HINTS.test(v.name)) ||           // explicit male
+      inLang.find(v => !FEMALE_VOICE_HINTS.test(v.name)) ||        // anything not clearly female
+      inLang[0]                                                     // last resort
+    );
+  }
+  return inLang.find(v => FEMALE_VOICE_HINTS.test(v.name)) || inLang[0];
+}
+
+function webSpeechSpeak(text: string, lang: string, myGen: number, gender: TtsGender = 'male'): Promise<void> {
   return new Promise((resolve) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) { resolve(); return; }
     const synth = window.speechSynthesis;
     const voices = synth.getVoices();
-    const pref = voices.find(v => v.lang?.toLowerCase().startsWith(lang.slice(0, 2)));
+    const pref = pickVoice(voices, lang, gender);
     const u = new SpeechSynthesisUtterance(text);
     u.lang = lang;
     if (pref) u.voice = pref;
@@ -457,7 +476,7 @@ export async function speak(text: string, opts: { gender?: TtsGender; lang?: str
       if (myGen !== _genId) return;
     }
     // Neural not ready within grace → speak now via the browser voice.
-    await webSpeechSpeak(clean, lang, myGen);
+    await webSpeechSpeak(clean, lang, myGen, gender);
     return;
   }
 
@@ -472,7 +491,7 @@ export async function speak(text: string, opts: { gender?: TtsGender; lang?: str
 
   // Gemini chain produced nothing (no key / quota / timeout) OR playback was
   // blocked → browser voice (often allowed where blob autoplay is not).
-  await webSpeechSpeak(clean, lang, myGen);
+  await webSpeechSpeak(clean, lang, myGen, gender);
 }
 
 export const ttsSupported = true;  // always — Gemini path needs no browser voices

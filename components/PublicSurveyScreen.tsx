@@ -79,50 +79,71 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
   const dir = tokenData?.language === 'en' ? 'ltr' : 'rtl';
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950" dir={dir}>
-      {/* Minimal branded header */}
-      <header className="bg-slate-900 text-white px-6 py-4 flex items-center gap-3 shadow-sm">
-        <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold text-sm">
-          {tokenData?.companyName?.[0] ?? ''}
-        </div>
-        <div>
+    <div className="min-h-screen flex flex-col bg-[#F7FAFB] dark:bg-slate-950" dir={dir}>
+      {/* Slim branded header — hairline bottom, no heavy shadow */}
+      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 h-12 flex items-center gap-3">
+        {tokenData?.companyName && (
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-md bg-emerald-600 text-white font-bold text-xs select-none">
+            {tokenData.companyName[0]}
+          </span>
+        )}
+        <div className="flex items-center gap-2 min-w-0">
           {tokenData && (
-            <div className="font-semibold text-sm">{tokenData.companyName}</div>
+            <span className="font-semibold text-sm text-slate-800 dark:text-slate-100 truncate">
+              {tokenData.companyName}
+            </span>
           )}
-          <div className="text-xs text-slate-400">
+          {tokenData && (
+            <span className="hidden sm:inline text-slate-300 dark:text-slate-600 text-xs select-none">·</span>
+          )}
+          <span className="text-xs text-slate-500 dark:text-slate-400 truncate">
             {t('استبيان بيئة العمل', 'Workplace Environment Survey')}
-          </div>
+          </span>
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col items-center justify-center p-4">
+      <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8">
         {state === 'loading' && (
-          <div className="flex flex-col items-center gap-3 text-slate-500">
-            <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+          <div className="flex flex-col items-center gap-3 text-slate-400 dark:text-slate-500">
+            <div className="w-6 h-6 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
             <span className="text-sm">{t('جارٍ التحميل…', 'Loading…')}</span>
           </div>
         )}
 
         {state === 'error' && (
-          <div className={`${UI.sectionFrame} max-w-md p-8 text-center space-y-3`}>
-            <div className="text-4xl">⚠️</div>
-            <p className="text-slate-700 dark:text-slate-200 font-medium">{errorMsg}</p>
-            <p className="text-xs text-slate-500">{t('تواصل مع المسؤول للحصول على رابط جديد.', 'Contact the administrator for a new link.')}</p>
+          <div className="hw-card p-8 max-w-md w-full text-center space-y-3">
+            {/* Warning icon */}
+            <div className="flex justify-center mb-1">
+              <svg className="w-9 h-9 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+            </div>
+            <p className="text-slate-700 dark:text-slate-200 font-semibold text-sm leading-relaxed">{errorMsg}</p>
+            <p className="text-xs text-slate-400">{t('تواصل مع المسؤول للحصول على رابط جديد.', 'Contact the administrator for a new link.')}</p>
           </div>
         )}
 
         {state === 'submitting' && (
-          <div className="flex flex-col items-center gap-3 text-slate-500">
-            <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+          <div className="flex flex-col items-center gap-3 text-slate-400 dark:text-slate-500">
+            <div className="w-6 h-6 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
             <span className="text-sm">{t('جارٍ إرسال إجاباتك…', 'Submitting your answers…')}</span>
           </div>
         )}
 
         {state === 'done' && (
-          <div className={`${UI.sectionFrame} max-w-md p-10 text-center space-y-4`}>
-            <div className="text-5xl">✅</div>
+          <div className="hw-card p-8 max-w-md w-full text-center space-y-4">
+            {/* Check icon */}
+            <div className="flex justify-center mb-1">
+              <span className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-50 dark:bg-green-900/30">
+                <svg className="w-6 h-6 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </span>
+            </div>
             <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100">{t('شكراً جزيلاً!', 'Thank you!')}</h2>
-            <p className="text-slate-600 dark:text-slate-300">
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
               {t('تم استلام إجاباتك بنجاح.', 'Your answers have been received successfully.')}
               {tokenData && <> {t('ستصل نتائجك لإدارة', 'Results will reach the management of')} <strong>{tokenData.companyName}</strong>.</>}
             </p>
@@ -131,81 +152,94 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
         )}
 
         {state === 'info_form' && tokenData && (
-          <div className={`${UI.sectionFrame} w-full max-w-md p-8`}>
-            <div className="text-center mb-6">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 dark:bg-emerald-900/40 flex items-center justify-center text-3xl mx-auto mb-3">📋</div>
-              <h2 className="text-xl font-extrabold text-slate-800 dark:text-slate-100">
+          <div className="hw-card w-full max-w-md">
+            {/* Card header with serif hero title */}
+            <div className="px-8 pt-8 pb-6 border-b border-slate-100 dark:border-slate-800 text-center">
+              <h2 className="font-serif text-2xl font-bold text-slate-800 dark:text-slate-100 leading-snug">
                 {t('بياناتك الشخصية', 'Your Information')}
               </h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                {t('نحتاج هذه المعلومات لمعرفة من ملأ الاستبيان', 'We need this information to know who filled out the survey')}
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                {t('نحتاج هذه المعلومات لمعرفة من ملأ الاستبيان', 'We need this information to know who completed the survey')}
               </p>
             </div>
 
-            <div className="space-y-4">
+            {/* Form fields */}
+            <div className="px-8 py-6 space-y-5">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                  {t('الاسم الكامل *', 'Full Name *')}
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                  {t('الاسم الكامل', 'Full Name')}
+                  <span className="text-rose-500 ms-0.5">*</span>
                 </label>
                 <input
                   type="text"
                   value={participant.name}
                   onChange={e => setParticipant(p => ({ ...p, name: e.target.value }))}
-                  className="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                  className="hw-input w-full"
                   placeholder={t('أدخل اسمك الكامل', 'Enter your full name')}
                   autoFocus
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                  {t('البريد الإلكتروني *', 'Email *')}
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                  {t('البريد الإلكتروني', 'Email')}
+                  <span className="text-rose-500 ms-0.5">*</span>
                 </label>
                 <input
                   type="email"
                   value={participant.email}
                   onChange={e => setParticipant(p => ({ ...p, email: e.target.value }))}
-                  className="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                  className="hw-input w-full"
                   placeholder={t('example@company.com', 'example@company.com')}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                  {t('المسمى الوظيفي *', 'Job Title *')}
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                  {t('المسمى الوظيفي', 'Job Title')}
+                  <span className="text-rose-500 ms-0.5">*</span>
                 </label>
                 <input
                   type="text"
                   value={participant.jobTitle}
                   onChange={e => setParticipant(p => ({ ...p, jobTitle: e.target.value }))}
-                  className="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                  className="hw-input w-full"
                   placeholder={t('مثال: مهندس مدني، محاسب، مدير مشروع', 'e.g., Civil Engineer, Accountant, Project Manager')}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
                   {t('الإدارة / القسم', 'Department')}
+                  <span className="text-slate-400 text-xs font-normal ms-1">{t('(اختياري)', '(optional)')}</span>
                 </label>
                 <input
                   type="text"
                   value={participant.department}
                   onChange={e => setParticipant(p => ({ ...p, department: e.target.value }))}
-                  className="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                  className="hw-input w-full"
                   placeholder={t('التطوير', 'Development')}
                 />
               </div>
 
               {formErr && (
-                <p className="text-rose-600 dark:text-rose-400 text-sm font-medium">{formErr}</p>
+                <div className="flex items-start gap-2 text-rose-600 dark:text-rose-400">
+                  <svg className="w-4 h-4 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                  <span className="text-sm">{formErr}</span>
+                </div>
               )}
 
               <button
                 type="button"
                 onClick={handleInfoSubmit}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-xl shadow-lg transition-colors mt-2"
+                className="hw-btn hw-btn-primary hw-btn-lg w-full mt-1"
               >
-                {t('متابعة ←', '→ Continue')}
+                {t('متابعة', 'Continue')}
+                <svg className={`w-4 h-4 ${ar ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="9 18 15 12 9 6"/>
+                </svg>
               </button>
             </div>
           </div>

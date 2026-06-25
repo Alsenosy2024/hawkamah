@@ -65,7 +65,7 @@ const FOLLOW_UPS: SurveyFollowUp[] = [
     parent: 'challengesAndProblems',
     when: isSubstantive, // any substantive challenge answer triggers a concrete example
     complexity: 'high',
-    icon: '🔎',
+    icon: '',
     minWords: 12,
     label: { ar: 'مثال محدد على التحدي', en: 'A concrete example of the challenge' },
     desc: {
@@ -87,7 +87,7 @@ const FOLLOW_UPS: SurveyFollowUp[] = [
       'old', 'slow', 'weak', 'lack', 'missing', 'outdated', 'down', 'issue', 'need', 'upgrade', 'intermediate', 'basic',
     ]),
     complexity: 'medium',
-    icon: '🛠️',
+    icon: '',
     minWords: 8,
     label: { ar: 'الأولوية الرقمية الأهم', en: 'The single most impactful digital fix' },
     desc: {
@@ -211,17 +211,17 @@ const WorkplaceSurveyScreen: React.FC<WorkplaceSurveyScreenProps> = ({ onSubmit,
     placeholder: string;
     icon: string;
   }[] = [
-    { key: 'proceduresAndPolicies', value: procedures, set: setProcedures, label: T.proceduresLabel, desc: T.proceduresDesc, icon: '📋',
+    { key: 'proceduresAndPolicies', value: procedures, set: setProcedures, label: T.proceduresLabel, desc: T.proceduresDesc, icon: '',
       placeholder: language === 'ar' ? 'مثال: المعاملات الإدارية تسير ببطء والسياسات غير واضحة للجميع...' : 'e.g., Administrative approvals take several days...' },
-    { key: 'digitalInfrastructure', value: digitalInfo, set: setDigitalInfo, label: T.digitalLabel, desc: T.digitalDesc, icon: '🖥️',
+    { key: 'digitalInfrastructure', value: digitalInfo, set: setDigitalInfo, label: T.digitalLabel, desc: T.digitalDesc, icon: '',
       placeholder: language === 'ar' ? 'مثال: الأجهزة قديمة وتحتاج لتحديث ونعاني من انقطاع الخدمة المتقطع...' : 'e.g., The tools are modern but we lack centralized cloud solutions...' },
-    { key: 'challengesAndProblems', value: challenges, set: setChallenges, label: T.challengesLabel, desc: T.challengesDesc, icon: '⚡',
+    { key: 'challengesAndProblems', value: challenges, set: setChallenges, label: T.challengesLabel, desc: T.challengesDesc, icon: '',
       placeholder: language === 'ar' ? 'مثال: تضارب الصلاحيات، تأخر صرف بدلات أو موافقة على عقود فحص جودة...' : 'e.g., Major delays on supplier contracts and unclear individual KPIs...' },
-    { key: 'employeeRelationships', value: relations, set: setRelations, label: T.employeeRelationsLabel, desc: T.employeeRelationsDesc, icon: '🤝',
+    { key: 'employeeRelationships', value: relations, set: setRelations, label: T.employeeRelationsLabel, desc: T.employeeRelationsDesc, icon: '',
       placeholder: language === 'ar' ? 'مثال: التعاون ممتاز ولكن التواصل بين الأقسام منقطع جزئياً...' : 'e.g., Outstanding coworker relationship but vertical communications are heavily layered...' },
-    { key: 'aspirationsAndDevelopment', value: aspirations, set: setAspirations, label: T.aspirationsLabel, desc: T.aspirationsDesc, icon: '🎯',
+    { key: 'aspirationsAndDevelopment', value: aspirations, set: setAspirations, label: T.aspirationsLabel, desc: T.aspirationsDesc, icon: '',
       placeholder: language === 'ar' ? 'مثال: أطمح لعمل خطة تأصيلية للمهارات وتوفير مسار ترقية عادل...' : 'e.g., Clear technical scale up track and fair advancement frameworks...' },
-    { key: 'organizationalReconstructionOpinion', value: reconstruct, set: setReconstruct, label: T.reconstructionLabel, desc: T.reconstructionDesc, icon: '🔧',
+    { key: 'organizationalReconstructionOpinion', value: reconstruct, set: setReconstruct, label: T.reconstructionLabel, desc: T.reconstructionDesc, icon: '',
       placeholder: language === 'ar' ? 'مثال: دمج الإدارة الوسطى لتسهيل القرارات أو تعيين منسقي جودة إضافيين...' : 'e.g., Decentering operational tasks and giving more autonomous authority to line managers...' },
   ];
 
@@ -358,41 +358,51 @@ const WorkplaceSurveyScreen: React.FC<WorkplaceSurveyScreenProps> = ({ onSubmit,
 
   return (
     <div className="flex flex-col h-full animate-fade-in text-start">
-      <div className="flex flex-col md:flex-row justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-4 mb-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 pb-5 mb-5 border-b border-slate-200 dark:border-slate-700">
         <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-            <span className="p-2 bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300 rounded-lg">📋</span>
+          <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-slate-100">
             {T.workplaceSurveyTitle}
           </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{T.workplaceSurveyExplain}</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">{T.workplaceSurveyExplain}</p>
         </div>
-
         <button
           type="button"
           onClick={handleAutoFill}
-          className="mt-4 md:mt-0 text-xs text-emerald-600 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 font-bold py-2 px-3 rounded-lg border border-emerald-200 dark:border-emerald-800 transition-colors"
+          className="shrink-0 self-start text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 font-semibold py-1.5 px-3 rounded-md border border-emerald-200 dark:border-emerald-800 transition-colors duration-150"
         >
-          {language === 'ar' ? '✨ تعبئة نموذج افتراضي سريع' : '✨ Quick Auto-fill Demo Data'}
+          {language === 'ar' ? 'تعبئة افتراضية' : 'Demo fill'}
         </button>
       </div>
 
       {/* Step progress */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between text-xs font-bold text-slate-500 dark:text-slate-400 mb-2">
-          <span>{language === 'ar' ? `الصفحة ${safePage + 1} من ${totalPages}` : `Page ${safePage + 1} of ${totalPages}`}</span>
-          <span>{language === 'ar' ? `${visibleItems.length - deficient.length} / ${visibleItems.length} مكتمل` : `${visibleItems.length - deficient.length} / ${visibleItems.length} complete`}</span>
+      <div className="mb-5">
+        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
+          <span className="font-semibold">
+            {language === 'ar' ? `الصفحة ${safePage + 1} من ${totalPages}` : `Page ${safePage + 1} of ${totalPages}`}
+          </span>
+          <span>
+            {language === 'ar'
+              ? `${visibleItems.length - deficient.length} / ${visibleItems.length} مكتمل`
+              : `${visibleItems.length - deficient.length} / ${visibleItems.length} complete`}
+          </span>
         </div>
-        <div className="h-2 w-full bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-          <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${((safePage + 1) / totalPages) * 100}%` }} />
+        <div className="h-1 w-full bg-slate-100 dark:bg-slate-700 rounded-sm overflow-hidden">
+          <div
+            className="h-full bg-emerald-600 rounded-sm transition-all duration-300"
+            style={{ width: `${((safePage + 1) / totalPages) * 100}%` }}
+          />
         </div>
       </div>
 
-      <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4 mb-6 text-sm text-amber-800 dark:text-amber-200 leading-relaxed">
-        💡 {T.surveyIntro}
+      {/* Intro note */}
+      <div className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-md px-4 py-3 mb-6 text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+        {T.surveyIntro}
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Single-column question list */}
+        <div className="space-y-4">
           {pageItems.map(it => {
             const min = it.minWords;
             const wc = countWords(it.value);
@@ -403,122 +413,167 @@ const WorkplaceSurveyScreen: React.FC<WorkplaceSurveyScreenProps> = ({ onSubmit,
               <div
                 key={it.key}
                 id={`survey-field-${it.key}`}
-                className={`p-5 rounded-xl border transition-shadow hover:shadow-md ${
+                className={`rounded-lg border transition-colors duration-150 ${
                   isFollowUp
-                    ? 'bg-emerald-50/40 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 animate-fade-in'
+                    ? 'bg-slate-50/60 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 animate-fade-in ms-4'
                     : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
                 }`}
               >
-                <div className="flex items-start justify-between gap-2 mb-1">
-                  <label className="block text-sm font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                    <span className="text-lg">{it.icon}</span>{it.label}
-                  </label>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${badge.cls}`}>
-                      {language === 'ar' ? badge.ar : badge.en}
-                    </span>
-                  </div>
-                </div>
-                {isFollowUp && (
-                  <span className="inline-block mb-1.5 text-[10px] font-black px-2 py-0.5 rounded-full border bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-700">
-                    {language === 'ar' ? '↳ سؤال متابعة' : '↳ Follow-up'}
-                  </span>
-                )}
-                <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">{it.desc}</p>
-                <textarea
-                  required={min > 0}
-                  value={it.value}
-                  onChange={(e) => it.set(e.target.value)}
-                  className={`w-full h-24 p-3 border rounded-lg focus:outline-none focus:ring-2 text-sm bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 ${
-                    attempted && short ? 'border-rose-400 focus:ring-rose-400' : 'border-slate-300 dark:border-slate-600 focus:ring-emerald-500'
-                  }`}
-                  placeholder={it.placeholder}
-                />
-                {/* Prominent, clearly-labeled dictation button — speak instead of typing */}
-                {STT_OK && (
-                  <button
-                    type="button"
-                    disabled={transcribingKey === it.key}
-                    onClick={() => { void toggleMic(it.key, it.value, it.set); }}
-                    className={`mt-2 w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border-2 font-extrabold text-sm transition-all ${
-                      micKey === it.key
-                        ? 'bg-rose-500 border-rose-500 text-white animate-pulse shadow-md'
-                        : transcribingKey === it.key
-                          ? 'bg-amber-100 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 cursor-wait'
-                          : 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50'
-                    }`}
-                  >
-                    {micKey === it.key ? (
-                      <>
-                        <span className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />
-                        {language === 'ar' ? '⏹ إيقاف التسجيل وحفظ كلامك' : '⏹ Stop & save what you said'}
-                        {/* Live VU bars prove the mic is actually capturing. */}
-                        <span className="flex items-end gap-0.5 h-4 ms-1">
-                          {[0.15, 0.4, 0.7, 0.95].map((thresh, i) => (
-                            <span key={i} className={`w-1 rounded-sm ${micLevel >= thresh ? 'bg-white' : 'bg-white/40'}`}
-                              style={{ height: `${Math.max(25, Math.min(100, (micLevel >= thresh ? micLevel : 0.15) * 100))}%` }} />
-                          ))}
-                        </span>
-                      </>
-                    ) : transcribingKey === it.key ? (
-                      <>
-                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
-                        {language === 'ar' ? '⏳ يحوّل كلامك إلى نص…' : '⏳ Transcribing your voice…'}
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-14 0m7 7v3m0-3a3 3 0 003-3V6a3 3 0 00-6 0v6a3 3 0 003 3z" />
-                        </svg>
-                        {language === 'ar' ? '🎙️ سجّل صوتك هنا بدل الكتابة' : '🎙️ Record your voice instead of typing'}
-                      </>
+                {/* Card header band */}
+                <div className={`flex items-center justify-between gap-3 px-4 py-3 border-b ${
+                  isFollowUp
+                    ? 'border-slate-100 dark:border-slate-700/60'
+                    : 'border-slate-100 dark:border-slate-700/60'
+                }`}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    {isFollowUp && (
+                      <span className="text-emerald-500 dark:text-emerald-400 text-xs font-semibold shrink-0 select-none">↳</span>
                     )}
-                  </button>
-                )}
-                {micKey === it.key && (
-                  <div className="mt-1.5 flex items-center gap-2 text-[11px] font-bold text-rose-500">
-                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                    {language === 'ar' ? '🎙️ يسجّل الآن... تكلّم ثم اضغط «إيقاف» وسأكتب كلامك في الخانة.' : '🎙️ Recording… speak, then press “Stop” and I will write it here.'}
+                    <label
+                      htmlFor={`textarea-${it.key}`}
+                      className="text-sm font-semibold text-slate-800 dark:text-slate-100 leading-snug cursor-pointer"
+                    >
+                      {it.label}
+                    </label>
                   </div>
-                )}
-                {min > 0 && (
-                  <div className={`mt-1.5 flex items-center justify-between text-[11px] font-bold ${short ? 'text-rose-500' : 'text-emerald-600'}`}>
-                    <span>
-                      {short ? '⚠️ ' : '✅ '}
+                  <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-sm border ${badge.cls}`}>
+                    {language === 'ar' ? badge.ar : badge.en}
+                  </span>
+                </div>
+
+                {/* Card body */}
+                <div className="px-4 py-3 space-y-3">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{it.desc}</p>
+
+                  <textarea
+                    id={`textarea-${it.key}`}
+                    required={min > 0}
+                    value={it.value}
+                    onChange={(e) => it.set(e.target.value)}
+                    rows={4}
+                    className={`w-full p-3 border rounded-md focus:outline-none focus:ring-2 text-sm bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 leading-relaxed resize-y transition-colors duration-150 ${
+                      attempted && short
+                        ? 'border-rose-400 focus:ring-rose-400/40'
+                        : 'border-slate-200 dark:border-slate-600 focus:ring-emerald-500/30 focus:border-emerald-500'
+                    }`}
+                    placeholder={it.placeholder}
+                  />
+
+                  {/* Dictation button */}
+                  {STT_OK && (
+                    <button
+                      type="button"
+                      disabled={transcribingKey === it.key}
+                      onClick={() => { void toggleMic(it.key, it.value, it.set); }}
+                      className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-md border font-semibold text-xs transition-colors duration-150 ${
+                        micKey === it.key
+                          ? 'bg-rose-500 border-rose-500 text-white'
+                          : transcribingKey === it.key
+                            ? 'bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-700 text-amber-700 dark:text-amber-300 cursor-wait'
+                            : 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-emerald-700 dark:hover:text-emerald-300 hover:border-emerald-300 dark:hover:border-emerald-700'
+                      }`}
+                    >
+                      {micKey === it.key ? (
+                        <>
+                          <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                          {language === 'ar' ? 'إيقاف التسجيل' : 'Stop recording'}
+                          {/* Live VU bars */}
+                          <span className="flex items-end gap-0.5 h-3.5 ms-1">
+                            {[0.15, 0.4, 0.7, 0.95].map((thresh, i) => (
+                              <span
+                                key={i}
+                                className={`w-1 rounded-sm ${micLevel >= thresh ? 'bg-white' : 'bg-white/40'}`}
+                                style={{ height: `${Math.max(25, Math.min(100, (micLevel >= thresh ? micLevel : 0.15) * 100))}%` }}
+                              />
+                            ))}
+                          </span>
+                        </>
+                      ) : transcribingKey === it.key ? (
+                        <>
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                          {language === 'ar' ? 'يحوّل كلامك إلى نص…' : 'Transcribing…'}
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-14 0m7 7v3m0-3a3 3 0 003-3V6a3 3 0 00-6 0v6a3 3 0 003 3z" />
+                          </svg>
+                          {language === 'ar' ? 'سجّل صوتك بدل الكتابة' : 'Record instead of typing'}
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* Recording status line */}
+                  {micKey === it.key && (
+                    <div className="flex items-center gap-2 text-[11px] font-semibold text-rose-500">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
                       {language === 'ar'
-                        ? `${wc} / ${min} كلمة (الحد الأدنى)`
-                        : `${wc} / ${min} words (minimum)`}
-                    </span>
-                  </div>
-                )}
+                        ? 'يسجّل الآن... تكلّم ثم اضغط «إيقاف».'
+                        : 'Recording — speak, then press Stop.'}
+                    </div>
+                  )}
+
+                  {/* Word count */}
+                  {min > 0 && (
+                    <div className={`flex items-center gap-1.5 text-[11px] font-semibold ${short ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      {short ? (
+                        <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M12 3a9 9 0 100 18A9 9 0 0012 3z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                      <span>
+                        {language === 'ar'
+                          ? `${wc} / ${min} كلمة (الحد الأدنى)`
+                          : `${wc} / ${min} words (minimum)`}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
 
+        {/* Mic blocked notice */}
         {micBlocked && (
-          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 px-4 py-3 rounded-xl text-sm font-bold">
-            🎙️ {language === 'ar'
-              ? 'تعذّر الوصول للميكروفون — تأكّد من السماح للميكروفون أو اكتب إجابتك يدويًا.'
-              : 'Microphone unavailable — allow mic access or type your answers manually.'}
+          <div className="flex items-start gap-2.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 px-4 py-3 rounded-lg text-sm">
+            <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M12 3a9 9 0 100 18A9 9 0 0012 3z" />
+            </svg>
+            <span>
+              {language === 'ar'
+                ? 'تعذّر الوصول للميكروفون — تأكّد من السماح للميكروفون أو اكتب إجابتك يدويًا.'
+                : 'Microphone unavailable — allow mic access or type your answers manually.'}
+            </span>
           </div>
         )}
 
+        {/* Validation notice */}
         {attempted && pageDeficient.length > 0 && (
-          <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 px-4 py-3 rounded-xl text-sm font-bold">
-            ⚠️ {language === 'ar'
-              ? `يجب استيفاء الحد الأدنى لعدد الكلمات في ${pageDeficient.length} حقل في هذه الصفحة قبل المتابعة.`
-              : `Please meet the minimum word count in ${pageDeficient.length} field(s) on this page before continuing.`}
+          <div className="flex items-start gap-2.5 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 px-4 py-3 rounded-lg text-sm">
+            <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M12 3a9 9 0 100 18A9 9 0 0012 3z" />
+            </svg>
+            <span>
+              {language === 'ar'
+                ? `يجب استيفاء الحد الأدنى لعدد الكلمات في ${pageDeficient.length} حقل في هذه الصفحة قبل المتابعة.`
+                : `Please meet the minimum word count in ${pageDeficient.length} field(s) on this page before continuing.`}
+            </span>
           </div>
         )}
 
         {/* Wizard nav */}
-        <div className="flex items-center justify-between gap-3 mt-8">
+        <div className="flex items-center gap-3 pt-2">
           <button
             type="button"
             onClick={handleBack}
             disabled={safePage === 0}
-            className="text-sm font-bold py-3 px-5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+            className="text-sm font-semibold py-2.5 px-5 rounded-md border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors duration-150"
           >
             {language === 'ar' ? 'السابق' : 'Back'}
           </button>
@@ -527,20 +582,20 @@ const WorkplaceSurveyScreen: React.FC<WorkplaceSurveyScreenProps> = ({ onSubmit,
             <button
               type="button"
               onClick={handleNext}
-              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 px-6 rounded-xl shadow-lg transition-transform focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 flex items-center justify-center gap-2"
+              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-5 rounded-md transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 flex items-center justify-center gap-2"
             >
               {language === 'ar' ? 'التالي' : 'Next'}
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d={language === 'ar' ? "M10 19l-7-7m0 0l7-7m-7 7h18" : "M14 5l7 7m0 0l-7 7m7-7H3"} />
               </svg>
             </button>
           ) : (
             <button
               type="submit"
-              className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-extrabold py-3.5 px-6 rounded-xl shadow-lg transition-transform focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 flex items-center justify-center gap-2"
+              className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold py-2.5 px-5 rounded-md transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 flex items-center justify-center gap-2"
             >
               {language === 'ar' ? 'إرسال الاستبيان وإنشاء التشخيص النهائي' : 'Submit Survey & Open Comprehensive Reports'}
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d={language === 'ar' ? "M10 19l-7-7m0 0l7-7m-7 7h18" : "M14 5l7 7m0 0l-7 7m7-7H3"} />
               </svg>
             </button>

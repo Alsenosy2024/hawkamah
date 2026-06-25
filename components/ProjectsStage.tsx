@@ -259,92 +259,141 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">{t('المشاريع', 'Projects')}</h3>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <h3 className="text-base font-bold text-slate-800 dark:text-slate-100">{t('المشاريع', 'Projects')}</h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
             {t('أنشئ مشروعاً لكل جهة. اختيار المشروع يحدّد سياق الحوكمة بالكامل.',
                'Create a project per company. Selecting one scopes the whole governance flow.')}
           </p>
         </div>
         <div className="flex gap-2">
           <button className={UI.btnSubtle} onClick={() => { setDraft(EMPTY); setMode('manual'); }}>
-            ＋ {t('إنشاء يدوي', 'Manual')}
+            + {t('إنشاء يدوي', 'New project')}
           </button>
           <button className={UI.btnPrimary} disabled={extracting} onClick={() => fileRef.current?.click()}>
-            {extracting ? t('جارٍ الاستخلاص…', 'Extracting…') : `⬆ ${t('رفع ملفات (استخلاص تلقائي)', 'Upload (auto-extract)')}`}
+            {extracting ? t('جارٍ الاستخلاص…', 'Extracting…') : t('رفع ملفات', 'Upload files')}
           </button>
           <input ref={fileRef} type="file" multiple hidden onChange={handleFiles} />
         </div>
       </div>
 
-      {/* Project list */}
+      {/* ── Empty state ── */}
       {projects.length === 0 && !mode && (
-        <div className={`${UI.sectionFrame} p-8 text-center text-slate-500 dark:text-slate-400`}>
-          {t('لا توجد مشاريع بعد. أنشئ أول جهة للبدء.', 'No projects yet. Create the first company to begin.')}
+        <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-700 p-10 text-center">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {t('لا توجد مشاريع بعد. أنشئ أول جهة للبدء.', 'No projects yet. Create the first company to begin.')}
+          </p>
         </div>
       )}
+
+      {/* ── Project list (dense hairline rows) ── */}
       {projects.length > 0 && (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden divide-y divide-slate-100 dark:divide-slate-700/60">
           {projects.map(p => {
             const active = p.id === activeId;
             return (
               <div key={p.id}
-                className={`${UI.card} p-4 rounded-xl transition ring-2 ${active ? 'ring-emerald-500' : 'ring-transparent hover:ring-emerald-200'}`}>
-                <div className="flex items-start justify-between gap-2">
-                  <button className="min-w-0 text-start" onClick={() => openProject(p.id)} title={t('افتح المشروع', 'Open project')}>
-                    <div className="font-bold text-slate-800 dark:text-slate-100 truncate">{p.name}</div>
-                    {p.industry && <div className="text-xs text-slate-500 dark:text-slate-400 truncate">{p.industry}{p.specialization ? ` · ${p.specialization}` : ''}</div>}
+                className={`group relative flex flex-col gap-0 transition-colors ${
+                  active
+                    ? 'bg-emerald-50/60 dark:bg-emerald-900/10'
+                    : 'bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                }`}>
+                {/* Active indicator — thin leading edge */}
+                {active && (
+                  <span className="absolute start-0 inset-y-0 border-s-2 border-emerald-600 rounded-e-sm" aria-hidden="true" />
+                )}
+
+                {/* Row — identity + badge + primary actions */}
+                <div className="flex items-center gap-3 px-4 py-3 ps-5">
+                  {/* Identity */}
+                  <button
+                    className="min-w-0 flex-1 text-start"
+                    onClick={() => openProject(p.id)}
+                    title={t('افتح المشروع', 'Open project')}
+                  >
+                    <span className={`block font-semibold text-sm truncate ${active ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-800 dark:text-slate-100'}`}>
+                      {p.name}
+                    </span>
+                    {(p.industry || p.specialization) && (
+                      <span className="block text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                        {p.industry}{p.specialization ? ` · ${p.specialization}` : ''}
+                      </span>
+                    )}
                   </button>
-                  {active && <span className={badge('success')}>{t('نشط', 'Active')}</span>}
-                </div>
-                {p.description && <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 line-clamp-2">{p.description}</p>}
-                <div className="flex items-center flex-wrap gap-1.5 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700/60">
-                  <button className={`${UI.btnPrimary} !px-3 !py-1.5 text-xs`} onClick={() => openProject(p.id)}>
+
+                  {/* Status badge */}
+                  {active && (
+                    <span className={badge('success')}>{t('نشط', 'Active')}</span>
+                  )}
+
+                  {/* Primary action */}
+                  <button
+                    className={`${UI.btnPrimary} !py-1.5 !px-3 text-xs shrink-0`}
+                    onClick={() => openProject(p.id)}
+                  >
                     {t('افتح', 'Open')}
                   </button>
+                </div>
+
+                {/* Optional description */}
+                {p.description && (
+                  <p className="px-5 pb-2 text-xs text-slate-500 dark:text-slate-400 line-clamp-1">{p.description}</p>
+                )}
+
+                {/* Secondary actions row */}
+                <div className="flex items-center flex-wrap gap-1 px-5 pb-3 pt-0">
                   {!active && (
-                    <button className={`${UI.btnSubtle} !px-3 !py-1.5 text-xs`} onClick={() => selectProject(p.id)}>
+                    <button
+                      className={`${UI.btnSubtle} !px-2.5 !py-1 text-xs`}
+                      onClick={() => selectProject(p.id)}
+                    >
                       {t('تعيين كنشط', 'Set active')}
                     </button>
                   )}
-                  <button className={`${UI.btnGhost} !px-3 !py-1.5 text-xs`} onClick={() => startEdit(p)}>
+                  <button
+                    className={`${UI.btnGhost} !px-2.5 !py-1 text-xs`}
+                    onClick={() => startEdit(p)}
+                  >
                     {t('تعديل', 'Edit')}
                   </button>
                   <button
-                    className={`${UI.btnSubtle} !px-3 !py-1.5 text-xs`}
+                    className={`${UI.btnGhost} !px-2.5 !py-1 text-xs`}
                     disabled={launching === p.id}
                     onClick={() => launchSurvey(p)}
                     title={t('رابط استبيان بيئة العمل فقط', 'Work environment survey link')}
                   >
-                    {launching === p.id ? '…' : `🔗 ${t('استبيان البيئة', 'Env. survey')}`}
+                    {launching === p.id ? '…' : t('استبيان البيئة', 'Env. survey')}
                   </button>
                   <button
-                    className={`${UI.btnPrimary} !px-3 !py-1.5 text-xs`}
+                    className={`${UI.btnSubtle} !px-2.5 !py-1 text-xs`}
                     disabled={launching === `emp_${p.id}`}
                     onClick={() => launchEmployeePortal(p)}
                     title={t('بوابة التقييم الشامل للموظف (جدارات + بيئة)', 'Full employee assessment portal (competency + environment)')}
                   >
-                    {launching === `emp_${p.id}` ? '…' : `🎯 ${t('تقييم الموظفين', 'Employee Assessment')}`}
+                    {launching === `emp_${p.id}` ? '…' : t('تقييم الموظفين', 'Employee Assessment')}
                   </button>
                   <button
-                    className={`${UI.btnSubtle} !px-3 !py-1.5 text-xs`}
+                    className={`${UI.btnGhost} !px-2.5 !py-1 text-xs`}
                     disabled={launching === `unified_${p.id}`}
                     onClick={() => launchUnifiedAssessment(p)}
                     title={t('اختبار/تقييم موحد — رابط واحد لجميع الموظفين', 'Unified exam — one link for all employees')}
                   >
-                    {launching === `unified_${p.id}` ? '…' : `📋 ${t('اختبار موحّد', 'Unified Exam')}`}
+                    {launching === `unified_${p.id}` ? '…' : t('اختبار موحّد', 'Unified Exam')}
                   </button>
                   <button
-                    className={`${UI.btnGhost} !px-3 !py-1.5 text-xs`}
+                    className={`${UI.btnGhost} !px-2.5 !py-1 text-xs`}
                     onClick={() => setResponseProjectId(responseProjectId === p.id ? null : p.id)}
                     title={t('عرض ردود الموظفين على الاختبار الموحد', 'View employee responses')}
                   >
-                    📊 {t('الردود', 'Responses')}
+                    {t('الردود', 'Responses')}
                   </button>
-                  <button className="ms-auto text-xs text-rose-600 hover:text-rose-700 px-2 py-1.5"
-                    onClick={() => deleteProject(p.id)}>
+                  <button
+                    className="ms-auto text-xs text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 px-2 py-1 transition-colors"
+                    onClick={() => deleteProject(p.id)}
+                  >
                     {t('حذف', 'Delete')}
                   </button>
                 </div>
@@ -356,13 +405,15 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
 
       {/* Employee-portal size config (W3) — pick total questions + voice count before minting */}
       {empCfg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className={`${UI.card} rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl`}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className={`${UI.card} rounded-xl p-6 max-w-md w-full space-y-5 shadow-lg`}>
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-slate-800 dark:text-slate-100">
-                🎯 {t('إعداد تقييم الموظفين', 'Configure Employee Assessment')}
+                {t('إعداد تقييم الموظفين', 'Configure Employee Assessment')}
               </h4>
-              <button className="text-slate-400 hover:text-slate-700" onClick={() => setEmpCfg(null)}>✕</button>
+              <button className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors leading-none" onClick={() => setEmpCfg(null)}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
             </div>
             <p className="text-sm text-slate-600 dark:text-slate-300">
               {t(`المشروع: "${empCfg.project.name}". اختر حجم الاستبيان قبل إنشاء الرابط.`,
@@ -375,7 +426,7 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
               <div className="flex gap-2">
                 {[30, 40, 50].map(n => (
                   <button key={n}
-                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition border ${
+                    className={`flex-1 py-2 rounded-md text-sm font-bold transition border ${
                       empCfg.questionCount === n
                         ? 'bg-emerald-600 text-white border-emerald-600'
                         : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
@@ -390,7 +441,7 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
               <div className="flex gap-2">
                 {[3, 4, 5].map(n => (
                   <button key={n}
-                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition border ${
+                    className={`flex-1 py-2 rounded-md text-sm font-bold transition border ${
                       empCfg.voiceCount === n
                         ? 'bg-emerald-600 text-white border-emerald-600'
                         : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
@@ -413,13 +464,15 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
 
       {/* Unified assessment 15-field config modal */}
       {unifiedCfg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
-          <div className={`${UI.card} rounded-2xl p-6 max-w-lg w-full space-y-5 shadow-2xl my-4`}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
+          <div className={`${UI.card} rounded-xl p-6 max-w-lg w-full space-y-5 shadow-lg my-4`}>
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-slate-800 dark:text-slate-100">
-                📋 {t('إعداد الاختبار الموحد', 'Unified Assessment Setup')}
+                {t('إعداد الاختبار الموحد', 'Unified Assessment Setup')}
               </h4>
-              <button className="text-slate-400 hover:text-slate-700" onClick={() => setUnifiedCfg(null)}>✕</button>
+              <button className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors leading-none" onClick={() => setUnifiedCfg(null)}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
             </div>
             <p className="text-sm text-slate-600 dark:text-slate-300">
               {t(`المشروع: "${unifiedCfg.project.name}". رابط واحد يُشارَك مع جميع الموظفين.`,
@@ -435,7 +488,7 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                 <div className="flex flex-wrap gap-1">
                   {[10, 15, 20, 25, 30].map(n => (
                     <button key={n}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition border ${
+                      className={`flex-1 py-1.5 rounded-md text-xs font-bold transition border ${
                         unifiedCfg.questionCount === n
                           ? 'bg-emerald-600 text-white border-emerald-600'
                           : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
@@ -450,7 +503,7 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                 <div className="flex flex-wrap gap-1">
                   {[20, 30, 40, 50, 60].map(n => (
                     <button key={n}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition border ${
+                      className={`flex-1 py-1.5 rounded-md text-xs font-bold transition border ${
                         unifiedCfg.behavioralPct === n
                           ? 'bg-emerald-600 text-white border-emerald-600'
                           : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
@@ -465,7 +518,7 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                 <div className="flex gap-1">
                   {(['easy', 'medium', 'hard'] as PaperDifficulty[]).map(d => (
                     <button key={d}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition border ${
+                      className={`flex-1 py-1.5 rounded-md text-xs font-bold transition border ${
                         unifiedCfg.difficulty === d
                           ? 'bg-emerald-600 text-white border-emerald-600'
                           : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
@@ -486,10 +539,10 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                 <div className="flex gap-1">
                   {[45, 60, 90, 120, 180].map(n => (
                     <button key={n}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition border ${
+                      className={`flex-1 py-1.5 rounded-md text-xs font-bold transition border ${
                         unifiedCfg.secondsPerQuestion === n
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-blue-400'}`}
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
                       onClick={() => setUnifiedCfg({ ...unifiedCfg, secondsPerQuestion: n })}>{n}s</button>
                   ))}
                 </div>
@@ -501,10 +554,10 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                 <div className="flex gap-1">
                   {[1, 2, 3].map(n => (
                     <button key={n}
-                      className={`flex-1 py-1.5 rounded-lg text-sm font-bold transition border ${
+                      className={`flex-1 py-1.5 rounded-md text-sm font-bold transition border ${
                         unifiedCfg.maxAttempts === n
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-blue-400'}`}
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
                       onClick={() => setUnifiedCfg({ ...unifiedCfg, maxAttempts: n })}>{n}</button>
                   ))}
                 </div>
@@ -519,10 +572,10 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                 <div className="flex gap-1">
                   {[50, 60, 70, 80].map(n => (
                     <button key={n}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition border ${
+                      className={`flex-1 py-1.5 rounded-md text-xs font-bold transition border ${
                         unifiedCfg.passingScore === n
-                          ? 'bg-amber-600 text-white border-amber-600'
-                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-amber-400'}`}
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
                       onClick={() => setUnifiedCfg({ ...unifiedCfg, passingScore: n })}>{n}%</button>
                   ))}
                 </div>
@@ -534,7 +587,7 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                 <div className="flex gap-1">
                   {[0, 1, 2, 3].map(n => (
                     <button key={n}
-                      className={`flex-1 py-1.5 rounded-lg text-sm font-bold transition border ${
+                      className={`flex-1 py-1.5 rounded-md text-sm font-bold transition border ${
                         unifiedCfg.voiceQuestionCount === n
                           ? 'bg-emerald-600 text-white border-emerald-600'
                           : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
@@ -551,10 +604,10 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                 onClick={() => setUnifiedCfg({ ...unifiedCfg, cameraProctoring: !unifiedCfg.cameraProctoring })}
                 role="switch" aria-checked={unifiedCfg.cameraProctoring}
               >
-                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${unifiedCfg.cameraProctoring ? 'translate-x-5' : ''}`} />
+                <span className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${unifiedCfg.cameraProctoring ? 'ltr:translate-x-5 rtl:-translate-x-5' : ''}`} />
               </button>
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                📷 {t('مراقبة بالكاميرا', 'Camera proctoring')}
+                {t('مراقبة بالكاميرا', 'Camera proctoring')}
               </span>
             </div>
 
@@ -571,10 +624,10 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                   ['bloom', t('بلوم', "Bloom's")],
                 ] as [keyof PaperTheories, string][]).map(([key, label]) => (
                   <button key={key}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition border ${
+                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition border ${
                       unifiedCfg.theories[key]
-                        ? 'bg-purple-600 text-white border-purple-600'
-                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-purple-400'}`}
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
                     onClick={() => setUnifiedCfg({ ...unifiedCfg, theories: { ...unifiedCfg.theories, [key]: !unifiedCfg.theories[key] } })}>
                     {label}
                   </button>
@@ -643,18 +696,19 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
 
       {/* Survey launch modal */}
       {launchModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className={`${UI.card} rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl`}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className={`${UI.card} rounded-xl p-6 max-w-lg w-full space-y-4 shadow-lg`}>
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-slate-800 dark:text-slate-100">
-                {launchModal.type === 'employee' ? '🎯' : launchModal.type === 'unified' ? '📋' : '🔗'}{' '}
                 {launchModal.type === 'employee'
                   ? t('رابط بوابة تقييم الموظفين', 'Employee Assessment Portal Link')
                   : launchModal.type === 'unified'
                   ? t('رابط الاختبار الموحد', 'Unified Assessment Link')
                   : t('رابط استبيان البيئة', 'Environment Survey Link')}
               </h4>
-              <button className="text-slate-400 hover:text-slate-700" onClick={() => setLaunchModal(null)}>✕</button>
+              <button className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors leading-none" onClick={() => setLaunchModal(null)}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
             </div>
             <p className="text-sm text-slate-600 dark:text-slate-300">
               {launchModal.type === 'employee'
@@ -707,24 +761,30 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
 
       {/* Create / review form */}
       {mode === 'manual' && (
-        <div className={`${UI.sectionFrame} p-5 space-y-4`}>
-          <div className="flex items-center justify-between">
-            <h4 className="font-bold text-slate-800 dark:text-slate-100">{editingId ? t('تعديل بيانات الجهة', 'Edit company details') : t('بيانات الجهة', 'Company details')}</h4>
-            <button className="text-xs text-slate-500 hover:text-slate-700" onClick={closeForm}>
-              ✕ {t('إلغاء', 'Cancel')}
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/40">
+            <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100">
+              {editingId ? t('تعديل بيانات الجهة', 'Edit company details') : t('بيانات الجهة الجديدة', 'New company details')}
+            </h4>
+            <button className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors" onClick={closeForm}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>{t('إلغاء', 'Cancel')}
             </button>
           </div>
-          <div className="grid sm:grid-cols-2 gap-4">
-            {fld(t('اسم الجهة', 'Company name'), 'name', t('مثال: شركة ريمكس', 'e.g. Remix Corp'))}
-            {fld(t('القطاع', 'Industry'), 'industry', t('مثال: الطاقة', 'e.g. Energy'))}
-            {fld(t('التخصص', 'Specialization'), 'specialization', t('مثال: حلول رقمية', 'e.g. Digital solutions'))}
-            {fld(t('الرؤية', 'Vision'), 'vision', t('رؤية الجهة', 'Vision'))}
-          </div>
-          {fld(t('الرسالة', 'Mission'), 'mission', t('رسالة الجهة', 'Mission'), true)}
-          {fld(t('التفاصيل / الهوية', 'Details / identity'), 'description', t('نبذة تعريفية عن الجهة وبيئتها', 'Brief about the company & its environment'), true)}
-          <div className="flex justify-end gap-2">
-            <button className={UI.btnGhost} onClick={closeForm}>{t('إلغاء', 'Cancel')}</button>
-            <button className={UI.btnPrimary} onClick={saveProject}>{editingId ? t('حفظ التعديلات', 'Save changes') : t('حفظ المشروع', 'Save project')}</button>
+          <div className="p-5 space-y-4">
+            <div className="grid sm:grid-cols-2 gap-4">
+              {fld(t('اسم الجهة', 'Company name'), 'name', t('مثال: شركة ريمكس', 'e.g. Remix Corp'))}
+              {fld(t('القطاع', 'Industry'), 'industry', t('مثال: الطاقة', 'e.g. Energy'))}
+              {fld(t('التخصص', 'Specialization'), 'specialization', t('مثال: حلول رقمية', 'e.g. Digital solutions'))}
+              {fld(t('الرؤية', 'Vision'), 'vision', t('رؤية الجهة', 'Vision'))}
+            </div>
+            {fld(t('الرسالة', 'Mission'), 'mission', t('رسالة الجهة', 'Mission'), true)}
+            {fld(t('التفاصيل / الهوية', 'Details / identity'), 'description', t('نبذة تعريفية عن الجهة وبيئتها', 'Brief about the company & its environment'), true)}
+            <div className="flex justify-end gap-2 pt-1">
+              <button className={UI.btnGhost} onClick={closeForm}>{t('إلغاء', 'Cancel')}</button>
+              <button className={UI.btnPrimary} onClick={saveProject}>
+                {editingId ? t('حفظ التعديلات', 'Save changes') : t('حفظ المشروع', 'Save project')}
+              </button>
+            </div>
           </div>
         </div>
       )}

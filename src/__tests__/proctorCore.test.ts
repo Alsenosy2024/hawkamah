@@ -12,6 +12,43 @@ import {
   type ProctorState,
 } from '../../services/proctorCore';
 
+// ─── per-question breakdown (which question each alert happened on) ────────────
+
+describe('summarizeProctor byQuestion', () => {
+  const alert = (type: any, q?: number): ProctorAlert => ({
+    ts: new Date().toISOString(), type, severity: 'medium', message: type,
+    ...(q !== undefined ? { questionIndex: q } : {}),
+  });
+
+  it('groups alerts by questionIndex, ascending, with counts + unique types', () => {
+    let s = initProctorState();
+    s = applyAlert(s, alert('tab_switch', 2));
+    s = applyAlert(s, alert('ai_tool_visible', 0));
+    s = applyAlert(s, alert('tab_switch', 2));      // same question, same type → count 2, types unique
+    s = applyAlert(s, alert('phone_detected', 2));  // same question, new type
+    const sum = summarizeProctor(s);
+    expect(sum.byQuestion.map(b => b.question)).toEqual([0, 2]);  // ascending
+    const q2 = sum.byQuestion.find(b => b.question === 2)!;
+    expect(q2.count).toBe(3);
+    expect(q2.types.sort()).toEqual(['phone_detected', 'tab_switch']);
+  });
+
+  it('omits alerts that carry no questionIndex from byQuestion', () => {
+    let s = initProctorState();
+    s = applyAlert(s, alert('no_face'));            // no question → excluded
+    s = applyAlert(s, alert('eye_gaze_off', 4));    // included
+    const sum = summarizeProctor(s);
+    expect(sum.byQuestion).toEqual([{ question: 4, count: 1, types: ['eye_gaze_off'] }]);
+    expect(sum.totalAlerts).toBe(2);                 // both still count toward totals
+  });
+
+  it('byQuestion is empty when no alert has a questionIndex', () => {
+    let s = initProctorState();
+    s = applyAlert(s, alert('window_blur'));
+    expect(summarizeProctor(s).byQuestion).toEqual([]);
+  });
+});
+
 // ─── parseSpokenVerdict (native-audio transcript format) ──────────────────────
 
 describe('parseSpokenVerdict / spoken-format parseProctorMessage', () => {

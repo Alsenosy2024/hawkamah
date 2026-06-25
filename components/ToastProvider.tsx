@@ -69,12 +69,12 @@ export const ToastProvider: React.FC<{ children: React.ReactNode; dir?: 'rtl' | 
             <button
               key={t.id}
               onClick={() => remove(t.id)}
-              className={`pointer-events-auto group relative overflow-hidden rounded-xl border ${v.border} ${v.bg} ${v.text} shadow-lg backdrop-blur-sm px-4 py-3 text-sm font-bold text-start flex items-start gap-2.5 animate-fade-in transition-all hover:shadow-xl`}
+              className={`pointer-events-auto group relative rounded-lg border ${v.border} ${v.bg} ${v.text} shadow-md px-3.5 py-3 text-sm text-start flex items-start gap-3 animate-fade-in transition-shadow duration-150 hover:shadow-lg`}
               title="إغلاق"
             >
-              <span className={`absolute inset-y-0 ${dir === 'rtl' ? 'right-0' : 'left-0'} w-1 ${v.accent}`} />
-              <span className="text-base leading-5 shrink-0">{v.icon}</span>
-              <span className="leading-relaxed whitespace-pre-wrap break-words flex-1">{t.message}</span>
+              <span className={`mt-0.5 shrink-0 w-7 h-7 rounded-md flex items-center justify-center text-sm leading-none ${v.accent} bg-opacity-10`}>{v.icon}</span>
+              <span className="leading-relaxed whitespace-pre-wrap break-words flex-1 font-medium pt-0.5">{t.message}</span>
+              <span className="shrink-0 mt-0.5 text-slate-400 group-hover:text-slate-600 dark:text-slate-500 dark:group-hover:text-slate-300 transition-colors duration-150 leading-none select-none" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
             </button>
           );
         })}

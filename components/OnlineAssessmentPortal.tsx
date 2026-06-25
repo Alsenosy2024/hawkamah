@@ -5,6 +5,8 @@ import {
   type ExamToken, type ExamAttempt, type ExamResult,
 } from '../services/onlineAssessmentService';
 import { generatePaperQuestions } from '../services/paperAssessmentService';
+import { createLiveProctor, speakProctorAlarm, type LiveProctorHandle } from '../services/proctorService';
+import { type ProctorSummary } from '../services/proctorCore';
 import type { PaperQuestion } from '../types';
 
 interface Props { token: string; }
@@ -156,6 +158,76 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
   const qIndexRef     = useRef(0);
   const questionsRef  = useRef<PaperQuestion[]>([]);
 
+  // ── Live AI proctoring (Gemini Live: camera + shared screen → cheating signals) ──
+  const proctorRef        = useRef<LiveProctorHandle | null>(null);
+  const screenStreamRef   = useRef<MediaStream | null>(null);
+  const screenPreviewRef  = useRef<HTMLVideoElement>(null);   // VISIBLE screen-share preview tile
+  const proctorElsRef     = useRef<HTMLVideoElement[]>([]);   // hidden <video>s feeding the proctor
+  const proctorSummaryRef = useRef<ProctorSummary | null>(null);
+  const proctorStartedRef = useRef(false);                    // guard: start the proctor once per attempt
+  const [proctorStatus, setProctorStatus]       = useState<'off' | 'connecting' | 'live' | 'unavailable' | 'closed'>('off');
+  const [proctorIntegrity, setProctorIntegrity] = useState(100);
+  const [proctorAlert, setProctorAlert]         = useState<{ type: string; severity: string; question: number | null } | null>(null);
+
+  // Spin up the live AI proctor: hidden <video>s feed the candidate's camera +
+  // shared screen to the Gemini Live engine, which streams back scored cheating
+  // signals. Graceful: camera-only if screen denied; NEVER throws.
+  const startProctor = useCallback(async (screenStream: MediaStream | null) => {
+    try {
+      const camStream = streamRef.current;
+      const mkHidden = (s: MediaStream) => {
+        const v = document.createElement('video');
+        v.muted = true; v.playsInline = true; v.srcObject = s;
+        v.style.cssText = 'position:fixed;left:-99999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+        document.body.appendChild(v);
+        v.play().catch(() => { /* autoplay guard */ });
+        proctorElsRef.current.push(v);
+        return v;
+      };
+      const camEl = (camStream && camStream.getVideoTracks().length) ? mkHidden(camStream) : document.createElement('video');
+      const scrEl = screenStream ? mkHidden(screenStream) : null;
+      const handle = createLiveProctor({
+        cameraEl: camEl,
+        screenEl: scrEl,
+        intervalMs: 4000,                                 // ~1 frame / 4s — cost-efficient
+        getQuestion: () => qIndexRef.current,             // records WHICH question each alert happened on
+        onAlert: (a) => {
+          setProctorAlert({ type: a.type, severity: a.severity, question: a.questionIndex ?? null });
+          window.setTimeout(() => setProctorAlert(null), 6000);
+          speakProctorAlarm('ar', { severity: a.severity, questionIndex: a.questionIndex });
+        },
+        onState: (s) => setProctorIntegrity(s.integrity),
+        onStatus: (st) => setProctorStatus(st),
+      });
+      proctorRef.current = handle;
+      await handle.start();
+    } catch {
+      setProctorStatus('unavailable');
+    }
+  }, []);
+
+  // Stop the live proctor, capture its integrity summary, release the screen
+  // stream + remove the hidden <video> els. Safe to call repeatedly (idempotent).
+  const stopProctor = useCallback(() => {
+    try { proctorSummaryRef.current = proctorRef.current?.stop() ?? proctorSummaryRef.current; } catch { /* noop */ }
+    proctorRef.current = null;
+    screenStreamRef.current?.getTracks().forEach(t => t.stop());
+    screenStreamRef.current = null;
+    proctorElsRef.current.forEach(v => { try { v.pause(); v.srcObject = null; v.remove(); } catch { /* noop */ } });
+    proctorElsRef.current = [];
+  }, []);
+
+  // Bind the visible screen-share preview once the exam view (and its ref) mount.
+  useEffect(() => {
+    if (screen !== 'exam') return;
+    const sp = screenPreviewRef.current;
+    const ss = screenStreamRef.current;
+    if (sp && ss && sp.srcObject !== ss) {
+      sp.srcObject = ss;
+      sp.play().catch(() => { /* autoplay guard */ });
+    }
+  }, [screen, proctorStatus]);
+
   // ── Load token ─────────────────────────────────────────────────────────
   useEffect(() => {
     getExamToken(tokenId)
@@ -188,13 +260,29 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
         if (existing.selectedJobTitle) setSelectedTitle(existing.selectedJobTitle);
       }
       setScreen('title_pick');
-    } catch { setLoginErr('خطأ في الاتصال — حاول مجدداً.'); }
+    } catch { setLoginErr('خطأ في الاتصال، حاول مجدداً.'); }
     setLoginLoading(false);
   };
 
   // ── Camera + fullscreen ────────────────────────────────────────────────
   const requestPermissions = async () => {
     const needAudio = (tok?.voiceQuestionCount ?? 0) > 0;
+    // Request SCREEN SHARE here, FIRST: getDisplayMedia REQUIRES a user gesture and
+    // this click is it — it must run before any `await` consumes the gesture. On
+    // success we keep the stream for the proctor; on denial/cancel the proctor will
+    // run camera-only. The proctor itself starts once the camera + exam are ready.
+    setProctorStatus('connecting');
+    try {
+      navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+        .then(scr => {
+          screenStreamRef.current = scr;
+          if (screenPreviewRef.current) {
+            screenPreviewRef.current.srcObject = scr;
+            screenPreviewRef.current.play().catch(() => { /* autoplay guard */ });
+          }
+        })
+        .catch(() => { /* denied/cancelled → camera-only proctoring (handled at start) */ });
+    } catch { /* getDisplayMedia unsupported → camera-only proctoring */ }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: needAudio });
       streamRef.current = stream;
@@ -230,6 +318,12 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
       setSecondsLeft(tok.secondsPerQuestion);
       setVoicePhase('idle');
       setScreen('exam');
+      // Camera + exam are ready → start the live proctor (once per attempt). Uses the
+      // screen stream captured during the permission gesture; camera-only if none.
+      if (!proctorStartedRef.current) {
+        proctorStartedRef.current = true;
+        startProctor(screenStreamRef.current);
+      }
     } catch (e: unknown) {
       setErrMsg(`فشل توليد الأسئلة: ${e instanceof Error ? e.message : String(e)}`);
       setScreen('error');
@@ -262,8 +356,8 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     setViolations(n);
     const remaining = MAX_VIOLATIONS - n;
     const msg = remaining > 0
-      ? `⚠️ تحذير ${n}/${MAX_VIOLATIONS}: ${reason} — تبقى ${remaining} تحذير${remaining === 1 ? '' : 'ات'}`
-      : `🚫 ${reason}`;
+      ? `تحذير ${n}/${MAX_VIOLATIONS}: ${reason}، تبقى ${remaining} تحذير${remaining === 1 ? '' : 'ات'}`
+      : reason;
     setViolationMsg(msg);
     setTimeout(() => setViolationMsg(''), 5000);
     if (n >= MAX_VIOLATIONS) doCancel();
@@ -314,7 +408,7 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
       }
       // Face presence check
       const faceOk = await hasFace(videoRef.current);
-      if (!faceOk) addViolation('وجهك غير مرئي في الكاميرا — لا تبتعد');
+      if (!faceOk) addViolation('وجهك غير مرئي في الكاميرا، ابقَ قريباً');
     }, 3000);
     return () => clearInterval(iv);
   }, [screen, addViolation]);
@@ -324,6 +418,8 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     if (timerRef.current) clearInterval(timerRef.current);
     window.speechSynthesis?.cancel();
     recogRef.current?.abort();
+    stopProctor();                          // stop live proctor → proctorSummaryRef
+    proctorStartedRef.current = false;      // allow a fresh proctor on the next attempt
     const finalAnswers = { ...answersRef.current };
     if (chosenRef.current) finalAnswers[qIndexRef.current] = chosenRef.current;
     const attempt: ExamAttempt = {
@@ -336,6 +432,7 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
       jobTitle: selectedTitle,
       startedAt,
       finishedAt: new Date().toISOString(),
+      ...(proctorSummaryRef.current ? { proctorSummary: proctorSummaryRef.current } : {}),
     };
     setAttempts(prev => {
       const updated = [...prev, attempt];
@@ -354,12 +451,14 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     });
     setScreen('attempt_cancelled');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attemptNumber, startedAt, result, tokenId, tok, email, empName, selectedTitle]);
+  }, [attemptNumber, startedAt, result, tokenId, tok, email, empName, selectedTitle, stopProctor]);
 
   const doFinish = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     window.speechSynthesis?.cancel();
     recogRef.current?.abort();
+    stopProctor();                          // stop live proctor → proctorSummaryRef
+    proctorStartedRef.current = false;      // allow a fresh proctor on the next attempt
     const finalAnswers = { ...answersRef.current };
     if (chosenRef.current) finalAnswers[qIndexRef.current] = chosenRef.current;
     const score = scoreAttempt(questionsRef.current, finalAnswers);
@@ -373,6 +472,7 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
       jobTitle: selectedTitle,
       startedAt,
       finishedAt: new Date().toISOString(),
+      ...(proctorSummaryRef.current ? { proctorSummary: proctorSummaryRef.current } : {}),
     };
     setAttempts(prev => {
       const updated = [...prev, attempt];
@@ -392,7 +492,7 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
       return updated;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attemptNumber, startedAt, result, tokenId, tok, email, empName, selectedTitle]);
+  }, [attemptNumber, startedAt, result, tokenId, tok, email, empName, selectedTitle, stopProctor]);
 
   const doAdvance = useCallback(() => {
     const cur = qIndexRef.current;
@@ -413,6 +513,25 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     setViolations(0); violationRef.current = 0;
     setVoicePhase('idle');
     setStartedAt(new Date().toISOString());
+    // Fresh proctor for the new attempt: clear the previous summary + arm restart.
+    stopProctor();
+    proctorSummaryRef.current = null;
+    proctorStartedRef.current = false;
+    setProctorStatus('connecting');
+    setProctorIntegrity(100);
+    setProctorAlert(null);
+    // This retry click is a user gesture → re-request screen share for the new attempt.
+    try {
+      navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+        .then(scr => {
+          screenStreamRef.current = scr;
+          if (screenPreviewRef.current) {
+            screenPreviewRef.current.srcObject = scr;
+            screenPreviewRef.current.play().catch(() => { /* autoplay guard */ });
+          }
+        })
+        .catch(() => { /* denied/cancelled → camera-only proctoring */ });
+    } catch { /* unsupported → camera-only */ }
     setScreen('generating');
     generateQuestionsNow(selectedTitle);
   };
@@ -440,7 +559,7 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     if (!SR) {
       // No speech recognition — just allow them to proceed after 30s
       setTimeout(() => {
-        voiceAnswersRef.current[qIndexRef.current] = '(تسجيل صوتي — بدون نص)';
+        voiceAnswersRef.current[qIndexRef.current] = '(تسجيل صوتي، بدون نص)';
         setVoiceTranscript('تم تسجيل إجابتك الصوتية.');
         setVoicePhase('done');
       }, 30000);
@@ -475,41 +594,97 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
   useEffect(() => {
     if (screen === 'all_done' || screen === 'error') {
       streamRef.current?.getTracks().forEach(t => t.stop());
+      stopProctor();                 // release proctor + screen tracks + hidden <video>s
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       window.speechSynthesis?.cancel();
       recogRef.current?.abort();
     }
-  }, [screen]);
+  }, [screen, stopProctor]);
+
+  // Backstop: release the proctor + screen stream + hidden <video> els if the
+  // component unmounts without reaching a finish/cancel path.
+  useEffect(() => () => { stopProctor(); }, [stopProctor]);
 
   // ═══════════════════════════ RENDER ══════════════════════════════════════
 
+  // ── Loading ──────────────────────────────────────────────────────────
   if (screen === 'loading') return (
-    <div style={S.wrap}><div style={{ textAlign: 'center' }}><Spinner /><p style={S.hint}>جارٍ التحقق من الرابط...</p></div></div>
+    <div className="min-h-screen flex items-center justify-center bg-slate-50" style={{ fontFamily: FONT, direction: 'rtl' }}>
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-8 h-8 rounded-full border-2 border-slate-200 border-t-emerald-600 animate-spin" />
+        <p className="text-sm text-slate-500">جارٍ التحقق من الرابط...</p>
+      </div>
+    </div>
   );
 
+  // ── Error ────────────────────────────────────────────────────────────
   if (screen === 'error') return (
-    <div style={S.wrap}><div style={S.errorBox}><span style={{ fontSize: 40 }}>⚠️</span>{errMsg}</div></div>
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" style={{ fontFamily: FONT, direction: 'rtl' }}>
+      <div className="hw-card p-8 w-full max-w-sm flex flex-col items-center gap-4 text-center">
+        <div className="w-12 h-12 rounded-full bg-red-50 border border-red-200 flex items-center justify-center">
+          <span className="text-red-600 text-xl">!</span>
+        </div>
+        <p className="text-sm font-semibold text-red-700">{errMsg}</p>
+      </div>
+    </div>
   );
 
   // ── Login ────────────────────────────────────────────────────────────
   if (screen === 'login') return (
-    <div style={S.wrap}>
-      <div style={S.card}>
-        {tok?.companyLogoUrl && <img src={tok.companyLogoUrl} alt="logo" style={{ height: 48, objectFit: 'contain', margin: '0 auto 4px' }} />}
-        <h2 style={S.title}>تسجيل الدخول</h2>
-        <p style={S.sub}>الاختبار الإلكتروني — {tok?.companyName}</p>
-        <label style={S.label}>البريد الإلكتروني</label>
-        <input style={S.input} type="email" dir="ltr" value={email}
-          onChange={e => setEmail(e.target.value)} placeholder="your@email.com"
-          onKeyDown={e => e.key === 'Enter' && handleLogin()} />
-        <label style={S.label}>كلمة المرور</label>
-        <input style={S.input} type="password" dir="ltr" value={password}
-          onChange={e => setPassword(e.target.value)} placeholder="••••••••"
-          onKeyDown={e => e.key === 'Enter' && handleLogin()} />
-        {loginErr && <p style={S.err}>{loginErr}</p>}
-        <button style={{ ...S.btnPrimary, marginTop: 8, opacity: loginLoading || !email || !password ? 0.6 : 1 }}
-          onClick={handleLogin} disabled={loginLoading || !email || !password}>
-          {loginLoading ? 'جارٍ التحقق...' : 'دخول'}
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" style={{ fontFamily: FONT, direction: 'rtl' }}>
+      <div className="hw-card p-8 w-full max-w-sm flex flex-col gap-5">
+        {/* Header */}
+        <div className="flex flex-col items-center gap-2 pb-4 border-b border-slate-200">
+          {tok?.companyLogoUrl && (
+            <img src={tok.companyLogoUrl} alt="logo" className="h-10 object-contain" />
+          )}
+          <h1 className="text-lg font-bold text-slate-900 m-0">تسجيل الدخول</h1>
+          <p className="text-xs text-slate-500 m-0">الاختبار الإلكتروني · {tok?.companyName}</p>
+        </div>
+
+        {/* Fields */}
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-700">البريد الإلكتروني</label>
+            <input
+              className="hw-input"
+              type="email"
+              dir="ltr"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="your@email.com"
+              onKeyDown={e => e.key === 'Enter' && handleLogin()}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-700">كلمة المرور</label>
+            <input
+              className="hw-input"
+              type="password"
+              dir="ltr"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="••••••••"
+              onKeyDown={e => e.key === 'Enter' && handleLogin()}
+            />
+          </div>
+        </div>
+
+        {loginErr && (
+          <p className="text-xs text-red-600 text-center m-0 py-2 px-3 bg-red-50 rounded-md border border-red-100">{loginErr}</p>
+        )}
+
+        <button
+          className="hw-btn hw-btn-primary hw-btn-w hw-btn-lg"
+          onClick={handleLogin}
+          disabled={loginLoading || !email || !password}
+        >
+          {loginLoading ? (
+            <span className="flex items-center gap-2 justify-center">
+              <span className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+              جارٍ التحقق...
+            </span>
+          ) : 'دخول'}
         </button>
       </div>
     </div>
@@ -517,36 +692,69 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
 
   // ── Title pick ───────────────────────────────────────────────────────
   if (screen === 'title_pick') return (
-    <div style={S.wrap}>
-      <div style={{ ...S.card, maxWidth: 500 }}>
-        {tok?.companyLogoUrl && <img src={tok.companyLogoUrl} alt="logo" style={{ height: 48, objectFit: 'contain', margin: '0 auto 4px' }} />}
-        <h2 style={S.title}>بياناتك</h2>
-        <p style={S.sub}>{tok?.companyName} — المحاولة {attemptNumber} من {tok?.maxAttempts ?? 3}</p>
-        <label style={S.label}>اسمك الكامل</label>
-        <input style={S.input} type="text" dir="rtl" value={empName}
-          onChange={e => setEmpName(e.target.value)} placeholder="الاسم الكامل" />
-        <label style={S.label}>المسمى الوظيفي</label>
-        {titles.length > 1 ? (
-          <select style={S.select} value={selectedTitle} onChange={e => setSelectedTitle(e.target.value)} dir="rtl">
-            {titles.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        ) : (
-          <div style={{ ...S.infoRow, fontSize: 14, fontWeight: 700 }}>{titles[0] || selectedTitle}</div>
-        )}
-        <div style={{ ...S.infoRow, marginTop: 4, flexDirection: 'column', gap: 6 }}>
-          <span style={{ fontWeight: 700, color: NAVY }}>ملخص الاختبار</span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontSize: 12, color: '#555' }}>
-            <span>📝 {tok?.questionCount ?? 20} سؤال</span>
-            {(tok?.voiceQuestionCount ?? 0) > 0 && <span>🎤 {tok?.voiceQuestionCount} صوتي</span>}
-            <span>⏱ {tok?.secondsPerQuestion ?? 90}ث / سؤال</span>
-            <span>🎯 نجاح ≥ {tok?.passingScore ?? 60}٪</span>
-            <span>🔄 {tok?.maxAttempts ?? 3} محاولات</span>
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" style={{ fontFamily: FONT, direction: 'rtl' }}>
+      <div className="hw-card p-8 w-full max-w-md flex flex-col gap-5">
+        {/* Header */}
+        <div className="flex flex-col items-center gap-2 pb-4 border-b border-slate-200">
+          {tok?.companyLogoUrl && (
+            <img src={tok.companyLogoUrl} alt="logo" className="h-10 object-contain" />
+          )}
+          <h1 className="text-lg font-bold text-slate-900 m-0">بياناتك</h1>
+          <p className="text-xs text-slate-500 m-0">{tok?.companyName} · المحاولة {attemptNumber} من {tok?.maxAttempts ?? 3}</p>
+        </div>
+
+        {/* Fields */}
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-700">اسمك الكامل</label>
+            <input
+              className="hw-input"
+              type="text"
+              dir="rtl"
+              value={empName}
+              onChange={e => setEmpName(e.target.value)}
+              placeholder="الاسم الكامل"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-700">المسمى الوظيفي</label>
+            {titles.length > 1 ? (
+              <select
+                className="hw-input"
+                value={selectedTitle}
+                onChange={e => setSelectedTitle(e.target.value)}
+                dir="rtl"
+              >
+                {titles.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            ) : (
+              <div className="text-sm font-semibold text-slate-800 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-md">
+                {titles[0] || selectedTitle}
+              </div>
+            )}
           </div>
         </div>
-        <button style={{ ...S.btnPrimary, marginTop: 4, opacity: !empName.trim() || !selectedTitle ? 0.6 : 1 }}
+
+        {/* Exam summary */}
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 flex flex-col gap-2">
+          <p className="text-xs font-semibold text-slate-600 m-0">ملخص الاختبار</p>
+          <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+            <span className="text-xs text-slate-600">{tok?.questionCount ?? 20} سؤال</span>
+            {(tok?.voiceQuestionCount ?? 0) > 0 && (
+              <span className="text-xs text-slate-600">{tok?.voiceQuestionCount} صوتي</span>
+            )}
+            <span className="text-xs text-slate-600">{tok?.secondsPerQuestion ?? 90}ث / سؤال</span>
+            <span className="text-xs text-slate-600">نجاح ≥ {tok?.passingScore ?? 60}٪</span>
+            <span className="text-xs text-slate-600">{tok?.maxAttempts ?? 3} محاولات</span>
+          </div>
+        </div>
+
+        <button
+          className="hw-btn hw-btn-primary hw-btn-w hw-btn-lg"
           onClick={() => setScreen('permission')}
-          disabled={!empName.trim() || !selectedTitle}>
-          متابعة →
+          disabled={!empName.trim() || !selectedTitle}
+        >
+          متابعة
         </button>
       </div>
     </div>
@@ -556,26 +764,56 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
   if (screen === 'permission') {
     const needAudio = (tok?.voiceQuestionCount ?? 0) > 0;
     return (
-      <div style={S.wrap}>
-        <div style={{ ...S.card, maxWidth: 520 }}>
-          <h2 style={S.title}>📷 متطلبات الاختبار</h2>
-          <p style={S.sub}>{tok?.companyName} — {selectedTitle}</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '8px 0' }}>
-            {([
-              ['✓', '#27AE60', 'سيُطلب إذن الكاميرا — ابقَ مرئياً طوال الاختبار ولا تبتعد'],
-              ...(needAudio ? [['✓', '#27AE60', 'سيُطلب إذن الميكروفون — للإجابة على الأسئلة الصوتية'] as [string,string,string]] : []),
-              ['✓', '#27AE60', 'سيعمل الاختبار في وضع ملء الشاشة — لا تغادره'],
-              ['⚠', '#E67E22', `التبديل بين التبويبات أو إخفاء الوجه يُحتسب مخالفة (${MAX_VIOLATIONS} مخالفات = إلغاء المحاولة)`],
-              ['ℹ', BLUE,      `لديك ${tok?.maxAttempts ?? 3} محاولات — المحاولة الملغاة بالمخالفات لا تُحتسب في نتيجتك`],
-              ['ℹ', BLUE,      `${tok?.questionCount ?? 20} سؤال · ${tok?.secondsPerQuestion ?? 90} ثانية للسؤال المكتوب`],
-            ] as [string, string, string][]).map(([icon, color, text], i) => (
-              <div key={i} style={S.infoRow}>
-                <span style={{ flexShrink: 0, color, fontWeight: 700 }}>{icon}</span>
-                <span style={{ color: '#444' }}>{text}</span>
-              </div>
-            ))}
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" style={{ fontFamily: FONT, direction: 'rtl' }}>
+        <div className="hw-card p-8 w-full max-w-md flex flex-col gap-5">
+          {/* Header */}
+          <div className="flex flex-col gap-1 pb-4 border-b border-slate-200">
+            <h1 className="text-lg font-bold text-slate-900 m-0">متطلبات الاختبار</h1>
+            <p className="text-xs text-slate-500 m-0">{tok?.companyName} · {selectedTitle}</p>
           </div>
-          <button style={{ ...S.btnPrimary, marginTop: 4 }} onClick={requestPermissions}>
+
+          {/* Requirements list */}
+          <div className="flex flex-col gap-2">
+            {/* Camera */}
+            <div className="flex gap-3 items-start px-3 py-2.5 bg-green-50 border border-green-200 rounded-md">
+              <svg className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+              <span className="text-sm text-slate-700">إذن الكاميرا مطلوب؛ ابقَ مرئياً طوال الاختبار</span>
+            </div>
+            {/* Microphone if needed */}
+            {needAudio && (
+              <div className="flex gap-3 items-start px-3 py-2.5 bg-green-50 border border-green-200 rounded-md">
+                <svg className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                <span className="text-sm text-slate-700">إذن الميكروفون مطلوب للأسئلة الصوتية</span>
+              </div>
+            )}
+            {/* Fullscreen */}
+            <div className="flex gap-3 items-start px-3 py-2.5 bg-green-50 border border-green-200 rounded-md">
+              <svg className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+              <span className="text-sm text-slate-700">الاختبار يعمل في وضع ملء الشاشة، لا تغادره</span>
+            </div>
+            {/* Violations warning */}
+            <div className="flex gap-3 items-start px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-md">
+              <span className="text-amber-600 font-bold text-sm mt-0.5 flex-shrink-0">!</span>
+              <span className="text-sm text-slate-700">
+                التبديل بين التبويبات أو إخفاء الوجه يُحتسب مخالفة ({MAX_VIOLATIONS} مخالفات = إلغاء المحاولة)
+              </span>
+            </div>
+            {/* Info rows */}
+            <div className="flex gap-3 items-start px-3 py-2 bg-slate-50 border border-slate-200 rounded-md">
+              <span className="text-slate-400 text-sm mt-0.5 flex-shrink-0">i</span>
+              <span className="text-xs text-slate-600">
+                {tok?.maxAttempts ?? 3} محاولات · المحاولة الملغاة لا تُحتسب في نتيجتك
+              </span>
+            </div>
+            <div className="flex gap-3 items-start px-3 py-2 bg-slate-50 border border-slate-200 rounded-md">
+              <span className="text-slate-400 text-sm mt-0.5 flex-shrink-0">i</span>
+              <span className="text-xs text-slate-600">
+                {tok?.questionCount ?? 20} سؤال · {tok?.secondsPerQuestion ?? 90} ثانية للسؤال المكتوب
+              </span>
+            </div>
+          </div>
+
+          <button className="hw-btn hw-btn-primary hw-btn-w hw-btn-lg" onClick={requestPermissions}>
             أوافق وأبدأ الاختبار
           </button>
         </div>
@@ -583,13 +821,16 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     );
   }
 
+  // ── Generating ───────────────────────────────────────────────────────
   if (screen === 'generating') return (
-    <div style={S.wrap}>
-      <div style={{ ...S.card, textAlign: 'center' }}>
-        <Spinner />
-        <h2 style={S.title}>جارٍ الإعداد...</h2>
-        <p style={S.sub}>{genMsg || 'توليد أسئلة مخصصة بالذكاء الاصطناعي...'}</p>
-        <p style={S.hint}>المحاولة {attemptNumber} — {selectedTitle} — قد يستغرق ٣٠–٦٠ ثانية</p>
+    <div className="min-h-screen flex items-center justify-center bg-slate-50" style={{ fontFamily: FONT, direction: 'rtl' }}>
+      <div className="hw-card p-10 w-full max-w-xs flex flex-col items-center gap-4 text-center">
+        <div className="w-10 h-10 rounded-full border-2 border-slate-200 border-t-emerald-600 animate-spin" />
+        <div className="flex flex-col gap-1">
+          <h2 className="text-base font-bold text-slate-900 m-0">جارٍ الإعداد...</h2>
+          <p className="text-sm text-slate-500 m-0">{genMsg || 'توليد أسئلة مخصصة بالذكاء الاصطناعي...'}</p>
+          <p className="text-xs text-slate-400 m-0 mt-1">المحاولة {attemptNumber} · {selectedTitle} · قد يستغرق ٣٠–٦٠ ثانية</p>
+        </div>
       </div>
     </div>
   );
@@ -606,123 +847,234 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     const passing  = tok?.passingScore ?? 60;
 
     return (
-      <div style={{ minHeight: '100vh', background: '#F0F3F7', fontFamily: FONT, direction: 'rtl' }}>
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: FONT, direction: 'rtl' }}>
 
-        {/* Camera corner */}
-        <div style={{ position: 'fixed', top: 12, left: 12, zIndex: 9999, width: 120, height: 88, borderRadius: 10, overflow: 'hidden', border: `2px solid ${BLUE}`, boxShadow: '0 2px 12px rgba(27,79,114,.25)', background: '#000' }}>
+        {/* Camera corner tile */}
+        <div style={{ position: 'fixed', top: 12, left: 12, zIndex: 9999, width: 112, height: 80, borderRadius: 8, overflow: 'hidden', border: '1px solid #e3eaee', background: '#000' }}>
           <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
-          <div style={{ position: 'absolute', bottom: 0, inset: 'auto 0 0', background: `rgba(27,79,114,.7)`, color: '#fff', fontSize: 10, textAlign: 'center', padding: '2px 0' }}>مراقبة مباشرة</div>
+          <div style={{ position: 'absolute', bottom: 0, inset: 'auto 0 0', background: 'rgba(18,42,51,.75)', color: '#fff', fontSize: 9, textAlign: 'center', padding: '2px 0', letterSpacing: '0.03em' }}>مراقبة مباشرة</div>
         </div>
+
+        {/* Screen-share preview tile */}
+        {screenStreamRef.current && (
+          <div style={{ position: 'fixed', top: 100, left: 12, zIndex: 9999, width: 112, height: 68, borderRadius: 8, overflow: 'hidden', border: '1px solid #e3eaee', background: '#000' }}>
+            <video ref={screenPreviewRef} autoPlay muted playsInline style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }} />
+            <div style={{ position: 'absolute', bottom: 0, inset: 'auto 0 0', background: 'rgba(108,52,131,.75)', color: '#fff', fontSize: 9, textAlign: 'center', padding: '2px 0', letterSpacing: '0.03em' }}>مشاركة الشاشة</div>
+          </div>
+        )}
+
+        {/* Live proctoring status chip */}
+        {proctorStatus !== 'off' && (() => {
+          const live = proctorStatus === 'live';
+          const chipColor = proctorIntegrity >= 85 ? '#27AE60' : proctorIntegrity >= 70 ? '#E67E22' : '#C0392B';
+          const label =
+            proctorStatus === 'connecting' ? 'يتصل...'
+            : proctorStatus === 'unavailable' ? 'المراقبة غير متاحة'
+            : proctorStatus === 'closed' ? 'انتهت المراقبة'
+            : `نزاهة ${proctorIntegrity}٪`;
+          return (
+            <div style={{ position: 'fixed', top: screenStreamRef.current ? 176 : 100, left: 12, zIndex: 9999, display: 'inline-flex', alignItems: 'center', gap: 5, background: '#fff', border: `1px solid ${live ? chipColor : '#e3eaee'}`, borderRadius: 999, padding: '3px 9px', fontSize: 10, fontWeight: 700, color: live ? chipColor : '#8a9aa3', fontFamily: FONT }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: live ? chipColor : '#cdd8dd', display: 'inline-block', flexShrink: 0 }} />
+              {label}
+            </div>
+          );
+        })()}
+
+        {/* Proctor alert banner */}
+        {proctorAlert && (
+          <div style={{ position: 'fixed', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 10000, maxWidth: 'min(92vw,480px)', background: '#fffbeb', border: '1px solid #f59e0b', borderRadius: 8, padding: '10px 16px', textAlign: 'center', fontSize: 13, fontWeight: 600, color: '#92400e', boxShadow: '0 4px 16px rgba(245,158,11,.15)', fontFamily: FONT }}>
+            سلوك مُريب{proctorAlert.question != null ? ` في السؤال ${proctorAlert.question + 1}` : ''}
+            <span style={{ display: 'block', fontSize: 11, fontWeight: 400, color: '#b45309', marginTop: 2 }}>
+              {proctorAlert.type} · {proctorAlert.severity}
+            </span>
+          </div>
+        )}
 
         {/* Violation banner */}
         {violationMsg && (
-          <div style={{ position: 'fixed', top: 12, left: 148, right: 12, zIndex: 9999, background: '#FDEDEC', border: '1px solid #E74C3C', borderRadius: 10, padding: '10px 16px', textAlign: 'center', fontSize: 13, fontWeight: 700, color: '#C0392B', fontFamily: FONT }}>
+          <div style={{ position: 'fixed', top: 12, left: 136, right: 12, zIndex: 9999, background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '9px 14px', textAlign: 'center', fontSize: 13, fontWeight: 600, color: '#b91c1c', fontFamily: FONT }}>
             {violationMsg}
           </div>
         )}
 
-        {/* Sticky header */}
-        <div style={{ position: 'sticky', top: 0, zIndex: 100, background: '#fff', borderBottom: '1px solid #E0E6ED', boxShadow: '0 2px 12px rgba(27,79,114,.08)', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', fontFamily: FONT }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: NAVY }}>{tok?.companyName} — {selectedTitle}</div>
-          <div style={{ display: 'flex', gap: 20, alignItems: 'center', fontSize: 13 }}>
-            <span style={{ color: '#777' }}>المحاولة <strong style={{ color: NAVY }}>{attemptNumber}</strong>/{tok?.maxAttempts ?? 3}</span>
-            <span style={{ color: '#777' }}>سؤال <strong style={{ color: NAVY }}>{qIndex + 1}</strong>/{totalQ}</span>
-            {!q.isVoice && (
-              <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 15, color: timerColor }}>
-                ⏱ {String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:{String(secondsLeft % 60).padStart(2, '0')}
+        {/* Sticky instrument header */}
+        <div className="sticky top-0 z-50 bg-white border-b border-slate-200" style={{ fontFamily: FONT }}>
+          <div className="flex items-center justify-between gap-4 px-5 py-3 flex-wrap">
+            <div className="text-sm font-semibold text-slate-800">{tok?.companyName} · {selectedTitle}</div>
+            <div className="flex items-center gap-5">
+              <span className="text-xs text-slate-500">
+                المحاولة <strong className="text-slate-800">{attemptNumber}</strong>/{tok?.maxAttempts ?? 3}
               </span>
-            )}
-            {q.isVoice && <span style={{ color: '#8E44AD', fontWeight: 700 }}>🎤 صوتي</span>}
+              <span className="text-xs text-slate-500">
+                سؤال <strong className="text-slate-800">{qIndex + 1}</strong>/{totalQ}
+              </span>
+              {!q.isVoice && (
+                <span className="font-mono font-bold text-sm tabular-nums" style={{ color: timerColor }}>
+                  {String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:{String(secondsLeft % 60).padStart(2, '0')}
+                </span>
+              )}
+              {q.isVoice && (
+                <span className="text-xs font-semibold" style={{ color: '#8E44AD' }}>صوتي</span>
+              )}
+            </div>
+          </div>
+          {/* Progress track: question progress */}
+          <div className="h-0.5 bg-slate-100">
+            <div className="h-full bg-emerald-600 transition-all duration-300" style={{ width: `${progPct}%` }} />
+          </div>
+          {/* Timer track */}
+          <div className="h-0.5 bg-slate-100">
+            <div
+              className="h-full"
+              style={{
+                width: `${timerPct}%`,
+                background: timerColor,
+                transition: q.isVoice ? 'none' : 'width 1s linear',
+              }}
+            />
           </div>
         </div>
 
-        {/* Progress bars */}
-        <div style={{ height: 4, background: '#E0E6ED' }}>
-          <div style={{ height: '100%', width: `${progPct}%`, background: BLUE, transition: 'width .3s' }} />
-        </div>
-        <div style={{ height: 3, background: '#E0E6ED' }}>
-          <div style={{ height: '100%', width: `${timerPct}%`, background: timerColor, transition: q.isVoice ? 'none' : 'width 1s linear' }} />
-        </div>
+        {/* Question content */}
+        <div className="max-w-2xl mx-auto px-4 py-8">
 
-        {/* Question */}
-        <div style={{ maxWidth: 740, margin: '0 auto', padding: '28px 16px' }}>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '3px 10px', background: q.type === 'behavioral' ? '#F5EEF8' : '#EBF5FB', color: q.type === 'behavioral' ? '#8E44AD' : NAVY }}>
+          {/* Type badges */}
+          <div className="flex gap-2 mb-4 flex-wrap">
+            <span
+              className="text-xs font-semibold px-2.5 py-1 rounded-sm"
+              style={{
+                background: q.type === 'behavioral' ? '#f5f3ff' : '#eef8fa',
+                color: q.type === 'behavioral' ? '#7c3aed' : '#0a6775',
+              }}
+            >
               {q.type === 'behavioral' ? 'سلوكي' : 'فني'}
             </span>
-            {q.isVoice && <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '3px 10px', background: '#F5EEF8', color: '#6C3483' }}>🎤 إجابة صوتية</span>}
+            {q.isVoice && (
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-sm" style={{ background: '#f5f3ff', color: '#6d28d9' }}>
+                إجابة صوتية
+              </span>
+            )}
             {q.theory && q.theory !== 'general' && (
-              <span style={{ fontSize: 11, fontWeight: 600, borderRadius: 6, padding: '3px 10px', background: '#EAFAF1', color: '#1E8449' }}>{q.theory}</span>
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-sm" style={{ background: '#f0fdf4', color: '#15803d' }}>
+                {q.theory}
+              </span>
             )}
           </div>
 
-          <div style={{ background: '#fff', borderRadius: 12, padding: '20px 22px', marginBottom: 16, boxShadow: '0 1px 6px rgba(27,79,114,.08)', border: '1px solid #EAEFF4', fontSize: 16, fontWeight: 600, color: '#1a1a2e', lineHeight: 1.7 }}>
+          {/* Question text */}
+          <div className="hw-card p-5 mb-5 text-base font-semibold text-slate-900 leading-relaxed">
             {q.text}
           </div>
 
           {/* MCQ options */}
           {!q.isVoice && (
             <>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
+              <div className="flex flex-col gap-2.5 mb-6">
                 {q.options.map((opt, i) => {
                   const letter = ABJAD[i] ?? String(i + 1);
                   const isSelected = chosen === opt || chosen === letter;
                   return (
-                    <button key={i} onClick={() => selectAnswer(opt)} style={{ textAlign: 'right', padding: '13px 16px', borderRadius: 10, cursor: 'pointer', border: isSelected ? `2px solid ${NAVY}` : '1.5px solid #D0DCE8', background: isSelected ? '#EBF5FB' : '#fff', color: isSelected ? NAVY : '#333', fontFamily: FONT, fontSize: 14, fontWeight: isSelected ? 700 : 400, transition: 'all .15s' }}>
-                      <strong style={{ marginLeft: 8, color: isSelected ? BLUE : '#999' }}>{letter}.</strong>
-                      {opt.replace(/^[أبجد]\.\s*/, '')}
+                    <button
+                      key={i}
+                      onClick={() => selectAnswer(opt)}
+                      className="text-right px-4 py-3 rounded-lg border transition-all duration-150 cursor-pointer w-full flex items-start gap-3"
+                      style={{
+                        background: isSelected ? '#eef8fa' : '#fcfefe',
+                        border: isSelected ? '1px solid #11a8bc' : '1px solid #e3eaee',
+                        color: isSelected ? '#122a33' : '#374151',
+                        fontFamily: FONT,
+                        fontSize: 14,
+                        fontWeight: isSelected ? 600 : 400,
+                        boxShadow: isSelected ? '0 0 0 1px #11a8bc' : 'none',
+                      }}
+                    >
+                      <strong
+                        className="flex-shrink-0 text-sm w-5 text-center"
+                        style={{ color: isSelected ? '#11a8bc' : '#9ca3af' }}
+                      >
+                        {letter}
+                      </strong>
+                      <span>{opt.replace(/^[أبجد]\.\s*/, '')}</span>
                     </button>
                   );
                 })}
               </div>
-              <button style={{ ...S.btnPrimary, maxWidth: 220 }} onClick={doAdvance}>
-                {qIndex + 1 >= totalQ ? `إنهاء الاختبار ✓` : 'السؤال التالي →'}
-              </button>
-              <p style={{ ...S.hint, marginTop: 12 }}>
-                مخالفات: {violations}/{MAX_VIOLATIONS} · نجاح ≥ {passing}٪
-              </p>
+
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <button
+                  className="hw-btn hw-btn-primary"
+                  onClick={doAdvance}
+                >
+                  {qIndex + 1 >= totalQ ? 'إنهاء الاختبار' : 'السؤال التالي'}
+                </button>
+                <p className="text-xs text-slate-400 m-0">
+                  مخالفات: {violations}/{MAX_VIOLATIONS} · نجاح ≥ {passing}٪
+                </p>
+              </div>
             </>
           )}
 
           {/* Voice question UI */}
           {q.isVoice && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="flex flex-col gap-3">
               {voicePhase === 'idle' && (
-                <button style={{ ...S.btnPrimary, background: 'linear-gradient(135deg,#6C3483,#8E44AD)' }} onClick={startSpeaking}>
-                  🔊 استمع للسؤال وسجّل إجابتك
+                <button
+                  className="hw-btn hw-btn-w"
+                  style={{ background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 8, padding: '12px 0', fontSize: 14, fontWeight: 600, fontFamily: FONT, cursor: 'pointer' }}
+                  onClick={startSpeaking}
+                >
+                  استمع للسؤال وسجّل إجابتك
                 </button>
               )}
               {voicePhase === 'playing' && (
-                <div style={{ ...S.infoRow, justifyContent: 'center', color: '#6C3483' }}>
-                  <Spinner small /> <span style={{ marginRight: 8 }}>يُقرأ السؤال بصوت عالٍ...</span>
+                <div className="flex items-center gap-3 px-4 py-3 bg-violet-50 border border-violet-200 rounded-lg text-sm font-semibold text-violet-700">
+                  <div className="w-4 h-4 rounded-full border-2 border-violet-200 border-t-violet-600 animate-spin flex-shrink-0" />
+                  يُقرأ السؤال بصوت عالٍ...
                 </div>
               )}
               {voicePhase === 'recording' && (
                 <>
-                  <div style={{ background: '#FDF2F8', border: '2px solid #8E44AD', borderRadius: 12, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ fontSize: 24 }}>🔴</span>
-                    <div>
-                      <div style={{ fontWeight: 700, color: '#6C3483', fontSize: 14 }}>جارٍ التسجيل — تحدّث الآن</div>
-                      {voiceTranscript && <div style={{ fontSize: 12, color: '#555', marginTop: 4 }}>{voiceTranscript}</div>}
+                  <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
+                    <span className="w-2.5 h-2.5 mt-1 rounded-full bg-red-500 flex-shrink-0 animate-pulse" />
+                    <div className="flex flex-col gap-1">
+                      <div className="text-sm font-semibold text-red-700">جارٍ التسجيل، تحدّث الآن</div>
+                      {voiceTranscript && (
+                        <div className="text-xs text-slate-500">{voiceTranscript}</div>
+                      )}
                     </div>
                   </div>
-                  <button style={{ ...S.btnSecondary, borderColor: '#8E44AD', color: '#6C3483' }} onClick={stopRecording}>
-                    ⏹ إنهاء التسجيل
+                  <button
+                    className="hw-btn hw-btn-ghost hw-btn-w"
+                    onClick={stopRecording}
+                  >
+                    إنهاء التسجيل
                   </button>
                 </>
               )}
               {voicePhase === 'done' && (
                 <>
-                  <div style={{ background: '#EAFAF1', border: '1.5px solid #27AE60', borderRadius: 12, padding: '14px 18px', color: '#1E8449', fontSize: 14 }}>
-                    ✅ تم تسجيل إجابتك الصوتية.
-                    {voiceTranscript && <div style={{ marginTop: 6, fontSize: 12, color: '#555' }}>"{voiceTranscript.slice(0, 120)}{voiceTranscript.length > 120 ? '...' : ''}"</div>}
+                  <div className="flex items-start gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-lg">
+                    <svg className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                    <div className="flex flex-col gap-1">
+                      <div className="text-sm font-semibold text-green-700">تم تسجيل إجابتك الصوتية.</div>
+                      {voiceTranscript && (
+                        <div className="text-xs text-slate-500">
+                          "{voiceTranscript.slice(0, 120)}{voiceTranscript.length > 120 ? '...' : ''}"
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <button style={{ ...S.btnPrimary, maxWidth: 220 }} onClick={doAdvance}>
-                    {qIndex + 1 >= totalQ ? 'إنهاء الاختبار ✓' : 'السؤال التالي →'}
-                  </button>
+                  <div className="flex items-center justify-between flex-wrap gap-3">
+                    <button className="hw-btn hw-btn-primary" onClick={doAdvance}>
+                      {qIndex + 1 >= totalQ ? 'إنهاء الاختبار' : 'السؤال التالي'}
+                    </button>
+                    <p className="text-xs text-slate-400 m-0">مخالفات: {violations}/{MAX_VIOLATIONS}</p>
+                  </div>
                 </>
               )}
-              <p style={{ ...S.hint }}>مخالفات: {violations}/{MAX_VIOLATIONS}</p>
+              {voicePhase !== 'done' && (
+                <p className="text-xs text-slate-400 m-0">مخالفات: {violations}/{MAX_VIOLATIONS}</p>
+              )}
             </div>
           )}
         </div>
@@ -737,22 +1089,40 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     const passing = tok?.passingScore ?? 60;
     const passed = last.score >= passing;
     return (
-      <div style={S.wrap}>
-        <div style={{ ...S.card, textAlign: 'center' }}>
-          <div style={{ fontSize: 48 }}>{passed ? '🎉' : '📋'}</div>
-          <h2 style={S.title}>نتيجة المحاولة {last.attemptNumber}</h2>
-          <div style={{ fontSize: 52, fontWeight: 900, color: passed ? '#27AE60' : NAVY, margin: '8px 0' }}>{last.score}٪</div>
-          <div style={{ fontSize: 13, color: passed ? '#27AE60' : '#E67E22', fontWeight: 700, marginBottom: 4 }}>
-            {passed ? '✅ اجتزت الاختبار' : `❌ لم تصل لدرجة النجاح (${passing}٪)`}
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" style={{ fontFamily: FONT, direction: 'rtl' }}>
+        <div className="hw-card p-8 w-full max-w-sm flex flex-col items-center gap-5 text-center">
+          {/* Score display */}
+          <div className="flex flex-col items-center gap-2 w-full pb-5 border-b border-slate-200">
+            <p className="text-xs font-semibold text-slate-500 m-0 uppercase tracking-wide">نتيجة المحاولة {last.attemptNumber}</p>
+            <div
+              className="text-5xl font-black tabular-nums"
+              style={{ color: passed ? '#15803d' : '#122a33' }}
+            >
+              {last.score}٪
+            </div>
+            <div
+              className="text-sm font-semibold px-3 py-1 rounded-md"
+              style={{
+                background: passed ? '#f0fdf4' : '#fff7ed',
+                color: passed ? '#15803d' : '#c2410c',
+              }}
+            >
+              {passed ? 'اجتزت الاختبار' : `لم تصل لدرجة النجاح (${passing}٪)`}
+            </div>
           </div>
-          {last.violations > 0 && <p style={{ color: '#E67E22', fontSize: 12 }}>مخالفات مرصودة: {last.violations}</p>}
-          <p style={S.hint}>
+
+          {last.violations > 0 && (
+            <p className="text-xs text-amber-600 m-0">مخالفات مرصودة: {last.violations}</p>
+          )}
+
+          <p className="text-xs text-slate-500 m-0">
             {remaining > 0
-              ? `لديك ${remaining} محاولة${remaining === 1 ? '' : 'ات'} متبقية — أفضل نتيجة هي المُسجَّلة`
+              ? `لديك ${remaining} محاولة${remaining === 1 ? '' : 'ات'} متبقية، أفضل نتيجة هي المُسجَّلة`
               : 'استُنفدت جميع المحاولات.'}
           </p>
+
           {remaining > 0 && (
-            <button style={S.btnPrimary} onClick={retryExam}>
+            <button className="hw-btn hw-btn-primary hw-btn-w" onClick={retryExam}>
               إعادة المحاولة ({remaining} متبقية)
             </button>
           )}
@@ -765,31 +1135,39 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
   if (screen === 'attempt_cancelled') {
     const remaining = (tok?.maxAttempts ?? 3) - attempts.length;
     return (
-      <div style={S.wrap}>
-        <div style={{ ...S.card, textAlign: 'center' }}>
-          <div style={{ fontSize: 48 }}>🚫</div>
-          <h2 style={{ ...S.title, color: '#C0392B' }}>تم إلغاء هذه المحاولة</h2>
-          <p style={{ fontSize: 14, color: '#555', textAlign: 'center', margin: 0 }}>
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" style={{ fontFamily: FONT, direction: 'rtl' }}>
+        <div className="hw-card p-8 w-full max-w-sm flex flex-col gap-5 text-center">
+          {/* Header */}
+          <div className="flex flex-col items-center gap-2 pb-4 border-b border-slate-200">
+            <div className="w-12 h-12 rounded-full bg-red-50 border border-red-200 flex items-center justify-center">
+              <span className="text-red-600 font-bold text-lg">!</span>
+            </div>
+            <h2 className="text-base font-bold text-slate-900 m-0">تم إلغاء هذه المحاولة</h2>
+          </div>
+
+          <p className="text-sm text-slate-600 m-0">
             وصلت إلى الحد الأقصى من التحذيرات ({MAX_VIOLATIONS}) بسبب مخالفات الرقابة.
           </p>
-          <div style={{ background: '#FDEDEC', border: '1px solid #E74C3C', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#C0392B', textAlign: 'right' }}>
-            ⚠️ لن تُحتسب هذه المحاولة في نتيجتك النهائية.
+
+          <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-md text-right">
+            <span className="text-red-500 text-sm font-bold flex-shrink-0">!</span>
+            <p className="text-xs text-red-700 m-0">لن تُحتسب هذه المحاولة في نتيجتك النهائية.</p>
           </div>
+
           {remaining > 0 ? (
             <>
-              <p style={{ ...S.hint, fontWeight: 600, color: NAVY }}>
-                تبقى لك <strong>{remaining}</strong> محاولة{remaining === 1 ? '' : 'ات'}
+              <p className="text-xs text-slate-500 m-0">
+                تبقى لك <strong className="text-slate-800">{remaining}</strong> محاولة{remaining === 1 ? '' : 'ات'}
               </p>
-              <button style={S.btnPrimary} onClick={retryExam}>
+              <button className="hw-btn hw-btn-primary hw-btn-w" onClick={retryExam}>
                 ابدأ المحاولة التالية
               </button>
             </>
           ) : (
-            <p style={{ ...S.hint, fontWeight: 600, color: '#C0392B' }}>
-              استُنفدت جميع المحاولات المتاحة.
-            </p>
+            <p className="text-xs font-semibold text-red-600 m-0">استُنفدت جميع المحاولات المتاحة.</p>
           )}
-          <button style={{ ...S.btnSecondary, marginTop: 4 }} onClick={() => setScreen('all_done')}>
+
+          <button className="hw-btn hw-btn-ghost hw-btn-w" onClick={() => setScreen('all_done')}>
             عرض ملخص النتائج
           </button>
         </div>
@@ -803,33 +1181,79 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
     const best = validAttempts.length ? Math.max(...validAttempts.map(a => a.score)) : 0;
     const passing = tok?.passingScore ?? 60;
     return (
-      <div style={S.wrap}>
-        <div style={{ ...S.card, maxWidth: 520 }}>
-          <h2 style={S.title}>اكتمل الاختبار</h2>
-          <p style={S.sub}>{tok?.companyName} — {selectedTitle}</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '8px 0' }}>
-            {attempts.map(a => (
-              <div key={a.attemptNumber} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: 10, padding: '12px 16px', background: a.cancelled ? '#FEF9E7' : (a.score === best && !a.cancelled ? '#EBF5FB' : '#F8F9FA'), border: a.cancelled ? '1.5px solid #F0B27A' : (a.score === best && !a.cancelled ? `1.5px solid ${BLUE}` : '1.5px solid #E0E6ED') }}>
-                <div>
-                  <span style={{ fontWeight: 700, color: a.cancelled ? '#E67E22' : NAVY }}>المحاولة {a.attemptNumber}</span>
-                  {a.cancelled && <span style={{ color: '#E67E22', fontSize: 12, marginRight: 8 }}>— ملغاة (مخالفات)</span>}
-                  {!a.cancelled && a.score === best && <span style={{ color: BLUE, fontSize: 12, marginRight: 8 }}>★ أفضل</span>}
-                  {a.violations > 0 && !a.cancelled && <span style={{ color: '#E67E22', fontSize: 12, marginRight: 8 }}>({a.violations} مخالفة)</span>}
-                </div>
-                <span style={{ fontSize: 22, fontWeight: 900, color: a.cancelled ? '#BDC3C7' : (a.score === best ? NAVY : '#777') }}>
-                  {a.cancelled ? '—' : `${a.score}٪`}
-                </span>
-              </div>
-            ))}
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" style={{ fontFamily: FONT, direction: 'rtl' }}>
+        <div className="hw-card p-8 w-full max-w-md flex flex-col gap-5">
+          {/* Header */}
+          <div className="flex flex-col gap-1 pb-4 border-b border-slate-200">
+            <h1 className="text-lg font-bold text-slate-900 m-0">اكتمل الاختبار</h1>
+            <p className="text-xs text-slate-500 m-0">{tok?.companyName} · {selectedTitle}</p>
           </div>
-          <div style={{ background: BG, border: `1.5px solid ${BLUE}`, borderRadius: 12, padding: 20, textAlign: 'center' }}>
-            <p style={{ margin: '0 0 4px', fontSize: 13, color: '#777' }}>أفضل نتيجة مُسجَّلة</p>
-            <div style={{ fontSize: 52, fontWeight: 900, color: best >= passing ? '#27AE60' : NAVY }}>{best}٪</div>
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: best >= passing ? '#27AE60' : '#E67E22', fontWeight: 700 }}>
-              {best >= passing ? `✅ اجتزت (النجاح ≥ ${passing}٪)` : `❌ لم تصل للنجاح (${passing}٪)`}
+
+          {/* Attempts list */}
+          <div className="flex flex-col gap-2">
+            {attempts.map(a => {
+              const isBest = !a.cancelled && a.score === best;
+              return (
+                <div
+                  key={a.attemptNumber}
+                  className="flex items-center justify-between px-4 py-3 rounded-lg border"
+                  style={{
+                    background: a.cancelled ? '#fffbeb' : isBest ? '#eef8fa' : '#f7fafb',
+                    border: `1px solid ${a.cancelled ? '#fcd34d' : isBest ? '#11a8bc' : '#e3eaee'}`,
+                    boxShadow: isBest ? '0 0 0 1px #11a8bc' : 'none',
+                  }}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold" style={{ color: a.cancelled ? '#b45309' : '#122a33' }}>
+                      المحاولة {a.attemptNumber}
+                    </span>
+                    {a.cancelled && (
+                      <span className="text-xs text-amber-600">ملغاة</span>
+                    )}
+                    {isBest && (
+                      <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-sm border border-emerald-200">
+                        أفضل
+                      </span>
+                    )}
+                    {a.violations > 0 && !a.cancelled && (
+                      <span className="text-xs text-amber-600">{a.violations} مخالفة</span>
+                    )}
+                  </div>
+                  <span
+                    className="text-xl font-black tabular-nums"
+                    style={{ color: a.cancelled ? '#d1d5db' : isBest ? '#122a33' : '#6b7280' }}
+                  >
+                    {a.cancelled ? '×' : `${a.score}٪`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Best score summary */}
+          <div
+            className="px-5 py-5 rounded-lg border text-center flex flex-col gap-1"
+            style={{
+              background: '#f7fafb',
+              border: '1px solid #e3eaee',
+            }}
+          >
+            <p className="text-xs text-slate-500 m-0">أفضل نتيجة مُسجَّلة</p>
+            <div
+              className="text-5xl font-black tabular-nums"
+              style={{ color: best >= passing ? '#15803d' : '#122a33' }}
+            >
+              {best}٪
+            </div>
+            <p
+              className="text-sm font-semibold m-0"
+              style={{ color: best >= passing ? '#15803d' : '#c2410c' }}
+            >
+              {best >= passing ? `اجتزت (النجاح ≥ ${passing}٪)` : `لم تصل للنجاح (${passing}٪)`}
             </p>
           </div>
-          <p style={S.hint}>تم حفظ نتيجتك. يمكنك إغلاق هذه الصفحة.</p>
+
+          <p className="text-xs text-slate-400 text-center m-0">تم حفظ نتيجتك. يمكنك إغلاق هذه الصفحة.</p>
         </div>
       </div>
     );

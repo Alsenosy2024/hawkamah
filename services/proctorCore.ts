@@ -58,6 +58,8 @@ export interface ProctorAlert {
   severity: ProctorSeverity;
   /** Human-readable explanation (for display / LLM system instruction). */
   message: string;
+  /** Zero-based index of the question the candidate was on when this fired (if known). */
+  questionIndex?: number;
 }
 
 /** Mutable proctoring session state — pass through applyAlert (pure reducer). */
@@ -84,6 +86,8 @@ export interface ProctorSummary {
   topSignals: Array<{ type: ProctorSignalType; count: number }>;
   /** Total number of alerts recorded. */
   totalAlerts: number;
+  /** Per-question violation breakdown (only alerts that carried a questionIndex), ascending by question. */
+  byQuestion: Array<{ question: number; count: number; types: ProctorSignalType[] }>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -161,15 +165,28 @@ export function buildProctorSystemInstruction(state: ProctorState): string {
     'audio_noise, tab_switch, window_blur, copy_paste, fullscreen_exit,',
     'rapid_answers, idle_too_long, ai_tool_visible, screen_other_content.',
     '',
-    'INSPECT THE SHARED SCREEN CLOSELY — read visible browser tab titles, window',
+    'EXPECTED CONTENT, NEVER A VIOLATION: the shared screen will normally show THIS',
+    'assessment application itself, the Ailigent.ai / Hawkamah interview UI: the',
+    'question text, the multiple-choice options, the answer textarea, the progress',
+    'indicator, the on-screen AI interviewer ("محاور معتمد" / certified interviewer)',
+    'avatar, and the candidate\'s own camera tile. This app is AI-powered and',
+    'AI-branded BY DESIGN and is the REQUIRED exam surface. NEVER report the',
+    'assessment app, its AI interviewer, its branding ("Ailigent", "Ailigent.ai",',
+    '"Hawkamah", "AI interviewer", "محاور"), or its question/answer panels as',
+    'ai_tool_visible or screen_other_content. Seeing this interview on screen is',
+    'correct and required.',
+    '',
+    'INSPECT THE SHARED SCREEN CLOSELY: read visible browser tab titles, window',
     'titles, URLs, and on-screen text. This is the #1 cheating channel:',
-    '  • If you see an AI assistant or chatbot (ChatGPT, chat.openai.com, openai,',
-    '    Gemini, Google AI, Claude, Anthropic, Copilot, Bard, Poe, DeepSeek, or any',
-    '    "AI"/chat interface) → report TYPE ai_tool_visible (severity high or critical).',
-    '  • If you see ANY other app, browser tab, search engine (Google), messaging app,',
-    '    document, IDE, or notes unrelated to answering THIS interview → report',
-    '    TYPE screen_other_content.',
-    'Do not assume legitimacy — if text is readable on the screen, judge what it is.',
+    '  • Report ai_tool_visible ONLY for a SEPARATE, EXTERNAL AI assistant opened',
+    '    OUTSIDE this interview (a different browser tab, window, or app) such as',
+    '    ChatGPT, chat.openai.com, Gemini, Google AI, Claude, Anthropic, Copilot,',
+    '    Bard, Poe, or DeepSeek. The interview application itself NEVER counts.',
+    '  • Report screen_other_content ONLY for a DIFFERENT app, browser tab, search',
+    '    engine (Google), messaging app, document, IDE, or notes that is NOT this',
+    '    interview.',
+    'Judge what is actually readable, but always treat this interview application as',
+    'legitimate and expected.',
     '',
     'For EACH image, reply with ONE short spoken line in EXACTLY this shape:',
     '  SEVERITY <none|low|medium|high|critical> TYPE <signal_type>',
@@ -372,10 +389,24 @@ export function summarizeProctor(state: ProctorState): ProctorSummary {
     .slice(0, 5)
     .map(([type, count]) => ({ type, count }));
 
+  // Per-question breakdown — which question each violation happened on.
+  const qMap = new Map<number, { count: number; types: Set<ProctorSignalType> }>();
+  for (const a of alerts) {
+    if (typeof a.questionIndex !== 'number') continue;
+    const entry = qMap.get(a.questionIndex) ?? { count: 0, types: new Set<ProctorSignalType>() };
+    entry.count += 1;
+    entry.types.add(a.type);
+    qMap.set(a.questionIndex, entry);
+  }
+  const byQuestion = [...qMap.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([question, e]) => ({ question, count: e.count, types: [...e.types] }));
+
   return {
     verdict,
     integrity,
     topSignals,
     totalAlerts: alerts.length,
+    byQuestion,
   };
 }

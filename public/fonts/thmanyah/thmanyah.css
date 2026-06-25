@@ -1,0 +1,15 @@
+/* Thmanyah typeface — Ailigent brand font (Arabic-first, also covers Latin).
+   Two families: "Thmanyah Sans" (UI/body) and "Thmanyah Serif Display" (large headings).
+   Weights: 300 Light, 400 Regular, 500 Medium, 700 Bold, 900 Black. */
+
+@font-face { font-family: 'Thmanyah Sans'; src: url('/fonts/thmanyah/thmanyahsans-Light.woff2') format('woff2');   font-weight: 300; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Thmanyah Sans'; src: url('/fonts/thmanyah/thmanyahsans-Regular.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Thmanyah Sans'; src: url('/fonts/thmanyah/thmanyahsans-Medium.woff2') format('woff2');  font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Thmanyah Sans'; src: url('/fonts/thmanyah/thmanyahsans-Bold.woff2') format('woff2');    font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Thmanyah Sans'; src: url('/fonts/thmanyah/thmanyahsans-Black.woff2') format('woff2');   font-weight: 900; font-style: normal; font-display: swap; }
+
+@font-face { font-family: 'Thmanyah Serif Display'; src: url('/fonts/thmanyah/thmanyahserifdisplay-Light.woff2') format('woff2');   font-weight: 300; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Display'; src: url('/fonts/thmanyah/thmanyahserifdisplay-Regular.woff2') format('woff2'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Display'; src: url('/fonts/thmanyah/thmanyahserifdisplay-Medium.woff2') format('woff2');  font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Display'; src: url('/fonts/thmanyah/thmanyahserifdisplay-Bold.woff2') format('woff2');    font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Display'; src: url('/fonts/thmanyah/thmanyahserifdisplay-Black.woff2') format('woff2');   font-weight: 900; font-style: normal; font-display: swap; }

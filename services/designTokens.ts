@@ -1,8 +1,10 @@
 // ===========================================================================
-//  Hawkamah Design System v2.0 — Tornix-quality tokens
+//  Hawkamah · Ailigent.ai Design System v3 — "The Governance Instrument"
 //  Single source of truth for fonts, buttons, cards, inputs, badges, toasts.
-//  Brand accent = Emerald (Ailigent green). Neutral = slate. Semantic only:
-//  success=emerald · warning=amber · danger=rose · info=sky · neutral=slate.
+//  Brand accent = refined Teal (logo #11A8BC). Neutral = ink/slate. Semantic
+//  stays DISTINCT from brand: success=green · warning=amber · danger=red ·
+//  info=blue · neutral=slate. (The legacy `emerald-*` utility names render teal
+//  via tailwind.config.js, so existing class strings keep working.)
 //
 //  CSS component classes (.hw-*) are defined in /index.css.
 //  Tailwind CDN is used for layout only (flex, grid, gap, px, text-size, etc.)
@@ -13,26 +15,33 @@ export type ToastVariant = 'success' | 'error' | 'warning' | 'info';
 
 /** Build the font-family CSS value used across the whole app. */
 export const FONT_STACK = (font?: string): string =>
-  `'${font || 'Alexandria'}', 'Tajawal', 'Inter', sans-serif`;
+  `'${font || 'Thmanyah Sans'}', 'Tajawal', 'Inter', sans-serif`;
 
 /**
  * Dynamic stylesheet body that forces the chosen webfont on every visual node.
  * Centralizes what used to be inline in App.tsx so all surfaces stay in sync.
- * Headings keep heavier weight + tighter tracking for a premium hierarchy.
+ * Default UI face is Thmanyah Sans (Ailigent brand, Arabic-first). Headings use
+ * the same family at heavier weight; the Thmanyah Serif Display face is reserved
+ * for opt-in page/hero titles per screen (DESIGN.md §3), not auto-applied here.
  */
 export const buildFontCss = (font?: string): string => {
-  const chosen = font || 'Alexandria';
+  const chosen = font || 'Thmanyah Sans';
+  // When the brand sans is active, headings use the distinctive Thmanyah Serif
+  // Display for editorial authority (DESIGN.md §3). A deliberate non-Thmanyah
+  // pick keeps headings in that chosen face instead.
+  const heading = chosen === 'Thmanyah Sans' ? 'Thmanyah Serif Display' : chosen;
   return `
     body, button, input, select, textarea, p, span, h4, h5, h6, table, th, td, div:not(.font-mono) {
       font-family: '${chosen}', 'Tajawal', 'Inter', sans-serif !important;
     }
-    /* Distinct heading face → real typographic hierarchy (independent of body font) */
-    h1, h2, h3,
-    .font-black, .font-extrabold {
-      font-family: 'Alexandria', '${chosen}', 'Tajawal', sans-serif !important;
+    h1, h2, h3 {
+      font-family: '${heading}', '${chosen}', 'Tajawal', serif !important;
     }
-    h1, h2, h3 { letter-spacing: -0.018em; line-height: 1.2; }
-    h1 { font-weight: 800 !important; }
+    .font-black, .font-extrabold {
+      font-family: '${chosen}', 'Tajawal', 'Inter', sans-serif !important;
+    }
+    h1, h2, h3 { letter-spacing: -0.012em; line-height: 1.25; }
+    h1 { font-weight: 700 !important; }
   `;
 };
 

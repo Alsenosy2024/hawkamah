@@ -92,7 +92,11 @@ export class MicRecorder {
       throw new MicRecordError('unsupported', 'Browser does not support audio capture.');
     }
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Explicit echo cancellation so the open mic does not pick up the interviewer's
+      // own TTS playback (matters now the mic stays open during spoken-MCQ questions).
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
     } catch (e: any) {
       const name = e?.name || '';
       if (name === 'NotAllowedError' || name === 'SecurityError') {

@@ -222,10 +222,10 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   // ── LOADING ──
   if (phase === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100" dir="rtl">
-        <div className="text-center space-y-3">
-          <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-slate-600 font-medium">جارٍ التحقق من الرابط…</p>
+      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB]" dir="rtl">
+        <div className="text-center space-y-4">
+          <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-slate-500 text-sm">جارٍ التحقق من الرابط…</p>
         </div>
       </div>
     );
@@ -234,11 +234,15 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   // ── ERROR ──
   if (phase === 'error') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-rose-50 to-slate-100 p-6" dir={ar ? 'rtl' : 'ltr'}>
-        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center space-y-4">
-          <div className="text-5xl">⚠️</div>
-          <h2 className="text-xl font-black text-slate-800">{t('رابط غير صالح', 'Invalid Link')}</h2>
-          <p className="text-slate-500 text-sm">{errorMsg}</p>
+      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-6" dir={ar ? 'rtl' : 'ltr'}>
+        <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-sm w-full text-center space-y-4">
+          <div className="w-10 h-10 rounded-full bg-rose-50 border border-rose-200 flex items-center justify-center mx-auto">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-rose-500" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+          </div>
+          <h2 className="text-base font-bold text-slate-800">{t('رابط غير صالح', 'Invalid Link')}</h2>
+          <p className="text-slate-500 text-sm leading-relaxed">{errorMsg}</p>
         </div>
       </div>
     );
@@ -250,16 +254,18 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
 
   // Shared header
   const header = (
-    <div className="flex flex-col items-center gap-2 mb-6">
+    <div className="flex flex-col items-center gap-3 mb-6">
       {logoUrl ? (
-        <img src={logoUrl} alt={companyName} className="h-14 max-w-[200px] object-contain" />
+        <img src={logoUrl} alt={companyName} className="h-12 max-w-[180px] object-contain" />
       ) : (
-        <div className="w-14 h-14 rounded-2xl bg-emerald-600 text-white flex items-center justify-center text-2xl font-black shadow-lg">
+        <div className="w-11 h-11 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-lg font-bold">
           {companyName.slice(0, 1)}
         </div>
       )}
-      <h1 className="text-xl font-black text-slate-800">{companyName}</h1>
-      <p className="text-sm text-slate-500">{t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}</p>
+      <div className="text-center space-y-0.5">
+        <h1 className="text-base font-bold text-slate-800">{companyName}</h1>
+        <p className="text-xs text-slate-400">{t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}</p>
+      </div>
     </div>
   );
 
@@ -267,33 +273,33 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   if (phase === 'info_form') {
     const jobRoles = empToken?.jobRoles || [];
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100 p-4" dir={dir}>
-        <div className="bg-white rounded-2xl shadow-xl p-7 max-w-md w-full space-y-5">
+      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
+        <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-md w-full">
           {header}
           <div className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">{t('الاسم الكامل *', 'Full Name *')}</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">{t('الاسم الكامل *', 'Full Name *')}</label>
               <input
-                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="hw-input w-full"
                 placeholder={t('أدخل اسمك الكامل', 'Enter your full name')}
                 value={empName} onChange={e => setEmpName(e.target.value)}
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">{t('البريد الإلكتروني *', 'Email *')}</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">{t('البريد الإلكتروني *', 'Email *')}</label>
               <input
                 type="email"
-                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="hw-input w-full"
                 placeholder={t('example@company.com', 'example@company.com')}
                 value={empEmail} onChange={e => setEmpEmail(e.target.value)}
                 dir="ltr"
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">{t('المسمى الوظيفي *', 'Job Title *')}</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">{t('المسمى الوظيفي *', 'Job Title *')}</label>
               {jobRoles.length > 0 ? (
                 <select
-                  className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                  className="hw-input w-full bg-white"
                   value={jobTitle} onChange={e => setJobTitle(e.target.value)}
                 >
                   <option value="">{t('اختر مسماك الوظيفي', 'Select your job title')}</option>
@@ -305,29 +311,36 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
                 </select>
               ) : (
                 <input
-                  className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  className="hw-input w-full"
                   placeholder={t('مثال: مدير موارد بشرية', 'e.g. HR Manager')}
                   value={jobTitle} onChange={e => setJobTitle(e.target.value)}
                 />
               )}
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">{t('الإدارة / القسم', 'Department')}</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">{t('الإدارة / القسم', 'Department')}</label>
               <input
-                className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="hw-input w-full"
                 placeholder={t('اختياري', 'Optional')}
                 value={department} onChange={e => setDepartment(e.target.value)}
               />
             </div>
-            {formErr && <p className="text-sm text-rose-600 font-medium">{formErr}</p>}
+            {formErr && (
+              <p className="text-xs text-rose-600 font-medium flex items-center gap-1.5">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                {formErr}
+              </p>
+            )}
             <button
               onClick={handleInfoSubmit}
-              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow transition-colors"
+              className="hw-btn hw-btn-primary hw-btn-w mt-2"
             >
-              {t('متابعة ←', 'Continue →')}
+              {t('متابعة', 'Continue')}
             </button>
           </div>
-          <p className="text-xs text-center text-slate-400">
+          <p className="text-xs text-center text-slate-400 mt-5">
             {t('بياناتك محمية ولن تُشارك مع أطراف خارجية.', 'Your data is protected and will not be shared with third parties.')}
           </p>
         </div>
@@ -338,13 +351,15 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   // ── GENERATING ──
   if (phase === 'generating') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100 p-4" dir={dir}>
-        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center space-y-4">
+      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
+        <div className="bg-white border border-slate-200 rounded-xl p-10 max-w-sm w-full text-center space-y-5">
           {header}
-          <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-slate-600 font-medium text-sm">
-            {t('يجري إعداد أسئلة التقييم المخصصة لمسماك الوظيفي…', 'Preparing personalized assessment questions for your role…')}
-          </p>
+          <div className="space-y-3">
+            <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-slate-500 text-sm leading-relaxed">
+              {t('يجري إعداد أسئلة التقييم المخصصة لمسماك الوظيفي…', 'Preparing personalized assessment questions for your role…')}
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -354,47 +369,49 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   if (phase === 'instructions') {
     const qCount = empToken?.questionCount || DEFAULT_QUESTION_COUNT;
     const steps = ar ? [
-      { icon: '📋', title: 'أسئلة الجدارات', desc: `${qCount} أسئلة مخصصة لمسماك الوظيفي (${jobTitle})` },
-      { icon: '🌿', title: 'استبيان بيئة العمل', desc: 'تقييم بيئة العمل والمحيط المؤسسي' },
-      { icon: '🔒', title: 'السرية التامة', desc: 'إجاباتك آمنة ومحمية — لا يُعرض عليها إلا القيادة المختصة' },
+      { num: '1', title: 'أسئلة الجدارات', desc: `${qCount} أسئلة مخصصة لمسماك الوظيفي (${jobTitle})` },
+      { num: '2', title: 'استبيان بيئة العمل', desc: 'تقييم بيئة العمل والمحيط المؤسسي' },
+      { num: '3', title: 'السرية التامة', desc: 'إجاباتك آمنة ومحمية — لا يُعرض عليها إلا القيادة المختصة' },
     ] : [
-      { icon: '📋', title: 'Competency Questions', desc: `${qCount} questions tailored to your role (${jobTitle})` },
-      { icon: '🌿', title: 'Work Environment Survey', desc: 'Assessment of your work environment and organizational context' },
-      { icon: '🔒', title: 'Full Confidentiality', desc: 'Your answers are secure — only relevant leadership can view them' },
+      { num: '1', title: 'Competency Questions', desc: `${qCount} questions tailored to your role (${jobTitle})` },
+      { num: '2', title: 'Work Environment Survey', desc: 'Assessment of your work environment and organizational context' },
+      { num: '3', title: 'Full Confidentiality', desc: 'Your answers are secure — only relevant leadership can view them' },
     ];
 
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100 p-4" dir={dir}>
-        <div className="bg-white rounded-2xl shadow-xl p-7 max-w-lg w-full space-y-5">
+      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
+        <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-lg w-full space-y-6">
           {header}
-          <h2 className="text-lg font-black text-slate-800 text-center">
-            {t('أهلاً بك في التقييم', `Welcome, ${empName}`)}
-          </h2>
-          <p className="text-sm text-slate-500 text-center">
-            {t(`مرحباً ${empName}، قبل البدء اطّلع على هيكل التقييم.`, `Before we begin, here's what to expect.`)}
-          </p>
-          <div className="space-y-3">
+          <div className="text-center space-y-1">
+            <h2 className="text-lg font-bold text-slate-800">
+              {t('أهلاً بك في التقييم', `Welcome, ${empName}`)}
+            </h2>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              {t(`مرحباً ${empName}، قبل البدء اطّلع على هيكل التقييم.`, `Before we begin, here's what to expect.`)}
+            </p>
+          </div>
+          <div className="space-y-2">
             {steps.map((s, i) => (
-              <div key={i} className="flex items-start gap-3 bg-slate-50 rounded-xl p-3">
-                <span className="text-2xl mt-0.5">{s.icon}</span>
+              <div key={i} className="flex items-start gap-3 border border-slate-200 rounded-lg px-4 py-3 bg-white">
+                <span className="flex-shrink-0 w-5 h-5 rounded-full border-2 border-emerald-600 text-emerald-600 flex items-center justify-center text-[10px] font-bold mt-0.5">{s.num}</span>
                 <div>
-                  <div className="font-bold text-slate-800 text-sm">{s.title}</div>
-                  <div className="text-xs text-slate-500 mt-0.5">{s.desc}</div>
+                  <div className="font-semibold text-slate-800 text-sm">{s.title}</div>
+                  <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">{s.desc}</div>
                 </div>
               </div>
             ))}
           </div>
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-800">
+          <div className="border border-slate-200 rounded-lg px-4 py-3 bg-[#EEF3F5] text-xs text-slate-600 leading-relaxed">
             {t(
-              '⏱ الوقت المتوقع: 15–25 دقيقة. أجب بصدق وشمولية — الإجابات القصيرة تؤثر على دقة التقرير.',
-              '⏱ Expected time: 15–25 minutes. Answer honestly and thoroughly — short answers affect report accuracy.',
+              'الوقت المتوقع: 15–25 دقيقة. أجب بصدق وشمولية — الإجابات القصيرة تؤثر على دقة التقرير.',
+              'Expected time: 15–25 minutes. Answer honestly and thoroughly — short answers affect report accuracy.',
             )}
           </div>
           <button
             onClick={handleStartAssessment}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow transition-colors text-sm"
+            className="hw-btn hw-btn-primary hw-btn-w"
           >
-            {t('ابدأ التقييم ←', 'Start Assessment →')}
+            {t('ابدأ التقييم', 'Start Assessment')}
           </button>
         </div>
       </div>
@@ -408,47 +425,45 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
     const isMultiChoice = q.options && q.options.length >= 2;
 
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100 p-4" dir={dir}>
-        <div className="bg-white rounded-2xl shadow-xl p-7 max-w-2xl w-full space-y-5">
-          {/* Progress */}
-          <div className="space-y-1">
-            <div className="flex justify-between items-center text-xs text-slate-500 font-medium">
-              <span>{t(`السؤال ${qIndex + 1} من ${questions.length}`, `Question ${qIndex + 1} of ${questions.length}`)}</span>
-              <div className="flex items-center gap-3">
+      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
+        <div className="bg-white border border-slate-200 rounded-xl p-6 max-w-2xl w-full space-y-5">
+          {/* Progress bar + metadata row */}
+          <div className="space-y-2">
+            <div className="w-full bg-[#EEF3F5] rounded-full h-1">
+              <div className="bg-emerald-600 h-1 rounded-full transition-all duration-200" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                {logoUrl ? (
+                  <img src={logoUrl} alt={companyName} className="h-5 w-auto object-contain opacity-70" />
+                ) : (
+                  <div className="w-5 h-5 rounded bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold">{companyName.slice(0, 1)}</div>
+                )}
+                <span className="text-xs text-slate-400">{companyName}</span>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-slate-400 tabular-nums">
                 {/* Per-question elapsed timer */}
-                <span className="flex items-center gap-1 tabular-nums text-slate-400">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <span className="flex items-center gap-1">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
                   </svg>
                   {`${String(Math.floor(qElapsed / 60)).padStart(2, '0')}:${String(qElapsed % 60).padStart(2, '0')}`}
                 </span>
-                <span>{progress}%</span>
+                <span className="text-slate-300">|</span>
+                <span>{t(`${qIndex + 1} / ${questions.length}`, `${qIndex + 1} / ${questions.length}`)}</span>
               </div>
             </div>
-            <div className="w-full bg-slate-100 rounded-full h-2">
-              <div className="bg-emerald-500 h-2 rounded-full transition-all" style={{ width: `${progress}%` }} />
-            </div>
-          </div>
-
-          {/* Company header (small) */}
-          <div className="flex items-center gap-2">
-            {logoUrl ? (
-              <img src={logoUrl} alt={companyName} className="h-6 w-auto object-contain" />
-            ) : (
-              <div className="w-6 h-6 rounded bg-emerald-600 text-white flex items-center justify-center text-xs font-black">{companyName.slice(0, 1)}</div>
-            )}
-            <span className="text-xs text-slate-400 font-medium">{companyName}</span>
           </div>
 
           {/* Question */}
-          <div className="bg-slate-50 rounded-xl p-4 space-y-2">
+          <div className="space-y-2 border-t border-slate-100 pt-4">
             <div className="flex items-center gap-2">
-              <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${q.type === 'Technical' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+              <span className={`text-[10px] px-2 py-0.5 rounded-sm font-semibold tracking-wide uppercase ${q.type === 'Technical' ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'bg-purple-50 text-purple-600 border border-purple-200'}`}>
                 {q.type === 'Technical' ? t('فني', 'Technical') : t('سلوكي', 'Behavioral')}
               </span>
               {q.framework && <span className="text-xs text-slate-400">{q.framework}</span>}
             </div>
-            <p className="font-semibold text-slate-800 text-sm leading-relaxed">{q.questionText}</p>
+            <p className="font-semibold text-slate-800 text-base leading-relaxed">{q.questionText}</p>
           </div>
 
           {/* Answer area */}
@@ -461,13 +476,13 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
                   <button
                     key={i}
                     onClick={() => setCurrentAnswer(`${letter}. ${opt}`)}
-                    className={`w-full text-start px-4 py-3 rounded-xl border text-sm font-medium transition-all ${
+                    className={`w-full text-start px-4 py-3 rounded-lg border text-sm transition-all duration-150 ${
                       selected
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow'
-                        : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50'
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-white text-slate-700 border-slate-200 hover:border-emerald-400 hover:bg-emerald-50'
                     }`}
                   >
-                    <span className="font-bold me-2">{letter}.</span>{opt}
+                    <span className="font-bold me-2 opacity-60">{letter}.</span>{opt}
                   </button>
                 );
               })}
@@ -475,14 +490,14 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
           ) : (
             <div>
               <textarea
-                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
+                className="hw-textarea w-full resize-none"
                 rows={5}
                 placeholder={t('اكتب إجابتك هنا بالتفصيل…', 'Write your answer in detail here…')}
                 value={currentAnswer}
                 onChange={e => setCurrentAnswer(e.target.value)}
               />
               {q.minWords && (
-                <p className="text-xs text-slate-400 mt-1">
+                <p className="text-xs text-slate-400 mt-1.5">
                   {t(`الحد الأدنى: ${q.minWords} كلمة`, `Minimum: ${q.minWords} words`)}
                 </p>
               )}
@@ -492,11 +507,11 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
           <button
             onClick={handleAnswerSubmit}
             disabled={!currentAnswer.trim()}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow transition-colors text-sm"
+            className="hw-btn hw-btn-primary hw-btn-w disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {qIndex + 1 < questions.length
-              ? t('السؤال التالي ←', 'Next Question →')
-              : t('انتقل لاستبيان بيئة العمل ←', 'Go to Work Environment Survey →')}
+              ? t('السؤال التالي', 'Next Question')
+              : t('انتقل لاستبيان بيئة العمل', 'Go to Work Environment Survey')}
           </button>
         </div>
       </div>
@@ -506,16 +521,16 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   // ── SURVEY ──
   if (phase === 'survey') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-emerald-50 to-slate-100 p-4" dir={dir}>
+      <div className="min-h-screen bg-[#F7FAFB] p-4" dir={dir}>
         <div className="max-w-2xl mx-auto space-y-4">
-          <div className="bg-white rounded-2xl shadow p-4 flex items-center gap-3">
+          <div className="bg-white border border-slate-200 rounded-lg px-4 py-3 flex items-center gap-3">
             {logoUrl ? (
-              <img src={logoUrl} alt={companyName} className="h-8 w-auto object-contain" />
+              <img src={logoUrl} alt={companyName} className="h-7 w-auto object-contain" />
             ) : (
-              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center text-sm font-black">{companyName.slice(0, 1)}</div>
+              <div className="w-7 h-7 rounded bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">{companyName.slice(0, 1)}</div>
             )}
             <div>
-              <div className="font-bold text-slate-800 text-sm">{companyName}</div>
+              <div className="font-semibold text-slate-800 text-sm">{companyName}</div>
               <div className="text-xs text-slate-400">{t('استبيان بيئة العمل', 'Work Environment Survey')}</div>
             </div>
           </div>
@@ -532,10 +547,10 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   // ── SAVING ──
   if (phase === 'saving') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100 p-4" dir={dir}>
-        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center space-y-4">
-          <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-slate-600 font-medium text-sm">
+      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
+        <div className="bg-white border border-slate-200 rounded-xl p-10 max-w-sm w-full text-center space-y-4">
+          <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-slate-500 text-sm">
             {t('جارٍ حفظ إجاباتك…', 'Saving your responses…')}
           </p>
         </div>
@@ -545,21 +560,27 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
 
   // ── DONE ──
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100 p-4" dir={dir}>
-      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center space-y-5">
+    <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
+      <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-sm w-full text-center space-y-5">
         {header}
-        <div className="text-6xl">🎉</div>
-        <h2 className="text-2xl font-black text-slate-800">
-          {t('شكراً لك!', 'Thank You!')}
-        </h2>
-        <p className="text-slate-500 text-sm leading-relaxed">
-          {t(
-            `تم تسجيل إجاباتك بنجاح يا ${empName}. سيتم مراجعة نتائج التقييم من قِبل الفريق المختص وإعداد تقرير شامل.`,
-            `Your responses have been recorded successfully, ${empName}. The assessment results will be reviewed by the relevant team and a comprehensive report will be prepared.`,
-          )}
-        </p>
-        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-sm text-emerald-800 font-medium">
-          {t('✅ التقييم مكتمل — يمكنك إغلاق هذه الصفحة.', '✅ Assessment complete — you may close this page.')}
+        <div className="w-12 h-12 rounded-full bg-green-50 border border-green-200 flex items-center justify-center mx-auto">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-green-600" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+          </svg>
+        </div>
+        <div className="space-y-1">
+          <h2 className="text-lg font-bold text-slate-800">
+            {t('شكراً لك!', 'Thank You!')}
+          </h2>
+          <p className="text-slate-500 text-sm leading-relaxed">
+            {t(
+              `تم تسجيل إجاباتك بنجاح يا ${empName}. سيتم مراجعة نتائج التقييم من قِبل الفريق المختص وإعداد تقرير شامل.`,
+              `Your responses have been recorded successfully, ${empName}. The assessment results will be reviewed by the relevant team and a comprehensive report will be prepared.`,
+            )}
+          </p>
+        </div>
+        <div className="border border-green-200 rounded-lg px-4 py-3 bg-green-50 text-sm text-green-700 font-medium">
+          {t('التقييم مكتمل — يمكنك إغلاق هذه الصفحة.', 'Assessment complete — you may close this page.')}
         </div>
         <p className="text-xs text-slate-400">
           {companyName} · {new Date().toLocaleDateString(ar ? 'ar-SA' : 'en-US')}

@@ -21,7 +21,7 @@ const ABJAD = ['أ', 'ب', 'ج', 'د'];
 const DIFFICULTY_OPTIONS: { value: PaperDifficulty; label: string; desc: string }[] = [
   { value: 'easy',   label: 'سهل',    desc: 'أسئلة أساسية للمعرفة العامة' },
   { value: 'medium', label: 'متوسط',  desc: 'يتطلب خبرة عملية ٣–٥ سنوات' },
-  { value: 'hard',   label: 'صعب',    desc: 'تحليلي ومتقدم — للقيادات' },
+  { value: 'hard',   label: 'صعب',    desc: 'تحليلي ومتقدم، للقيادات' },
 ];
 
 const JOB_TITLES_DEFAULT = [
@@ -84,7 +84,7 @@ export function PaperAssessmentPortal({ token: tokenId }: Props) {
       const ok = await verifyPaperAccess(tok, email, password);
       if (ok) setScreen('config');
       else setLoginErr('البريد الإلكتروني أو كلمة المرور غير صحيحة.');
-    } catch { setLoginErr('حدث خطأ — حاول مجدداً.'); }
+    } catch { setLoginErr('حدث خطأ، حاول مجدداً.'); }
     finally { setLoginLoading(false); }
   };
 
@@ -108,31 +108,71 @@ export function PaperAssessmentPortal({ token: tokenId }: Props) {
 
   // ---- Render ----
 
-  if (screen === 'loading') return <FullCenter><Spinner /><p style={styles.hint}>جارٍ التحقق من الرابط...</p></FullCenter>;
-  if (screen === 'error')   return <FullCenter><div style={styles.errorBox}><span style={styles.errorIcon}>⚠️</span>{errMsg}</div></FullCenter>;
+  if (screen === 'loading') return (
+    <FullCenter>
+      <Spinner />
+      <p className="mt-3 text-sm text-slate-500">جارٍ التحقق من الرابط...</p>
+    </FullCenter>
+  );
+
+  if (screen === 'error') return (
+    <FullCenter>
+      <div className="flex flex-col items-center gap-3 bg-rose-50 border border-rose-200 rounded-xl px-8 py-7 text-rose-700 text-sm text-center max-w-sm">
+        <svg className="w-8 h-8 text-rose-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+        </svg>
+        <span className="font-semibold leading-relaxed">{errMsg}</span>
+      </div>
+    </FullCenter>
+  );
 
   if (screen === 'login') return (
     <FullCenter>
-      <div style={styles.card}>
-        {tok?.companyLogoUrl && <img src={tok.companyLogoUrl} alt="logo" style={styles.logo} />}
-        <h2 style={styles.cardTitle}>تسجيل الدخول</h2>
-        <p style={styles.cardSub}>بوابة التقييم الوظيفي — {tok?.companyName}</p>
-        <label style={styles.label}>البريد الإلكتروني</label>
-        <input
-          style={styles.input} type="email" dir="ltr"
-          value={email} onChange={e => setEmail(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleLogin()}
-          placeholder="example@company.com"
-        />
-        <label style={styles.label}>كلمة المرور</label>
-        <input
-          style={styles.input} type="password" dir="ltr"
-          value={password} onChange={e => setPassword(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleLogin()}
-          placeholder="••••••••"
-        />
-        {loginErr && <p style={styles.err}>{loginErr}</p>}
-        <button style={styles.btnPrimary} onClick={handleLogin} disabled={loginLoading}>
+      <div className="bg-white border border-slate-200 rounded-xl w-full max-w-sm flex flex-col gap-5 px-8 py-9">
+        {tok?.companyLogoUrl && (
+          <img src={tok.companyLogoUrl} alt="logo" className="h-12 object-contain self-center" />
+        )}
+        <div className="text-center">
+          <h2 className="text-xl font-bold text-slate-900">تسجيل الدخول</h2>
+          <p className="mt-1 text-sm text-slate-500">بوابة التقييم الوظيفي · {tok?.companyName}</p>
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-600 tracking-wide">البريد الإلكتروني</label>
+            <input
+              className="hw-input text-sm"
+              type="email"
+              dir="ltr"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLogin()}
+              placeholder="example@company.com"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-600 tracking-wide">كلمة المرور</label>
+            <input
+              className="hw-input text-sm"
+              type="password"
+              dir="ltr"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLogin()}
+              placeholder="••••••••"
+            />
+          </div>
+        </div>
+
+        {loginErr && (
+          <p className="text-xs text-rose-600 text-center">{loginErr}</p>
+        )}
+
+        <button
+          className="hw-btn hw-btn-primary w-full flex items-center justify-center gap-2"
+          onClick={handleLogin}
+          disabled={loginLoading}
+        >
           {loginLoading ? <Spinner small /> : 'دخول'}
         </button>
       </div>
@@ -141,118 +181,169 @@ export function PaperAssessmentPortal({ token: tokenId }: Props) {
 
   if (screen === 'config') return (
     <FullCenter>
-      <div style={{ ...styles.card, maxWidth: 560 }}>
-        {tok?.companyLogoUrl && <img src={tok.companyLogoUrl} alt="logo" style={styles.logo} />}
-        <h2 style={styles.cardTitle}>إعدادات التقييم الوظيفي</h2>
-        <p style={styles.cardSub}>{tok?.companyName} — أنشئ اختباراً بمواصفاتك</p>
+      <div className="bg-white border border-slate-200 rounded-xl w-full max-w-lg flex flex-col gap-6 px-8 py-8">
+        {tok?.companyLogoUrl && (
+          <img src={tok.companyLogoUrl} alt="logo" className="h-11 object-contain self-center" />
+        )}
+
+        <div className="text-center">
+          <h2 className="text-xl font-bold text-slate-900">إعدادات التقييم الوظيفي</h2>
+          <p className="mt-1 text-sm text-slate-500">{tok?.companyName}: أنشئ اختباراً بمواصفاتك</p>
+        </div>
 
         {/* Job title */}
-        <label style={styles.label}>المسمى الوظيفي</label>
-        <select
-          style={styles.select}
-          value={sectorTitles.includes(jobTitle) ? jobTitle : '__custom__'}
-          onChange={e => { if (e.target.value !== '__custom__') setJobTitle(e.target.value); }}
-        >
-          {sectorTitles.map(t => <option key={t} value={t}>{t}</option>)}
-          <option value="__custom__">✏️ مسمى آخر (اكتب أدناه)</option>
-        </select>
-        <input
-          style={{ ...styles.input, marginTop: 6 }}
-          value={sectorTitles.includes(jobTitle) ? '' : jobTitle}
-          onChange={e => setJobTitle(e.target.value)}
-          placeholder="أو اكتب مسمى وظيفي مختلف هنا…"
-        />
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-600 tracking-wide">المسمى الوظيفي</label>
+          <select
+            className="hw-input text-sm cursor-pointer"
+            value={sectorTitles.includes(jobTitle) ? jobTitle : '__custom__'}
+            onChange={e => { if (e.target.value !== '__custom__') setJobTitle(e.target.value); }}
+          >
+            {sectorTitles.map(t => <option key={t} value={t}>{t}</option>)}
+            <option value="__custom__">مسمى آخر (اكتب أدناه)</option>
+          </select>
+          <input
+            className="hw-input text-sm mt-1"
+            value={sectorTitles.includes(jobTitle) ? '' : jobTitle}
+            onChange={e => setJobTitle(e.target.value)}
+            placeholder="أو اكتب مسمى وظيفي مختلف هنا…"
+          />
+        </div>
 
         {/* Count */}
-        <label style={styles.label}>عدد الأسئلة</label>
-        <div style={styles.pillRow}>
-          {[20, 30, 40, 50].map(n => (
-            <button
-              key={n} style={{ ...styles.pill, ...(qCount === n ? styles.pillActive : {}) }}
-              onClick={() => setQCount(n)}
-            >{n} سؤال</button>
-          ))}
+        <div className="flex flex-col gap-2">
+          <label className="text-xs font-semibold text-slate-600 tracking-wide">عدد الأسئلة</label>
+          <div className="flex gap-2 flex-wrap">
+            {[20, 30, 40, 50].map(n => (
+              <button
+                key={n}
+                className={`px-4 py-1.5 text-sm font-semibold rounded-md border transition-colors duration-150
+                  ${qCount === n
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-400 hover:text-emerald-700'
+                  }`}
+                onClick={() => setQCount(n)}
+              >{n} سؤال</button>
+            ))}
+          </div>
         </div>
 
         {/* Difficulty */}
-        <label style={styles.label}>مستوى الصعوبة</label>
-        <div style={styles.pillRow}>
-          {DIFFICULTY_OPTIONS.map(d => (
-            <button
-              key={d.value}
-              style={{ ...styles.pill, ...(difficulty === d.value ? styles.pillActive : {}), flex: 1 }}
-              onClick={() => setDifficulty(d.value)}
-              title={d.desc}
-            >{d.label}</button>
-          ))}
+        <div className="flex flex-col gap-2">
+          <label className="text-xs font-semibold text-slate-600 tracking-wide">مستوى الصعوبة</label>
+          <div className="flex gap-2">
+            {DIFFICULTY_OPTIONS.map(d => (
+              <button
+                key={d.value}
+                title={d.desc}
+                className={`flex-1 py-1.5 text-sm font-semibold rounded-md border transition-colors duration-150
+                  ${difficulty === d.value
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-400 hover:text-emerald-700'
+                  }`}
+                onClick={() => setDifficulty(d.value)}
+              >{d.label}</button>
+            ))}
+          </div>
         </div>
 
         {/* Behavioral % */}
-        <label style={styles.label}>
-          نسبة الأسئلة السلوكية: <strong style={{ color: '#1B4F72' }}>{behPct}٪</strong>
-          &nbsp;|&nbsp; الفنية: <strong style={{ color: '#117A65' }}>{100 - behPct}٪</strong>
-        </label>
-        <input
-          style={styles.range} type="range" min={0} max={100} step={10}
-          value={behPct} onChange={e => setBehPct(+e.target.value)}
-        />
-        <div style={styles.rangeLabels}>
-          <span>0٪ سلوكي</span><span>50٪</span><span>100٪ سلوكي</span>
+        <div className="flex flex-col gap-2">
+          <label className="text-xs font-semibold text-slate-600 tracking-wide">
+            نسبة الأسئلة السلوكية:{' '}
+            <span className="text-emerald-700 font-bold">{behPct}٪</span>
+            <span className="text-slate-400 mx-1">|</span>
+            الفنية: <span className="text-slate-700 font-bold">{100 - behPct}٪</span>
+          </label>
+          <input
+            className="w-full cursor-pointer accent-emerald-600"
+            type="range" min={0} max={100} step={10}
+            value={behPct}
+            onChange={e => setBehPct(+e.target.value)}
+          />
+          <div className="flex justify-between text-xs text-slate-400">
+            <span>0٪ سلوكي</span><span>50٪</span><span>100٪ سلوكي</span>
+          </div>
         </div>
 
         {/* Theories / frameworks */}
-        <label style={styles.label}>الأطر والمقاييس (اختياري)</label>
-        <p style={{ ...styles.hint, textAlign: 'right', margin: '0 0 4px' }}>
-          فعّل أُطر القياس لتُدمج في صياغة الأسئلة ومبرر الإجابة النموذجية.
-        </p>
-        <div style={styles.theoryGrid}>
-          {THEORY_OPTIONS.map(o => {
-            const on = theories[o.key];
-            return (
-              <button
-                key={o.key} type="button"
-                style={{ ...styles.theoryCard, ...(on ? styles.theoryCardActive : {}) }}
-                onClick={() => setTheories(p => ({ ...p, [o.key]: !p[o.key] }))}
-              >
-                <span style={styles.theoryCheck}>{on ? '☑' : '☐'}</span>
-                <span style={styles.theoryLabel}>{o.label}</span>
-                <span style={styles.theoryDesc}>{o.desc}</span>
-              </button>
-            );
-          })}
+        <div className="flex flex-col gap-2">
+          <label className="text-xs font-semibold text-slate-600 tracking-wide">الأطر والمقاييس (اختياري)</label>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            فعّل أُطر القياس لتُدمج في صياغة الأسئلة ومبرر الإجابة النموذجية.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {THEORY_OPTIONS.map(o => {
+              const on = theories[o.key];
+              return (
+                <button
+                  key={o.key}
+                  type="button"
+                  className={`flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2.5 text-right transition-colors duration-150
+                    ${on
+                      ? 'bg-emerald-50 border-emerald-400 text-emerald-800'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                    }`}
+                  onClick={() => setTheories(p => ({ ...p, [o.key]: !p[o.key] }))}
+                >
+                  <div className="flex items-center gap-1.5 w-full">
+                    {on ? (
+                      <svg className="w-3.5 h-3.5 text-emerald-600 shrink-0" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
+                        <rect x="0.5" y="0.5" width="13" height="13" rx="2.5" stroke="currentColor" strokeWidth="1" fill="none"/>
+                        <path d="M3 7l2.5 2.5L11 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                      </svg>
+                    ) : (
+                      <svg className="w-3.5 h-3.5 text-slate-300 shrink-0" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                        <rect x="0.5" y="0.5" width="13" height="13" rx="2.5" stroke="currentColor" strokeWidth="1"/>
+                      </svg>
+                    )}
+                    <span className="text-xs font-bold">{o.label}</span>
+                  </div>
+                  <span className="text-xs text-slate-400 leading-relaxed mt-0.5">{o.desc}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Summary */}
-        <div style={styles.summaryBox}>
-          <span>📋 {jobTitle || '...'}</span>
-          <span>|</span>
+        {/* Summary strip */}
+        <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600 font-medium">
+          <span>{jobTitle || '...'}</span>
+          <span className="text-slate-300">·</span>
           <span>{qCount} سؤال</span>
-          <span>|</span>
+          <span className="text-slate-300">·</span>
           <span>{DIFFICULTY_OPTIONS.find(d => d.value === difficulty)?.label}</span>
-          <span>|</span>
+          <span className="text-slate-300">·</span>
           <span>{behPct}٪ سلوكي / {100 - behPct}٪ فني</span>
         </div>
 
-        <button
-          style={{ ...styles.btnPrimary, fontSize: 16, padding: '14px 0', marginTop: 8 }}
-          onClick={handleGenerate}
-          disabled={!jobTitle.trim()}
-        >
-          🚀 توليد ومعاينة الاختبار
-        </button>
-        <p style={{ ...styles.hint, marginTop: 8 }}>ستستعرض الأسئلة والنموذج قبل الطباعة — توليد غير محدود لأي مسمى</p>
+        <div className="flex flex-col gap-2">
+          <button
+            className="hw-btn hw-btn-primary w-full text-sm py-3"
+            onClick={handleGenerate}
+            disabled={!jobTitle.trim()}
+          >
+            توليد ومعاينة الاختبار
+          </button>
+          <p className="text-xs text-slate-400 text-center">
+            ستستعرض الأسئلة والنموذج قبل الطباعة، توليد غير محدود لأي مسمى
+          </p>
+        </div>
       </div>
     </FullCenter>
   );
 
   if (screen === 'generating') return (
     <FullCenter>
-      <div style={{ ...styles.card, textAlign: 'center' }}>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>🤖</div>
-        <h2 style={styles.cardTitle}>جارٍ الإعداد...</h2>
-        <p style={styles.cardSub}>{genProgress}</p>
+      <div className="bg-white border border-slate-200 rounded-xl w-full max-w-sm flex flex-col items-center gap-4 px-8 py-10 text-center">
         <Spinner />
-        <p style={styles.hint}>الذكاء الاصطناعي يُنشئ أسئلة مخصصة — قد يستغرق ٣٠–٦٠ ثانية</p>
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">جارٍ الإعداد...</h2>
+          <p className="mt-1 text-sm text-slate-500">{genProgress}</p>
+        </div>
+        <p className="text-xs text-slate-400 leading-relaxed max-w-xs">
+          الذكاء الاصطناعي يُنشئ أسئلة مخصصة، قد يستغرق ٣٠–٦٠ ثانية
+        </p>
       </div>
     </FullCenter>
   );
@@ -261,66 +352,118 @@ export function PaperAssessmentPortal({ token: tokenId }: Props) {
     const behN = questions.filter(q => q.type === 'behavioral').length;
     const techN = questions.filter(q => q.type === 'technical').length;
     return (
-      <div style={styles.previewWrap}>
+      <div className="min-h-screen bg-[#F7FAFB]" style={{ fontFamily: "'Thmanyah Sans', 'Cairo', 'Tajawal', sans-serif", direction: 'rtl' }}>
         {/* Sticky toolbar */}
-        <div style={styles.previewBar}>
-          <div style={styles.previewBarInfo}>
-            {tok?.companyLogoUrl && <img src={tok.companyLogoUrl} alt="logo" style={styles.previewLogo} />}
+        <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-5 py-3 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            {tok?.companyLogoUrl && (
+              <img src={tok.companyLogoUrl} alt="logo" className="h-8 object-contain" />
+            )}
             <div>
-              <div style={styles.previewTitle}>استعراض الاختبار — {activeTitle}</div>
-              <div style={styles.previewMeta}>
+              <div className="text-sm font-bold text-slate-900">استعراض الاختبار: {activeTitle}</div>
+              <div className="text-xs text-slate-500 mt-0.5">
                 {questions.length} سؤال · {behN} سلوكي · {techN} فني ·{' '}
                 {DIFFICULTY_OPTIONS.find(d => d.value === difficulty)?.label}
               </div>
             </div>
           </div>
-          <div style={styles.previewActions}>
+          <div className="flex gap-2 flex-wrap">
             <button
-              style={{ ...styles.barBtn, ...(showAnswers ? styles.barBtnOn : {}) }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md border transition-colors duration-150
+                ${showAnswers
+                  ? 'bg-amber-50 border-amber-300 text-amber-700'
+                  : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                }`}
               onClick={() => setShowAnswers(s => !s)}
-            >{showAnswers ? '🙈 إخفاء النموذج' : '👁️ إظهار النموذج'}</button>
+            >
+              {showAnswers ? 'إخفاء النموذج' : 'إظهار النموذج'}
+            </button>
             <button
-              style={{ ...styles.barBtn, ...styles.barBtnPrint }}
+              className="hw-btn hw-btn-primary hw-btn-sm"
               onClick={() => buildPaperPdf(questions, activeTitle, tok?.companyName || '', tok?.companyLogoUrl)}
-            >🖨️ طباعة / PDF</button>
-            <button style={styles.barBtn} onClick={() => setScreen('config')}>⚙️ الإعدادات</button>
-            <button style={styles.barBtn} onClick={handleGenerate}>🔄 توليد جديد</button>
+            >
+              طباعة / PDF
+            </button>
+            <button
+              className="px-3 py-1.5 text-xs font-semibold rounded-md border border-slate-200 bg-white text-slate-600 hover:border-slate-300 transition-colors duration-150"
+              onClick={() => setScreen('config')}
+            >
+              الإعدادات
+            </button>
+            <button
+              className="px-3 py-1.5 text-xs font-semibold rounded-md border border-slate-200 bg-white text-slate-600 hover:border-slate-300 transition-colors duration-150"
+              onClick={handleGenerate}
+            >
+              توليد جديد
+            </button>
           </div>
         </div>
 
         {/* Questions list */}
-        <div style={styles.previewBody}>
+        <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-3">
           {questions.map((q, i) => {
             const correctIdx = q.options.findIndex(o => o === q.correctAnswer);
             return (
-              <div key={i} style={styles.qCard}>
-                <div style={styles.qHead}>
-                  <span style={styles.qNum}>{i + 1}</span>
-                  <span style={{ ...styles.qTag, ...(q.type === 'behavioral' ? styles.qTagBeh : styles.qTagTech) }}>
+              <div key={i} className="bg-white border border-slate-200 rounded-xl px-5 py-4">
+                {/* Question header */}
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                    {i + 1}
+                  </span>
+                  <span className={`text-xs font-semibold rounded-sm px-2 py-0.5
+                    ${q.type === 'behavioral'
+                      ? 'bg-slate-100 text-slate-600'
+                      : 'bg-blue-50 text-blue-700'
+                    }`}>
                     {q.type === 'behavioral' ? 'سلوكي' : 'فني'}
                   </span>
-                  {q.theory && <span style={styles.qTheoryTag}>{q.theory}</span>}
+                  {q.theory && (
+                    <span className="text-xs font-semibold rounded-sm px-2 py-0.5 bg-slate-50 text-slate-500 border border-slate-200">
+                      {q.theory}
+                    </span>
+                  )}
                 </div>
-                <div style={styles.qText}>{q.text}</div>
-                <div style={styles.qOpts}>
+
+                {/* Question text */}
+                <p className="text-sm font-semibold text-slate-900 leading-relaxed mb-3">{q.text}</p>
+
+                {/* Options */}
+                <div className="flex flex-col gap-1.5">
                   {q.options.map((o, oi) => {
                     const isCorrect = showAnswers && oi === correctIdx;
                     return (
-                      <div key={oi} style={{ ...styles.qOpt, ...(isCorrect ? styles.qOptCorrect : {}) }}>
-                        <span style={styles.qOptAbjad}>{ABJAD[oi] || oi + 1}</span>
+                      <div
+                        key={oi}
+                        className={`flex items-center gap-2.5 px-3 py-2 rounded-md border text-sm transition-colors
+                          ${isCorrect
+                            ? 'bg-green-50 border-green-300 text-green-800 font-semibold'
+                            : 'bg-white border-slate-200 text-slate-700'
+                          }`}
+                      >
+                        <span className={`w-6 h-6 rounded flex items-center justify-center text-xs font-bold shrink-0
+                          ${isCorrect ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {ABJAD[oi] || oi + 1}
+                        </span>
                         <span>{o}</span>
-                        {isCorrect && <span style={styles.qOptCheck}>✓ الإجابة النموذجية</span>}
+                        {isCorrect && (
+                          <span className="ms-auto text-xs font-semibold text-green-600">الإجابة النموذجية</span>
+                        )}
                       </div>
                     );
                   })}
                 </div>
+
+                {/* Rationale */}
                 {showAnswers && q.rationale && (
-                  <div style={styles.qRationale}><strong>مبرر الإجابة: </strong>{q.rationale}</div>
+                  <div className="mt-3 bg-slate-50 border border-slate-200 rounded-md px-3 py-2.5 text-xs text-slate-600 leading-relaxed">
+                    <span className="font-bold text-slate-700">مبرر الإجابة: </span>
+                    {q.rationale}
+                  </div>
                 )}
               </div>
             );
           })}
-          <div style={{ height: 40 }} />
+          <div className="h-10" />
         </div>
       </div>
     );
@@ -333,12 +476,10 @@ export function PaperAssessmentPortal({ token: tokenId }: Props) {
 
 function FullCenter({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{
-      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'linear-gradient(135deg, #EBF5FB 0%, #F8F9FA 100%)',
-      fontFamily: "'Thmanyah Sans', 'Cairo', 'Tajawal', sans-serif",
-      direction: 'rtl', padding: '24px',
-    }}>
+    <div
+      className="min-h-screen flex flex-col items-center justify-center bg-[#F7FAFB] px-6"
+      style={{ fontFamily: "'Thmanyah Sans', 'Cairo', 'Tajawal', sans-serif", direction: 'rtl' }}
+    >
       {children}
     </div>
   );
@@ -348,141 +489,13 @@ function Spinner({ small }: { small?: boolean }) {
   const size = small ? 18 : 36;
   return (
     <div style={{
-      width: size, height: size, margin: small ? '0 auto' : '16px auto',
-      border: `${small ? 2 : 3}px solid #D6EAF8`,
-      borderTop: `${small ? 2 : 3}px solid #1B4F72`,
+      width: size, height: size, margin: small ? '0 auto' : '8px auto',
+      border: `${small ? 2 : 3}px solid #E3EAEE`,
+      borderTop: `${small ? 2 : 3}px solid #11A8BC`,
       borderRadius: '50%', animation: 'spin 1s linear infinite',
     }} />
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  card: {
-    background: '#fff', borderRadius: 16, boxShadow: '0 4px 32px rgba(27,79,114,0.12)',
-    padding: '36px 32px', width: '100%', maxWidth: 480,
-    display: 'flex', flexDirection: 'column', gap: 10,
-  },
-  logo: { height: 56, objectFit: 'contain', alignSelf: 'center', marginBottom: 4 },
-  cardTitle: { margin: 0, fontSize: 22, fontWeight: 800, color: '#1B4F72', textAlign: 'center' },
-  cardSub: { margin: 0, fontSize: 14, color: '#666', textAlign: 'center' },
-  label: { fontSize: 13, fontWeight: 700, color: '#1B4F72', marginTop: 4 },
-  input: {
-    border: '1.5px solid #D0DCE8', borderRadius: 8, padding: '10px 14px',
-    fontSize: 14, outline: 'none', width: '100%',
-    fontFamily: 'inherit', color: '#1a1a2e', background: '#FAFCFF',
-  },
-  select: {
-    border: '1.5px solid #D0DCE8', borderRadius: 8, padding: '10px 14px',
-    fontSize: 14, outline: 'none', width: '100%',
-    fontFamily: 'inherit', color: '#1a1a2e', background: '#FAFCFF', cursor: 'pointer',
-  },
-  btnPrimary: {
-    background: 'linear-gradient(135deg, #1B4F72, #2E86C1)', color: '#fff',
-    border: 'none', borderRadius: 10, padding: '13px 0', fontSize: 15,
-    fontWeight: 700, cursor: 'pointer', width: '100%',
-    fontFamily: 'inherit', transition: 'opacity .15s',
-  },
-  btnSecondary: {
-    background: '#EBF5FB', color: '#1B4F72',
-    border: '1.5px solid #AED6F1', borderRadius: 10, padding: '11px 0', fontSize: 14,
-    fontWeight: 600, cursor: 'pointer', width: '100%', fontFamily: 'inherit',
-  },
-  err: { color: '#C0392B', fontSize: 13, margin: 0, textAlign: 'center' },
-  hint: { color: '#888', fontSize: 12, textAlign: 'center', margin: 0 },
-  errorBox: {
-    background: '#FDEDEC', border: '1px solid #E74C3C', borderRadius: 12,
-    padding: '24px 28px', color: '#C0392B', fontSize: 15, textAlign: 'center',
-    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
-  },
-  errorIcon: { fontSize: 40 },
-  pillRow: { display: 'flex', gap: 8, flexWrap: 'wrap' },
-  pill: {
-    border: '1.5px solid #D0DCE8', borderRadius: 20, padding: '6px 16px',
-    fontSize: 13, fontWeight: 600, cursor: 'pointer', background: '#FAFCFF',
-    color: '#555', fontFamily: 'inherit',
-  },
-  pillActive: { background: '#1B4F72', color: '#fff', borderColor: '#1B4F72' },
-  toggleRow: { display: 'flex', gap: 0, borderRadius: 8, overflow: 'hidden', border: '1.5px solid #D0DCE8' },
-  toggleBtn: {
-    flex: 1, padding: '8px 0', fontSize: 13, fontWeight: 600,
-    cursor: 'pointer', background: '#FAFCFF', color: '#555',
-    border: 'none', fontFamily: 'inherit',
-  },
-  toggleBtnActive: { background: '#1B4F72', color: '#fff' },
-  range: { width: '100%', cursor: 'pointer', accentColor: '#1B4F72' },
-  rangeLabels: { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888' },
-  summaryBox: {
-    background: '#EBF5FB', borderRadius: 8, padding: '10px 14px',
-    display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 13,
-    color: '#1B4F72', fontWeight: 600, alignItems: 'center',
-  },
-  theoryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 },
-  theoryCard: {
-    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
-    border: '1.5px solid #D0DCE8', borderRadius: 10, padding: '10px 12px',
-    background: '#FAFCFF', cursor: 'pointer', textAlign: 'right',
-    fontFamily: 'inherit', transition: 'all .15s',
-  },
-  theoryCardActive: { borderColor: '#8E44AD', background: '#F5EEF8' },
-  theoryCheck: { fontSize: 16, color: '#8E44AD' },
-  theoryLabel: { fontSize: 13, fontWeight: 700, color: '#1B4F72' },
-  theoryDesc: { fontSize: 11, color: '#888', lineHeight: 1.4 },
-  // preview
-  previewWrap: {
-    minHeight: '100vh', background: '#F0F3F7', direction: 'rtl',
-    fontFamily: "'Thmanyah Sans', 'Cairo', 'Tajawal', sans-serif",
-  },
-  previewBar: {
-    position: 'sticky', top: 0, zIndex: 10, background: '#fff',
-    borderBottom: '1px solid #E0E6ED', boxShadow: '0 2px 12px rgba(27,79,114,0.08)',
-    padding: '12px 20px', display: 'flex', alignItems: 'center',
-    justifyContent: 'space-between', gap: 16, flexWrap: 'wrap',
-  },
-  previewBarInfo: { display: 'flex', alignItems: 'center', gap: 12 },
-  previewLogo: { height: 38, objectFit: 'contain' },
-  previewTitle: { fontSize: 16, fontWeight: 800, color: '#1B4F72' },
-  previewMeta: { fontSize: 12, color: '#777', marginTop: 2 },
-  previewActions: { display: 'flex', gap: 8, flexWrap: 'wrap' },
-  barBtn: {
-    border: '1.5px solid #D0DCE8', borderRadius: 8, padding: '8px 14px',
-    fontSize: 13, fontWeight: 600, cursor: 'pointer', background: '#fff',
-    color: '#1B4F72', fontFamily: 'inherit',
-  },
-  barBtnOn: { background: '#F5EEF8', borderColor: '#8E44AD', color: '#8E44AD' },
-  barBtnPrint: { background: 'linear-gradient(135deg, #1B4F72, #2E86C1)', color: '#fff', borderColor: 'transparent' },
-  previewBody: { maxWidth: 820, margin: '0 auto', padding: '24px 16px' },
-  qCard: {
-    background: '#fff', borderRadius: 12, padding: '18px 20px', marginBottom: 14,
-    boxShadow: '0 1px 6px rgba(27,79,114,0.06)', border: '1px solid #EAEFF4',
-  },
-  qHead: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 },
-  qNum: {
-    width: 28, height: 28, borderRadius: '50%', background: '#1B4F72', color: '#fff',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 13, fontWeight: 700, flexShrink: 0,
-  },
-  qTag: { fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '3px 9px' },
-  qTagBeh: { background: '#EBF5FB', color: '#1B4F72' },
-  qTagTech: { background: '#E8F8F5', color: '#117A65' },
-  qTheoryTag: { fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '3px 9px', background: '#F5EEF8', color: '#8E44AD' },
-  qText: { fontSize: 15, fontWeight: 600, color: '#1a1a2e', lineHeight: 1.6, marginBottom: 12 },
-  qOpts: { display: 'flex', flexDirection: 'column', gap: 7 },
-  qOpt: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
-    border: '1.5px solid #EAEFF4', borderRadius: 8, fontSize: 14, color: '#333',
-  },
-  qOptCorrect: { background: '#EAFAF1', borderColor: '#27AE60', color: '#196F3D', fontWeight: 700 },
-  qOptAbjad: {
-    width: 24, height: 24, borderRadius: 6, background: '#F0F3F7', color: '#555',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 13, fontWeight: 700, flexShrink: 0,
-  },
-  qOptCheck: { marginInlineStart: 'auto', fontSize: 11, fontWeight: 700, color: '#27AE60' },
-  qRationale: {
-    marginTop: 10, background: '#FBF7FD', borderInlineStart: '3px solid #8E44AD',
-    borderRadius: 6, padding: '8px 12px', fontSize: 13, color: '#5B2C6F', lineHeight: 1.6,
-  },
-};
 
 // Inject spin keyframes once
 if (typeof document !== 'undefined') {
