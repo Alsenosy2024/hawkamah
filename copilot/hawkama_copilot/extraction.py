@@ -30,6 +30,7 @@ _PPTX_EXT = {".pptx"}
 _XLSX_EXT = {".xlsx", ".xlsm"}
 _PDF_EXT = {".pdf"}
 _IMG_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"}
+_VIDEO_EXT = {".mp4", ".mov", ".webm", ".avi", ".mkv", ".m4v", ".mpeg", ".mpg"}
 
 
 @dataclass
@@ -52,6 +53,28 @@ def extract_file(path: str | Path) -> ExtractResult:
 
 def is_image(filename: str) -> bool:
     return Path(filename).suffix.lower() in _IMG_EXT
+
+
+def is_video(filename: str) -> bool:
+    return Path(filename).suffix.lower() in _VIDEO_EXT
+
+
+def caption_video(data: bytes, filename: str) -> str:
+    """Short Arabic description of a (short, inline) video for readable evidence."""
+    mime = mimetypes.guess_type(filename)[0] or "video/mp4"
+    prompt = (
+        "صف محتوى هذا الفيديو بإيجاز (سطر إلى أربعة أسطر) بالعربية: الموضوع، المشاهد "
+        "الرئيسية، وأي نص ظاهر. لا تضف مقدمات."
+    )
+    try:
+        client = genai_client.get_client()
+        resp = client.models.generate_content(
+            model=MODELS.text,
+            contents=[prompt, types.Part.from_bytes(data=data, mime_type=mime)],
+        )
+        return (resp.text or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def caption_image(data: bytes, filename: str) -> str:

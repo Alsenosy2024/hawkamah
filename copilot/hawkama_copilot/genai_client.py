@@ -303,6 +303,31 @@ def embed_image(image_bytes: bytes, *, mime_type: str, dim: int | None = None, a
     return []
 
 
+def embed_video(video_bytes: bytes, *, mime_type: str, dim: int | None = None, attempts: int = 4) -> list[list[float]]:
+    """Embed a (short, inline) video with gemini-embedding-2.
+
+    Returns a LIST of per-segment vectors (the API splits longer clips into
+    intervals); each is normalized and in the same space as text/images. Only the
+    multimodal model is used. Returns [] on failure / oversized input.
+    """
+    if not video_bytes:
+        return []
+    client = get_client()
+    out_dim = dim or SETTINGS.embed_dim
+    cfg = types.EmbedContentConfig(output_dimensionality=out_dim)
+    part = types.Part.from_bytes(data=video_bytes, mime_type=mime_type)
+    for attempt in range(attempts):
+        try:
+            resp = client.models.embed_content(model=MODELS.embed, contents=part, config=cfg)
+            return [_normalize(list(e.values), out_dim) for e in (resp.embeddings or []) if e.values]
+        except Exception as e:  # noqa: BLE001
+            if _retryable(e) and attempt < attempts - 1:
+                time.sleep(_backoff(attempt))
+                continue
+            return []
+    return []
+
+
 def _normalize(vec: list[float], expected_dim: int) -> list[float]:
     # gemini-embedding-001 returns unit-norm vectors only at 3072; truncated MRL
     # vectors must be re-normalized for cosine/dot-product to behave.

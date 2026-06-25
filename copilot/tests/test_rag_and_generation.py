@@ -63,6 +63,27 @@ def test_image_ingest_multimodal(fake_gemini, tmp_corpus):
     assert rag.stats()["chunks"] >= 3
 
 
+def test_video_ingest_multimodal(fake_gemini, tmp_corpus):
+    rag = RagEngine("vid1")
+    mp4 = b"\x00\x00\x00\x18ftypmp42" + b"0" * 512        # stand-in video bytes
+    reports = rag.ingest_bytes([("clip.mp4", mp4)])
+    rep = next(r for r in reports if r.file == "clip.mp4")
+    assert rep.method == "video-embed" and rep.chunks == 2   # two segment chunks
+    vid_chunks = [c for c in rag.store.chunks if c.kind == "video"]
+    assert len(vid_chunks) == 2
+    assert all(c.embedding for c in vid_chunks)
+    assert "وصف الفيديو" in vid_chunks[0].text
+
+
+def test_oversized_video_rejected(fake_gemini, tmp_corpus):
+    from hawkama_copilot.rag import _VIDEO_INLINE_LIMIT
+    rag = RagEngine("vid2")
+    big = b"0" * (_VIDEO_INLINE_LIMIT + 1)
+    reports = rag.ingest_bytes([("big.mp4", big)])
+    rep = next(r for r in reports if r.file == "big.mp4")
+    assert rep.chunks == 0 and rep.error and "too large" in rep.error
+
+
 def test_primary_embed_is_multimodal():
     from hawkama_copilot.config import MODELS
     assert MODELS.embed == "gemini-embedding-2"

@@ -24,7 +24,19 @@ import mimetypes
 from . import genai_client
 from .chunking import Chunk, classify_doc_kind, hierarchical_chunk
 from .config import SETTINGS
-from .extraction import ExtractResult, caption_image, extract_bytes, extract_file, is_image
+from .extraction import (
+    ExtractResult,
+    caption_image,
+    caption_video,
+    extract_bytes,
+    extract_file,
+    is_image,
+    is_video,
+)
+
+# Inline-embed ceiling for video (the Files API path needs extra provisioning);
+# longer/larger clips should be trimmed before upload.
+_VIDEO_INLINE_LIMIT = 18 * 1024 * 1024
 from .vector_store import VectorStore
 
 
@@ -69,22 +81,32 @@ class RagEngine:
         # Images take the MULTIMODAL path (embed the image itself into the shared
         # vector space, with a caption as readable evidence); everything else is
         # extracted to text and chunked.
-        image_chunks: list[Chunk] = []
-        image_reports: list[IngestReport] = []
+        media_chunks: list[Chunk] = []
+        media_reports: list[IngestReport] = []
         text_items: list[tuple[str, ExtractResult]] = []
         for name, data in files:
             if is_image(name):
                 ch = self._image_chunk(name, data)
                 if ch:
-                    image_chunks.append(ch)
-                    image_reports.append(IngestReport(name, "image-embed", 1))
+                    media_chunks.append(ch)
+                    media_reports.append(IngestReport(name, "image-embed", 1))
                 else:
-                    image_reports.append(IngestReport(name, "image", 0, error="image embed failed"))
+                    media_reports.append(IngestReport(name, "image", 0, error="image embed failed"))
+            elif is_video(name):
+                if len(data) > _VIDEO_INLINE_LIMIT:
+                    media_reports.append(IngestReport(name, "video", 0, error="video too large (trim to a shorter clip)"))
+                    continue
+                chs = self._video_chunks(name, data)
+                if chs:
+                    media_chunks.extend(chs)
+                    media_reports.append(IngestReport(name, "video-embed", len(chs)))
+                else:
+                    media_reports.append(IngestReport(name, "video", 0, error="video embed failed"))
             else:
                 text_items.append((name, extract_bytes(data, filename=name)))
 
-        reports = self._ingest_extracted(text_items, on_progress, extra_chunks=image_chunks)
-        return image_reports + reports
+        reports = self._ingest_extracted(text_items, on_progress, extra_chunks=media_chunks)
+        return media_reports + reports
 
     def _image_chunk(self, name: str, data: bytes) -> Chunk | None:
         """Build one image chunk: multimodal embedding of the image + a caption."""
@@ -107,6 +129,31 @@ class RagEngine:
         )
         ch.embedding = vec
         return ch
+
+    def _video_chunks(self, name: str, data: bytes) -> list[Chunk]:
+        """Build one chunk per video segment: multimodal embedding + a caption."""
+        mime = mimetypes.guess_type(name)[0] or "video/mp4"
+        vecs = genai_client.embed_video(data, mime_type=mime)
+        if not vecs:
+            return []
+        caption = caption_video(data, name) or f"فيديو: {name}"
+        out: list[Chunk] = []
+        for i, v in enumerate(vecs):
+            seg = f" — مقطع {i + 1}" if len(vecs) > 1 else ""
+            ch = Chunk(
+                text=caption + seg,
+                heading_path=name,
+                char_start=0,
+                ordinal=i,
+                doc_id=name,
+                doc_name=name,
+                doc_kind="video",
+                kind="video",
+                media_mime=mime,
+            )
+            ch.embedding = v
+            out.append(ch)
+        return out
 
     def _ingest_extracted(
         self,
@@ -217,7 +264,7 @@ class RagEngine:
         out: list[str] = []
         used = 0
         for ev in items:
-            tag = " (صورة)" if ev.kind == "image" else ""
+            tag = {"image": " (صورة)", "video": " (فيديو)"}.get(ev.kind, "")
             head = f"[{ev.label}]{tag} {ev.doc_name}" + (f" › {ev.heading_path}" if ev.heading_path else "")
             body = ev.text.strip()
             block = f"{head}\n{body}"

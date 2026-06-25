@@ -217,7 +217,7 @@ const GovCopilot: React.FC<Props> = (props) => {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const chunksRef = useRef<DocChunk[] | null>(null);
-  // Ask-mode image attachments (multimodal RAG via gemini-embedding-2). Kept
+  // Ask-mode image/video attachments (multimodal RAG via gemini-embedding-2). Kept
   // LOCAL to the copilot (no new parent props) so it never touches the parent.
   const [attachments, setAttachments] = useState<{ file: File; url: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
