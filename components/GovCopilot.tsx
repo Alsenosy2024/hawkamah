@@ -5,7 +5,7 @@ import type { ChatTurn } from '../services/agentOrchestrator';
 import { loadChunks, retrieve } from '../services/governanceService';
 import { exportMessageDocx, exportMessageXlsx, exportMessagePdfDirect, exportMessageHtml, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual } from '../services/exportService';
 import { exportMessagePptx } from '../services/pptxExport';
-import { copilotEnabled, askStream as copilotAsk, draft as copilotDraft, exportDoc as copilotExport } from '../services/copilotClient';
+import { copilotEnabled, askStream as copilotAsk, draft as copilotDraft, exportDoc as copilotExport, stats as copilotStats, ingestFiles as copilotIngest } from '../services/copilotClient';
 import ThinkingTrace from './ThinkingTrace';
 import Markdown from './Markdown';
 
@@ -102,9 +102,12 @@ const GovCopilot: React.FC<Props> = (props) => {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const chunksRef = useRef<DocChunk[] | null>(null);
+  // Memoizes the one-time sync of this tenant's docs into the Python copilot
+  // corpus (see ensureCorpus). Reset when the tenant changes.
+  const corpusReadyRef = useRef<Promise<void> | null>(null);
 
   // Invalidate cached chunks when tenant changes (BUG-15 fix).
-  useEffect(() => { chunksRef.current = null; }, [tenantId]);
+  useEffect(() => { chunksRef.current = null; corpusReadyRef.current = null; }, [tenantId]);
 
   // Lazily load the tenant's chunks once the panel opens (RAG corpus).
   useEffect(() => {
@@ -138,6 +141,51 @@ const GovCopilot: React.FC<Props> = (props) => {
     } catch { return { ctx: '', count: 0, sources: [] }; }
   };
 
+  // Bridge: the Python copilot has its own RAG store, separate from Firestore.
+  // The app's uploads live in Firestore (gov_chunks); nothing else feeds the
+  // Python corpus, so without this it would answer with no evidence and just ask
+  // the user for documents. On first use per tenant we reconstruct each document
+  // from its Firestore chunks and ingest them once into the copilot corpus
+  // (skipped if the corpus is already populated — e.g. still warm from earlier).
+  const ensureCorpus = (): Promise<void> => {
+    if (!copilotEnabled() || !tenantId) return Promise.resolve();
+    if (corpusReadyRef.current) return corpusReadyRef.current;
+    corpusReadyRef.current = (async () => {
+      try {
+        const st = await copilotStats(tenantId);
+        if ((st?.chunks || 0) > 0) return;                 // already indexed
+      } catch { /* stats unreachable → attempt ingest anyway */ }
+
+      let chunks = chunksRef.current;
+      if (!chunks) {
+        try { chunks = await loadChunks(tenantId); chunksRef.current = chunks; }
+        catch { chunks = []; }
+      }
+      if (!chunks || !chunks.length) return;               // nothing to ingest
+
+      // Reconstruct documents from their ordered chunks.
+      const byDoc = new Map<string, DocChunk[]>();
+      for (const c of chunks) {
+        const key = c.docName || c.docId || 'document';
+        (byDoc.get(key) || byDoc.set(key, []).get(key)!).push(c);
+      }
+      const files: File[] = [];
+      for (const [name, cs] of byDoc) {
+        cs.sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0));
+        const body = cs.map(c => (c.headingPath ? c.headingPath + '\n' : '') + c.text).join('\n\n');
+        const fname = /\.[a-z0-9]+$/i.test(name) ? name : name + '.md';
+        files.push(new File([body], fname, { type: 'text/markdown' }));
+      }
+      try {
+        await copilotIngest(tenantId, files);
+      } catch (e) {
+        corpusReadyRef.current = null;                     // allow retry next time
+        throw e;
+      }
+    })();
+    return corpusReadyRef.current;
+  };
+
   const send = async (text: string) => {
     const q = text.trim();
     if (!q || busy) return;
@@ -158,6 +206,13 @@ const GovCopilot: React.FC<Props> = (props) => {
       // streaming Q&A). Falls through to the in-app stageChat path when disabled.
       if (copilotEnabled()) {
         const corpus = tenantId || 'default';
+        // Make sure this tenant's documents are indexed in the copilot corpus
+        // before we query, so it answers from the files instead of asking for them.
+        if (!corpusReadyRef.current) {
+          patch(m => ({ ...m, thoughts: [...m.thoughts, { id: nid(), text: t('جاري فهرسة ملفات المشروع للمرة الأولى…', 'Indexing project files for the first time…') }] }));
+          scrollDown();
+        }
+        try { await ensureCorpus(); } catch { /* degrade: query with whatever is indexed */ }
         if (LONG_RE.test(q)) {
           const doc = await copilotDraft({ corpus, request: q, language }, ac.signal);
           const docs = [...new Set(doc.sources.map(s => s.doc).filter(Boolean))];

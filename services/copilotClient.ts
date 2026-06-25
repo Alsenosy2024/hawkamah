@@ -161,6 +161,12 @@ export async function ingestFiles(
   return res.json();
 }
 
+export async function stats(corpus: string): Promise<{ corpus_id: string; documents: number; chunks: number; embedded: number }> {
+  const res = await fetch(`${BASE}/stats?corpus=${encodeURIComponent(corpus)}`);
+  if (!res.ok) throw new Error(`copilot /stats failed: ${res.status}`);
+  return res.json();
+}
+
 export async function health(): Promise<any> {
   const res = await fetch(`${BASE}/health`);
   if (!res.ok) throw new Error(`copilot /health failed: ${res.status}`);
