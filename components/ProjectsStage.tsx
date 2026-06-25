@@ -112,7 +112,9 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
       maxAttempts: 2,
       passingScore: 60,
       voiceQuestionCount: 0,
-      cameraProctoring: false,
+      // AI camera + screen-share proctoring ON by default (same anti-cheat engine
+      // as the online proctored exam). Admin can still toggle it off per link.
+      cameraProctoring: true,
       theories: { birkman: false, holland: true, psychTech: false, bloom: false },
       allowedJobTitles: jobTitles.join('\n'),
       accessCode: '',

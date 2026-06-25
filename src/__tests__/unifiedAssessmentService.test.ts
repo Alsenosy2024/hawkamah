@@ -79,6 +79,12 @@ describe('createUnifiedToken', () => {
     expect(data.passingScore).toBe(0);
     expect(data.cameraProctoring).toBe(false);
   });
+
+  it('carries cameraProctoring=true through to the saved token (AI proctoring config travels)', async () => {
+    await createUnifiedToken({ ...base, cameraProctoring: true } as any);
+    const data = fs.setDoc.mock.calls[0][1] as Record<string, unknown>;
+    expect(data.cameraProctoring).toBe(true);   // portal gates camera+screen monitoring on this flag
+  });
 });
 
 // ─── saveUnifiedResult — same undefined hazard (analysis before it's generated) ─
