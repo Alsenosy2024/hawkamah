@@ -1111,6 +1111,7 @@ export interface UnifiedAssessmentResult {
   employeeName: string;
   employeeEmail: string;
   jobTitle: string;
+  employeeId?: string;  // optional staff/employee number
   attempts: UnifiedAttempt[];
   bestScore: number;
   passed: boolean;

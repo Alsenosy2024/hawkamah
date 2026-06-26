@@ -112,6 +112,7 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
         const lines = [
           `=== تقرير: ${r.employeeName} ===`,
           `المسمى: ${r.jobTitle}`,
+          ...(r.employeeId ? [`الرقم الوظيفي: ${r.employeeId}`] : []),
           `أفضل درجة: ${r.bestScore}%`,
           `النتيجة: ${r.passed ? 'ناجح' : 'راسب'}`,
           `المحاولات: ${r.attempts.length}`,
@@ -230,7 +231,7 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
                       {r.employeeName}
                     </div>
                     <div className="text-xs text-slate-500 dark:text-slate-400 truncate leading-snug mt-0.5">
-                      {r.jobTitle}
+                      {r.jobTitle}{r.employeeId ? ` · ${r.employeeId}` : ''}
                     </div>
                   </div>
 

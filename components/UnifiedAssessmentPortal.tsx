@@ -1,28 +1,19 @@
 // Unified Assessment Portal — employee-facing exam portal.
 // URL param: ?assess=TOKEN
-// Flow: identify → job_pick → [access] → generating → exam → attempt_done → all_done
+// Flow: identify → job_pick → briefing → generating → exam → attempt_done → all_done
 // No per-user credentials — employees self-identify with name+email+job title.
+// Voice answers use Gemini transcription (MicRecorder → transcribeAudio); question
+// read-aloud uses the male Gemini TTS voice (ttsService).
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getUnifiedToken, saveUnifiedResult, scoreAttempt } from '../services/unifiedAssessmentService';
 import { generatePaperQuestions } from '../services/paperAssessmentService';
 import { createLiveProctor, speakProctorAlarm, type LiveProctorHandle } from '../services/proctorService';
 import { type ProctorSummary } from '../services/proctorCore';
+import { speak as ttsSpeak, cancelSpeech, prefetch as ttsPrefetch } from '../services/ttsService';
+import { transcribeAudio } from '../services/geminiService';
+import { MicRecorder, MicRecordError } from '../lib/audioRecorder';
 import type { UnifiedAssessmentToken, UnifiedAssessmentResult, UnifiedAttempt, PaperQuestion } from '../types';
-
-// ─── SpeechRecognition type declarations ───────────────────────────────────
-type SRConstructor = new () => SpeechRecognition;
-interface SpeechRecognition extends EventTarget {
-  lang: string; continuous: boolean; interimResults: boolean;
-  start(): void; stop(): void; abort(): void;
-  onresult: ((e: SpeechRecognitionEvent) => void) | null;
-  onerror: ((e: Event) => void) | null;
-  onend: (() => void) | null;
-}
-interface SpeechRecognitionEvent { results: SpeechRecognitionResultList; }
-interface SpeechRecognitionResultList { readonly length: number; [i: number]: SpeechRecognitionResult; }
-interface SpeechRecognitionResult { readonly length: number; [i: number]: SpeechRecognitionAlternative; }
-interface SpeechRecognitionAlternative { readonly transcript: string; }
 
 // ─── FaceDetector type declarations ────────────────────────────────────────
 interface FaceDetectorType {
@@ -30,7 +21,6 @@ interface FaceDetectorType {
 }
 
 const w = window as unknown as Record<string, unknown>;
-const SR: SRConstructor | null = (w['SpeechRecognition'] ?? w['webkitSpeechRecognition'] ?? null) as SRConstructor | null;
 const FD: FaceDetectorType | null = (() => {
   if (!('FaceDetector' in window)) return null;
   try {
@@ -53,15 +43,11 @@ const NAVY = {
 };
 
 // ─── TTS helper ────────────────────────────────────────────────────────────
-function speakArabic(text: string): void {
-  window.speechSynthesis?.cancel();
-  const utt = new SpeechSynthesisUtterance(text);
-  utt.lang = 'ar-SA';
-  utt.rate = 0.9;
-  const voices = window.speechSynthesis?.getVoices() ?? [];
-  const ar = voices.find(v => v.lang.startsWith('ar'));
-  if (ar) utt.voice = ar;
-  window.speechSynthesis?.speak(utt);
+// Read a question aloud with the male Gemini voice (falls back gracefully inside
+// ttsService). Never throws out of the UI.
+function speakQuestion(text: string): void {
+  cancelSpeech();
+  void ttsSpeak(text, { gender: 'male', lang: 'ar-SA' }).catch(() => { /* never throw */ });
 }
 
 // ─── Timer hook ────────────────────────────────────────────────────────────
@@ -94,7 +80,7 @@ function useTimer(seconds: number, onExpire: () => void) {
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────
-type Stage = 'loading' | 'identify' | 'job_pick' | 'access' | 'generating' | 'exam' | 'attempt_done' | 'all_done' | 'error';
+type Stage = 'loading' | 'identify' | 'job_pick' | 'briefing' | 'generating' | 'exam' | 'attempt_done' | 'all_done' | 'error';
 
 interface ExamState {
   qIndex: number;
@@ -103,6 +89,7 @@ interface ExamState {
   violations: number;
   startedAt: string;
   recording: boolean;
+  transcribing: boolean;
   transcript: string;
 }
 
@@ -113,6 +100,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [error, setError]         = useState('');
   const [name, setName]           = useState('');
   const [email, setEmail]         = useState('');
+  const [employeeId, setEmployeeId] = useState('');
   const [jobTitle, setJobTitle]   = useState('');
   const [accessCode, setAccessCode] = useState('');
   const [accessError, setAccessError] = useState('');
@@ -123,7 +111,13 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [resultId, setResultId]   = useState<string | null>(null);
   const [genError, setGenError]   = useState('');
   const [camError, setCamError]   = useState('');
+  const [voiceError, setVoiceError] = useState('');
   const [fullscreenBanner, setFullscreenBanner] = useState(false);
+
+  // --- Briefing device checks (mic + camera readiness before the exam) ---
+  const [micChecked, setMicChecked] = useState(false);
+  const [camChecked, setCamChecked] = useState(false);
+  const [deviceMsg, setDeviceMsg]   = useState('');
 
   // --- Live AI proctoring (Gemini Live: camera + screen → cheating signals) ---
   const [proctorStatus, setProctorStatus]       = useState<'off' | 'connecting' | 'live' | 'unavailable' | 'closed'>('off');
@@ -132,7 +126,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
 
   const videoRef    = useRef<HTMLVideoElement>(null);
   const streamRef   = useRef<MediaStream | null>(null);
-  const recogRef    = useRef<InstanceType<SRConstructor> | null>(null);
+  const micRef      = useRef<MicRecorder | null>(null);
   const violRef     = useRef(0);
   const examRef     = useRef<ExamState | null>(null);
   const faceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -281,8 +275,8 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
 
   // ─── Cancel attempt ───────────────────────────────────────────────────
   const handleCancelAttempt = useCallback(async (reason = '') => {
-    window.speechSynthesis?.cancel();
-    recogRef.current?.abort();
+    cancelSpeech();
+    micRef.current?.abort(); micRef.current = null;
     stopCamera();
     const es = examRef.current;
     if (!es) { setStage('attempt_done'); return; }
@@ -312,16 +306,17 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       jobTitle, attempts: newAttempts, bestScore,
       passed: bestScore >= (tok.passingScore ?? 60),
       submittedAt: new Date().toISOString(),
+      ...(employeeId.trim() ? { employeeId: employeeId.trim() } : {}),
     };
     if (resultId) result.id = resultId;
     const id = await saveUnifiedResult(result).catch(() => null);
     if (id && !resultId) setResultId(id);
-  }, [attempts, questions, jobTitle, tok, name, email, tokenId, resultId, stopCamera]);
+  }, [attempts, questions, jobTitle, tok, name, email, employeeId, tokenId, resultId, stopCamera]);
 
   // ─── Finish attempt ───────────────────────────────────────────────────
   const handleFinishAttempt = useCallback(async (es: ExamState) => {
-    window.speechSynthesis?.cancel();
-    recogRef.current?.abort();
+    cancelSpeech();
+    micRef.current?.abort(); micRef.current = null;
     stopCamera();
     if (!tok) return;
 
@@ -350,11 +345,12 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       jobTitle, attempts: newAttempts, bestScore,
       passed: bestScore >= (tok.passingScore ?? 60),
       submittedAt: new Date().toISOString(),
+      ...(employeeId.trim() ? { employeeId: employeeId.trim() } : {}),
     };
     if (resultId) result.id = resultId;
     const id = await saveUnifiedResult(result).catch(() => null);
     if (id && !resultId) setResultId(id);
-  }, [attempts, questions, jobTitle, tok, name, email, tokenId, resultId, stopCamera]);
+  }, [attempts, questions, jobTitle, tok, name, email, employeeId, tokenId, resultId, stopCamera]);
 
   // ─── Timer expiry ─────────────────────────────────────────────────────
   const onExpire = useCallback(() => {
@@ -369,32 +365,48 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
 
   const { remaining, start: startTimer, stop: stopTimer } = useTimer(tok?.secondsPerQuestion ?? 90, onExpire);
 
-  // ─── Voice recording ──────────────────────────────────────────────────
-  const startRecording = useCallback(() => {
-    if (!SR) return;
-    const r = new SR();
-    r.lang = 'ar-SA';
-    r.continuous = false;
-    r.interimResults = false;
-    r.onresult = (e) => {
-      const text = e.results[0]?.[0]?.transcript ?? '';
+  // ─── Voice recording (MicRecorder → Gemini transcription) ──────────────
+  const startRecording = useCallback(async () => {
+    setVoiceError('');
+    try {
+      const rec = new MicRecorder();
+      await rec.start();
+      micRef.current = rec;
       setExamState(prev => {
         if (!prev) return prev;
-        const next = { ...prev, transcript: text, recording: false };
+        const next = { ...prev, recording: true, transcribing: false, transcript: '' };
         examRef.current = next;
         return next;
       });
-    };
-    r.onerror = () => setExamState(prev => prev ? { ...prev, recording: false } : prev);
-    r.onend   = () => setExamState(prev => prev ? { ...prev, recording: false } : prev);
-    recogRef.current = r;
-    r.start();
-    setExamState(prev => prev ? { ...prev, recording: true, transcript: '' } : prev);
+    } catch (e: unknown) {
+      setVoiceError(e instanceof MicRecordError
+        ? 'تعذّر الوصول للميكروفون — تأكد من السماح بالإذن.'
+        : 'تعذّر بدء التسجيل.');
+      setExamState(prev => prev ? { ...prev, recording: false } : prev);
+    }
   }, []);
 
-  const stopRecording = useCallback(() => {
-    recogRef.current?.stop();
-    setExamState(prev => prev ? { ...prev, recording: false } : prev);
+  const stopRecording = useCallback(async () => {
+    const rec = micRef.current;
+    if (!rec) return;
+    micRef.current = null;
+    setExamState(prev => prev ? { ...prev, recording: false, transcribing: true } : prev);
+    try {
+      const seg = await rec.stop();
+      const text = (await transcribeAudio(seg.base64, seg.mimeType, 'ar')).trim();
+      setExamState(prev => {
+        if (!prev) return prev;
+        const next = { ...prev, transcript: text, transcribing: false };
+        examRef.current = next;
+        return next;
+      });
+      if (!text) setVoiceError('لم نتمكن من فهم الصوت — حاول مرة أخرى.');
+    } catch (e: unknown) {
+      setVoiceError(e instanceof MicRecordError
+        ? 'لم يُلتقط صوت — حاول مرة أخرى.'
+        : 'تعذّر تحويل الصوت إلى نص — حاول مرة أخرى.');
+      setExamState(prev => prev ? { ...prev, transcribing: false } : prev);
+    }
   }, []);
 
   const saveVoiceAnswer = useCallback(() => {
@@ -405,6 +417,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       voiceAnswers: { ...es.voiceAnswers, [es.qIndex]: es.transcript },
       transcript: '',
       recording: false,
+      transcribing: false,
     };
     examRef.current = next;
     setExamState(next);
@@ -415,12 +428,17 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     const next = es.qIndex + 1;
     if (next >= questions.length) { handleFinishAttempt(es); return; }
     const nextQ = questions[next];
-    const nextState = { ...es, qIndex: next, transcript: '', recording: false };
+    const nextState = { ...es, qIndex: next, transcript: '', recording: false, transcribing: false };
     examRef.current = nextState;
     setExamState(nextState);
+    setVoiceError('');
     startTimer();
-    window.speechSynthesis?.cancel();
-    if (nextQ.isVoice) setTimeout(() => speakArabic(nextQ.text), 400);
+    cancelSpeech();
+    if (nextQ.isVoice) {
+      setTimeout(() => speakQuestion(nextQ.text), 400);
+      const after = questions[next + 1];
+      if (after?.isVoice) ttsPrefetch(after.text, { gender: 'male' });
+    }
   }, [questions, handleFinishAttempt, startTimer]);
 
   const handleAnswer = useCallback((opt: string) => {
@@ -436,25 +454,6 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       setTimeout(() => handleFinishAttempt(next), 400);
     }
   }, [stopTimer, goNextQ, handleFinishAttempt, questions]);
-
-  // ─── Start exam ───────────────────────────────────────────────────────
-  const startExam = useCallback(async () => {
-    if (!tok) return;
-    violRef.current = 0;
-    const init: ExamState = {
-      qIndex: 0, answers: {}, voiceAnswers: {}, violations: 0,
-      startedAt: new Date().toISOString(), recording: false, transcript: '',
-    };
-    examRef.current = init;
-    setExamState(init);
-    setFullscreenBanner(false);
-    setStage('exam');
-    startTimer();
-    if (tok.cameraProctoring) { await startCamera(); startProctor(screenStreamRef.current); }
-    const first = questions[0];
-    if (first?.isVoice) setTimeout(() => speakArabic(first.text), 600);
-    try { await document.documentElement.requestFullscreen(); } catch { /* ignore */ }
-  }, [tok, questions, startTimer, startCamera, startProctor]);
 
   // ─── Generate questions ───────────────────────────────────────────────
   const generateQuestions = useCallback(async () => {
@@ -483,14 +482,18 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       violRef.current = 0;
       const init: ExamState = {
         qIndex: 0, answers: {}, voiceAnswers: {}, violations: 0,
-        startedAt: new Date().toISOString(), recording: false, transcript: '',
+        startedAt: new Date().toISOString(), recording: false, transcribing: false, transcript: '',
       };
       examRef.current = init;
       setExamState(init);
       setFullscreenBanner(false);
+      setVoiceError('');
       startTimer();
       if (tok.cameraProctoring) { await startCamera(); startProctor(screenStreamRef.current); }
-      if (final[0]?.isVoice) setTimeout(() => speakArabic(final[0].text), 600);
+      if (final[0]?.isVoice) {
+        setTimeout(() => speakQuestion(final[0].text), 600);
+        if (final[1]?.isVoice) ttsPrefetch(final[1].text, { gender: 'male' });
+      }
       try { await document.documentElement.requestFullscreen(); } catch { /* ignore */ }
     } catch (err: unknown) {
       if (ctrl.signal.aborted) return;
@@ -521,7 +524,39 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     } catch { /* unsupported → camera-only */ }
   }, [tok]);
 
-  // ─── Proceed to generation ────────────────────────────────────────────
+  // ─── Briefing device checks ───────────────────────────────────────────
+  const checkMic = useCallback(async () => {
+    setDeviceMsg('');
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.getTracks().forEach(t => t.stop());
+      setMicChecked(true);
+    } catch {
+      setMicChecked(false);
+      setDeviceMsg('تعذّر الوصول للميكروفون — فعّل الإذن من المتصفح.');
+    }
+  }, []);
+
+  const checkCam = useCallback(async () => {
+    setDeviceMsg('');
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: true });
+      s.getTracks().forEach(t => t.stop());
+      setCamChecked(true);
+    } catch {
+      setCamChecked(false);
+      setDeviceMsg('تعذّر الوصول للكاميرا — فعّل الإذن من المتصفح.');
+    }
+  }, []);
+
+  // ─── Move to briefing (after picking a job title) ─────────────────────
+  const proceedToBriefing = useCallback(() => {
+    if (!jobTitle.trim()) return;
+    setDeviceMsg('');
+    setStage('briefing');
+  }, [jobTitle]);
+
+  // ─── Proceed to generation (from briefing) ────────────────────────────
   const proceedToGenerate = useCallback(() => {
     if (!tok) return;
     if (tok.accessCode && accessCode.trim() !== tok.accessCode.trim()) {
@@ -534,6 +569,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   // ─── Retry ────────────────────────────────────────────────────────────
   const retry = useCallback(() => {
     setQuestions([]);
+    setVoiceError('');
     requestScreenForProctor();   // re-grab the screen on the retry click (gesture)
     generateQuestions();
   }, [generateQuestions, requestScreenForProctor]);
@@ -555,8 +591,9 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   useEffect(() => () => {
     // stopCamera() also stops the proctor (releases screen tracks + removes hidden <video>s).
     stopCamera();
+    micRef.current?.abort();
     abortRef.current?.abort();
-    window.speechSynthesis?.cancel();
+    cancelSpeech();
   }, [stopCamera]);
 
   // ─── Render helpers ───────────────────────────────────────────────────
@@ -616,6 +653,15 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
           <label className={NAVY.label}>البريد الإلكتروني</label>
           <input className={`${NAVY.input} text-left`} type="email" dir="ltr" placeholder="name@company.com" value={email} onChange={e => setEmail(e.target.value)} />
         </div>
+        <div>
+          <label className={NAVY.label}>الرقم الوظيفي <span className="text-slate-400 font-normal">(اختياري)</span></label>
+          <input className={`${NAVY.input} text-left`} dir="ltr" placeholder="EMP-1234" value={employeeId} onChange={e => setEmployeeId(e.target.value)} />
+        </div>
+        {/* Notice */}
+        <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-amber-800 text-xs leading-relaxed">
+          <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+          <span>هذا الاختبار مُراقَب بالذكاء الاصطناعي (الكاميرا ومشاركة الشاشة). تأكد من جلوسك في مكان هادئ وإضاءة جيدة.</span>
+        </div>
         <button
           className={`${NAVY.btn} hw-btn-w`}
           disabled={!name.trim() || !email.trim()}
@@ -632,6 +678,13 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     <div className={`${NAVY.bg} flex items-center justify-center p-6`} dir="rtl">
       <div className={`${NAVY.card} p-8 max-w-md w-full space-y-5`}>
         <Header title="اختر مسماك الوظيفي" sub="ستُولَّد الأسئلة بناءً على وظيفتك" />
+
+        {/* Notice banner */}
+        <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 text-emerald-800 text-xs leading-relaxed">
+          <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
+          <span>اختر المسمى الأقرب لوظيفتك الحالية — ستُبنى الأسئلة عليه. بعدها ستظهر شاشة تجهيز قصيرة قبل البدء.</span>
+        </div>
+
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {(tok?.allowedJobTitles ?? []).map(jt => (
             <button
@@ -654,20 +707,6 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
           <input className={NAVY.input} placeholder="المسمى الوظيفي" value={jobTitle} onChange={e => setJobTitle(e.target.value)} />
         )}
 
-        {/* Access code field (shown only if token requires it) */}
-        {tok?.accessCode && (
-          <div>
-            <label className={NAVY.label}>رمز الوصول</label>
-            <input
-              className={`${NAVY.input}${accessError ? ' border-rose-400 focus:border-rose-500' : ''}`}
-              placeholder="أدخل رمز الوصول"
-              value={accessCode}
-              onChange={e => { setAccessCode(e.target.value); setAccessError(''); }}
-            />
-            {accessError && <p className="text-rose-600 text-xs mt-1">{accessError}</p>}
-          </div>
-        )}
-
         <div className="pt-2 space-y-3">
           {/* Exam info chips */}
           <div className="flex flex-wrap gap-2">
@@ -686,9 +725,9 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
           <button
             className={`${NAVY.btn} hw-btn-w`}
             disabled={!jobTitle.trim()}
-            onClick={proceedToGenerate}
+            onClick={proceedToBriefing}
           >
-            ابدأ الاختبار
+            التالي
           </button>
           <button className="text-slate-400 text-xs w-full text-center hover:text-slate-600 transition-colors duration-150" onClick={() => setStage('identify')}>
             رجوع
@@ -697,6 +736,118 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       </div>
     </div>
   );
+
+  // ─── STAGE: briefing ──────────────────────────────────────────────────
+  if (stage === 'briefing') {
+    const total     = tok?.questionCount ?? 0;
+    const voiceN    = tok?.voiceQuestionCount ?? 0;
+    const behavioral = Math.round((total * (tok?.behavioralPct ?? 0)) / 100);
+    const technical  = Math.max(0, total - behavioral);
+    const micNeeded  = voiceN > 0;
+    const camNeeded  = !!tok?.cameraProctoring;
+    const ready      = (!micNeeded || micChecked) && (!camNeeded || camChecked)
+      && (!tok?.accessCode || accessCode.trim().length > 0);
+
+    return (
+      <div className={`${NAVY.bg} flex items-center justify-center p-6`} dir="rtl">
+        <div className={`${NAVY.card} p-8 max-w-md w-full space-y-5`}>
+          <Header title="تجهيز الاختبار" sub={`اختبار ${jobTitle}`} />
+
+          {/* Exam composition */}
+          <div className="bg-[#EEF3F5] border border-slate-200 rounded-lg p-4 space-y-2.5 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">إجمالي الأسئلة</span>
+              <span className="font-bold text-slate-800 tabular-nums">{total}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">أسئلة فنية</span>
+              <span className="font-semibold text-slate-700 tabular-nums">{technical}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">أسئلة سلوكية</span>
+              <span className="font-semibold text-slate-700 tabular-nums">{behavioral}</span>
+            </div>
+            {micNeeded && (
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">أسئلة صوتية</span>
+                <span className="font-semibold text-slate-700 tabular-nums">{voiceN}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">الوقت لكل سؤال</span>
+              <span className="font-semibold text-slate-700 tabular-nums">{tok?.secondsPerQuestion}ث</span>
+            </div>
+          </div>
+
+          {/* Device checks */}
+          {(micNeeded || camNeeded) && (
+            <div className="space-y-2.5">
+              <div className="text-sm font-semibold text-slate-600">فحص الأجهزة</div>
+              {micNeeded && (
+                <button
+                  onClick={checkMic}
+                  className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors duration-150 ${
+                    micChecked ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-slate-200 text-slate-700 hover:border-emerald-400 hover:bg-emerald-50'
+                  }`}
+                >
+                  <span>الميكروفون</span>
+                  {micChecked ? (
+                    <span className="flex items-center gap-1.5"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg> جاهز</span>
+                  ) : <span className="text-emerald-600">فحص</span>}
+                </button>
+              )}
+              {camNeeded && (
+                <button
+                  onClick={checkCam}
+                  className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors duration-150 ${
+                    camChecked ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-slate-200 text-slate-700 hover:border-emerald-400 hover:bg-emerald-50'
+                  }`}
+                >
+                  <span>الكاميرا</span>
+                  {camChecked ? (
+                    <span className="flex items-center gap-1.5"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg> جاهز</span>
+                  ) : <span className="text-emerald-600">فحص</span>}
+                </button>
+              )}
+              {deviceMsg && <p className="text-rose-600 text-xs">{deviceMsg}</p>}
+              {camNeeded && (
+                <p className="text-slate-400 text-xs leading-relaxed">
+                  عند بدء الاختبار ستُطلب مشاركة الشاشة للمراقبة. اسمح بها للمتابعة.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Access code (relocated from job selection) */}
+          {tok?.accessCode && (
+            <div>
+              <label className={NAVY.label}>رمز الوصول</label>
+              <input
+                className={`${NAVY.input}${accessError ? ' border-rose-400 focus:border-rose-500' : ''}`}
+                placeholder="أدخل رمز الوصول"
+                value={accessCode}
+                onChange={e => { setAccessCode(e.target.value); setAccessError(''); }}
+              />
+              {accessError && <p className="text-rose-600 text-xs mt-1">{accessError}</p>}
+            </div>
+          )}
+
+          <div className="pt-1 space-y-3">
+            <button
+              className={`${NAVY.btn} hw-btn-w`}
+              disabled={!ready}
+              onClick={proceedToGenerate}
+            >
+              ابدأ الاختبار
+            </button>
+            <button className="text-slate-400 text-xs w-full text-center hover:text-slate-600 transition-colors duration-150" onClick={() => setStage('job_pick')}>
+              رجوع
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // ─── STAGE: generating ────────────────────────────────────────────────
   if (stage === 'generating') return (
@@ -837,13 +988,21 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
             {/* Voice question recording */}
             {q.isVoice && (
               <div className="space-y-3">
-                {!examState.recording ? (
+                {examState.transcribing ? (
+                  <div className="flex items-center gap-2 text-slate-500 text-sm">
+                    <svg className="animate-spin h-4 w-4 text-emerald-600" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    جارٍ تحويل الصوت إلى نص…
+                  </div>
+                ) : !examState.recording ? (
                   <button
                     className="flex items-center gap-2 bg-white border border-slate-200 hover:border-rose-300 hover:bg-rose-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors duration-150"
                     onClick={startRecording}
                   >
                     <svg className="w-4 h-4 text-rose-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12 15c1.66 0 3-1.34 3-3V6c0-1.66-1.34-3-3-3S9 4.34 9 6v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 15.2 14.47 17 12 17s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V21c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z"/></svg>
-                    ابدأ التسجيل
+                    {examState.voiceAnswers[examState.qIndex] !== undefined ? 'إعادة التسجيل' : 'ابدأ التسجيل'}
                   </button>
                 ) : (
                   <button
@@ -854,7 +1013,10 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
                     إيقاف التسجيل
                   </button>
                 )}
-                {examState.transcript && (
+                {voiceError && (
+                  <p className="text-rose-600 text-xs leading-relaxed">{voiceError}</p>
+                )}
+                {examState.transcript && !examState.transcribing && (
                   <div className="bg-[#EEF3F5] border border-slate-200 rounded-lg p-3 text-sm text-slate-700 leading-relaxed">
                     <p className="mb-2">{examState.transcript}</p>
                     <button className="text-emerald-600 text-xs font-semibold hover:text-emerald-700 transition-colors duration-150" onClick={saveVoiceAnswer}>حفظ الإجابة</button>
@@ -992,7 +1154,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
           </div>
           <div className="bg-[#EEF3F5] rounded-lg px-4 py-3 text-sm text-slate-600 space-y-1 text-start">
             <div className="font-medium text-slate-800">{name}</div>
-            <div className="text-slate-500">{jobTitle}</div>
+            <div className="text-slate-500">{jobTitle}{employeeId.trim() ? ` · ${employeeId.trim()}` : ''}</div>
             <div className="text-slate-400 text-xs">{attempts.length} محاولة</div>
           </div>
           <p className="text-slate-400 text-xs leading-relaxed">
