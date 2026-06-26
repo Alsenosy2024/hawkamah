@@ -1,45 +1,46 @@
 # CI/CD — Hawkamah
 
-Two GitHub Actions workflows give the team a safe, automated path from PR to production.
+A lightweight, secret-free pipeline for team collaboration: GitHub verifies every
+change, and a maintainer ships to production from their machine.
 
-| Workflow | Trigger | What it does |
-|----------|---------|--------------|
-| `firebase-hosting-pull-request.yml` | every pull request | Lint (`tsc`) → test (`vitest`) → production build. For branches **inside this repo** it then deploys a temporary **preview channel** and comments the URL on the PR (expires in 7 days). Fork PRs run the gate but skip the deploy. |
-| `firebase-hosting-merge.yml` | push / merge to `main` | Same gate, then deploys to the **live** site (`hawkamah.web.app`). Hosting only — never touches Firestore or Functions. |
+## How it works
 
-## Branch model
+| Stage | Where | What |
+|-------|-------|------|
+| **Verify** | GitHub Actions (`ci.yml`) | On every pull request and every push to `main`: lint (`tsc`) → test (`vitest`) → production build. A red gate blocks the merge. |
+| **Merge** | Maintainer | Approved PRs are merged into `main` (`gh pr merge` or the GitHub UI). |
+| **Deploy** | Maintainer's machine | `npm run deploy` builds and ships to **hawkamah.web.app** via the Firebase CLI. |
 
-1. Branch off `main`, push, open a PR.
-2. CI runs the gate and posts a preview URL — review the running app there.
-3. Merge to `main` → it auto-deploys to production.
+Deploys are intentionally **manual**, not in CI: production credentials (the
+Firebase login and the Gemini key) stay on the maintainer's machine and never
+need to be uploaded to GitHub.
 
-Protect `main` (Settings → Branches) and mark the **Verify + preview deploy** check as required so nothing merges without a green build.
-
-## Required secrets
-
-Set these once in **Settings → Secrets and variables → Actions** (needs repo admin):
-
-| Secret | Value |
-|--------|-------|
-| `FIREBASE_SERVICE_ACCOUNT_HAWKAMAH` | JSON key for a service account with the *Firebase Hosting Admin* + *Firebase Viewer* roles on project `gen-lang-client-0579241284`. |
-| `GEMINI_API_KEY` | The referrer-locked production Gemini key used by the build (`vite.config.ts`). |
-
-Until `FIREBASE_SERVICE_ACCOUNT_HAWKAMAH` is set, deploy steps **skip cleanly** (the gate still runs), so the pipeline is never red just because a secret is missing.
-
-### Minting the service account
+## Day-to-day flow
 
 ```bash
-SA=github-hawkamah-deploy@gen-lang-client-0579241284.iam.gserviceaccount.com
-gcloud iam service-accounts create github-hawkamah-deploy \
-  --project gen-lang-client-0579241284 \
-  --display-name "GitHub Actions - Hawkamah Hosting Deploy"
-gcloud projects add-iam-policy-binding gen-lang-client-0579241284 \
-  --member "serviceAccount:$SA" --role roles/firebasehosting.admin
-gcloud projects add-iam-policy-binding gen-lang-client-0579241284 \
-  --member "serviceAccount:$SA" --role roles/firebase.viewer
-gcloud iam service-accounts keys create sa.json --iam-account "$SA"
-
-gh secret set FIREBASE_SERVICE_ACCOUNT_HAWKAMAH -R Alsenosy2024/hawkamah < sa.json
-gh secret set GEMINI_API_KEY -R Alsenosy2024/hawkamah   # paste the key when prompted
-rm sa.json   # never commit the key
+git checkout -b my-change          # branch off main
+# ...work...
+git push -u origin my-change
+gh pr create                       # open a PR — CI runs the gate
+# ...review, get a green check...
+gh pr merge --squash --delete-branch   # merge from anywhere with repo write access
+npm run deploy                     # a maintainer ships main to production
 ```
+
+## Deploying
+
+Requires the Firebase CLI logged in (`firebase login`) with access to project
+`gen-lang-client-0579241284`, and a local `.env` containing `GEMINI_API_KEY`
+(the referrer-locked production key — see `.env`, which is gitignored).
+
+```bash
+npm run deploy        # == vite build (prod) + firebase deploy --only hosting
+```
+
+Only **hosting** is deployed — never Firestore rules or Functions.
+
+## Optional: enable CI deploys later
+
+If you ever want GitHub to deploy automatically, add two repo secrets
+(`FIREBASE_SERVICE_ACCOUNT_HAWKAMAH`, `GEMINI_API_KEY`) and reintroduce a
+deploy job — the `ci.yml` build step already reads `GEMINI_API_KEY` if present.
