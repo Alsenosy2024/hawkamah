@@ -654,6 +654,13 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
           <input className={`${NAVY.input} text-left`} type="email" dir="ltr" placeholder="name@company.com" value={email} onChange={e => setEmail(e.target.value)} />
         </div>
         <div>
+          <label className={NAVY.label}>المسمى الوظيفي</label>
+          <input className={NAVY.input} placeholder="مثال: محاسب أول" value={jobTitle} onChange={e => setJobTitle(e.target.value)} />
+          {(tok?.allowedJobTitles ?? []).length > 0 && (
+            <p className="text-slate-400 text-xs mt-1">أو اختره من القائمة في الخطوة التالية</p>
+          )}
+        </div>
+        <div>
           <label className={NAVY.label}>الرقم الوظيفي <span className="text-slate-400 font-normal">(اختياري)</span></label>
           <input className={`${NAVY.input} text-left`} dir="ltr" placeholder="EMP-1234" value={employeeId} onChange={e => setEmployeeId(e.target.value)} />
         </div>
