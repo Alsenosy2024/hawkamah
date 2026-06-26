@@ -1,0 +1,73 @@
+# PR pipeline: gate every pull request (lint + test + build) and, for branches
+# inside this repo, deploy a throwaway Firebase Hosting PREVIEW channel so the
+# team can review the running app before merging. Fork PRs still run the full
+# gate but skip the deploy (GitHub never exposes secrets to forked PRs).
+name: PR · verify + preview
+
+on:
+  pull_request:
+
+# Cancel an in-flight run when the PR is updated, so only the latest commit
+# spends CI minutes / a preview slot.
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  verify-and-preview:
+    name: Verify + preview deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ---- Gate: must pass for every PR, forks included ----
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build (production)
+        run: npm run build
+        env:
+          # Empty on forked PRs (secrets aren't exposed) — the build still
+          # succeeds; the key only matters at runtime on a real deploy.
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      # ---- Preview deploy: only same-repo branches, only once secrets exist ----
+      - name: Check deploy secret
+        id: gate
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_HAWKAMAH }}
+        run: |
+          if [ -n "$SA" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Preview skipped::FIREBASE_SERVICE_ACCOUNT_HAWKAMAH is not set — add it in repo Settings → Secrets to enable preview deploys."
+          fi
+
+      - name: Deploy preview channel
+        if: >-
+          steps.gate.outputs.ready == 'true' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_HAWKAMAH }}
+          projectId: gen-lang-client-0579241284
+          expires: 7d
