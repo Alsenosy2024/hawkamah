@@ -9,6 +9,8 @@ import { copilotEnabled, askStream as copilotAsk, draft as copilotDraft, exportD
 import { generateGroundedDocument } from '../services/geminiService';
 import ThinkingTrace from './ThinkingTrace';
 import Markdown, { type CiteRef } from './Markdown';
+import DocumentCanvas from './DocumentCanvas';
+import { looksLikeDocument } from '../services/canvasDocument';
 
 // Build ordered citation refs from the backend's labeled source list. The
 // Python copilot labels each evidence item "مصدر N" (1-indexed); we map that
@@ -220,7 +222,7 @@ const detectExportIntent = (text: string): { kind: 'pdf' | 'docx' | 'xlsx' | 'pp
 };
 
 const FORMAT_HINT =
-  '\n\n[تعليمات التنسيق — لا تذكرها في الرد: إذا تطلّب الجواب رسمًا بيانيًا أو هيكلاً تنظيميًا أو مخطط تدفّق أو علاقات، فأخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (graph TD / flowchart). لا ترسم المخططات بالحروف أو ASCII أبداً. لا تضع وسوم [مصدر N] أو أقواس مربّعة داخل تسميات عُقد mermaid (تُفسد الرسم)؛ ضع الاستشهادات في النص خارج المخطط فقط. قدّم البيانات الجدولية كجداول Markdown.]';
+  '\n\n[تعليمات التنسيق — لا تذكرها في الرد: إذا تطلّب الجواب رسمًا بيانيًا أو هيكلاً تنظيميًا أو مخطط تدفّق أو علاقات، فأخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (graph TD / flowchart). لا ترسم المخططات بالحروف أو ASCII أبداً. لا تضع وسوم [مصدر N] أو أقواس مربّعة داخل تسميات عُقد mermaid (تُفسد الرسم)؛ ضع الاستشهادات في النص خارج المخطط فقط. قدّم البيانات الجدولية كجداول Markdown. لا تذكر اسم أداة الرسم (مثل mermaid) داخل نص الوثيقة — اكتفِ بإدراج المخطط نفسه.]';
 
 const GovCopilot: React.FC<Props> = (props) => {
   const { stageKey, stageLabel, model, language, extraContext, logoUrl, tenantId, seedChunks, stateSnapshot, onOpenSource } = props;
@@ -235,6 +237,10 @@ const GovCopilot: React.FC<Props> = (props) => {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
+  // Document canvas — the open doc (by message id) + in-session edited-HTML cache
+  // so reopening a document shows the user's edits.
+  const [canvasDoc, setCanvasDoc] = useState<{ id: string; md: string } | null>(null);
+  const canvasEditsRef = useRef<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const chunksRef = useRef<DocChunk[] | null>(null);
@@ -688,6 +694,23 @@ const GovCopilot: React.FC<Props> = (props) => {
     </div>
   );
 
+  // Open a generated document AS a templated multi-page document in the canvas
+  // (cover → TOC → numbered sections, KPI cards, charts, premium tables). The
+  // canvas is the brand document surface — view, edit in place, export a real PDF.
+  const openCanvas = (id: string, md: string) => { setFull(false); setCanvasDoc({ id, md }); };
+
+  // Primary "open as document" action for document-grade answers. Rendered above
+  // the quick-export row so the canvas is the default way to read/edit/print a doc.
+  const docCanvasBtn = (id: string, md: string) => (
+    <div className="mt-2.5">
+      <button onClick={() => openCanvas(id, md)}
+        className="hw-btn hw-btn-primary hw-btn-xs !rounded-full">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><path d="M9 13h6M9 17h4" /></svg>
+        {t('افتح كمستند', 'Open as document')}
+      </button>
+    </div>
+  );
+
   // Shell geometry: full-screen vs in-screen SIDE PANEL (docked to the edge,
   // full height — "في الجنب"، not a floating bubble). The page stays visible
   // beside it; the panel is page-aware (stageKey) and acts inline.
@@ -700,6 +723,24 @@ const GovCopilot: React.FC<Props> = (props) => {
   const bodyWrap = full ? 'mx-auto w-full max-w-3xl' : '';
 
   return (
+    <>
+    {canvasDoc && (
+      <DocumentCanvas
+        markdown={canvasDoc.md}
+        initialHtml={canvasEditsRef.current[canvasDoc.id]}
+        language={language || 'ar'}
+        rootClass="dc-docked"
+        brand={model?.companyName ? `${model.companyName} · AILIGENT` : 'AILIGENT'}
+        subtitle={stageLabel}
+        date={t('بتاريخ ', 'Dated ') + new Date().toLocaleDateString(ar ? 'ar-EG' : 'en-GB')}
+        onClose={() => setCanvasDoc(null)}
+        onSave={html => { canvasEditsRef.current[canvasDoc.id] = html; }}
+        onAskAi={sel => {
+          setCanvasDoc(null);
+          setInput(prev => `${prev ? prev + '\n' : ''}${t('بخصوص هذا المقطع: «', 'Regarding this passage: «')}${sel}»\n`);
+        }}
+      />
+    )}
     <div className={shellCls} style={shellStyle} onAnimationEnd={onShellAnimEnd}>
       {/* header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--hw-border)] shrink-0">
@@ -862,6 +903,7 @@ const GovCopilot: React.FC<Props> = (props) => {
                     {m.searchHtml && (
                       <div className="mt-2 overflow-x-auto" dangerouslySetInnerHTML={{ __html: m.searchHtml }} />
                     )}
+                    {!m.streaming && looksLikeDocument(m.text) && docCanvasBtn(m.id, m.text)}
                     {!m.streaming && m.text.length > 40 && exportRow(m.text)}
                   </div>
                 )}
@@ -926,6 +968,7 @@ const GovCopilot: React.FC<Props> = (props) => {
             {props.agentAnswer && (
               <div className="rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-3 text-sm text-slate-700 dark:text-slate-200">
                 <Markdown text={props.agentAnswer} rtl={ar} onCite={handleCite} />
+                {looksLikeDocument(props.agentAnswer) && docCanvasBtn('agent-answer', props.agentAnswer)}
                 {exportRow(props.agentAnswer)}
                 {props.agentTrace && (
                   <div className="flex items-center gap-2 mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-700">
@@ -1006,6 +1049,7 @@ const GovCopilot: React.FC<Props> = (props) => {
         </div>
       </div>
     </div>
+    </>
   );
 };
 

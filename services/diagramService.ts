@@ -6,6 +6,7 @@
 
 import { Type } from '@google/genai';
 import mermaid from 'mermaid';
+import { MERMAID_THEME_VARIABLES, MERMAID_THEME_CSS, MERMAID_FONT } from './mermaidTheme';
 import { generateJson } from './agentOrchestrator';
 import { swimlaneToPng, type SwimlaneSpec } from './swimlaneService';
 import type { CompanyGovernanceModel, GovDiagramKind, GovFlowNode, GovFlowEdge, ArtifactDiagram } from '../types';
@@ -17,13 +18,65 @@ let _mmInit = false;
 // so we flip the global config around the PNG render and restore it after.
 function initMermaid(pngExport = false) {
   try {
-    mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'strict', fontFamily: 'inherit', htmlLabels: !pngExport, flowchart: { curve: 'basis', htmlLabels: !pngExport } } as any);
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'base',                       // brand theme (was 'default' purple)
+      securityLevel: pngExport ? 'strict' : 'loose',
+      suppressErrorRendering: true,        // throw → caller shows fallback (no error SVG in DOM)
+      fontFamily: MERMAID_FONT,
+      htmlLabels: !pngExport,
+      flowchart: { curve: 'basis', htmlLabels: !pngExport, useMaxWidth: true },
+      sequence: { useMaxWidth: true, wrap: true },
+      gantt: { useMaxWidth: true },
+      themeVariables: MERMAID_THEME_VARIABLES,
+      themeCSS: MERMAID_THEME_CSS,
+    } as any);
   } catch { /* already initialized elsewhere */ }
 }
 function ensureMermaid() {
   if (_mmInit) return;
   initMermaid(false);
   _mmInit = true;
+}
+
+// Mermaid measures text synchronously at render time — if the brand font isn't
+// loaded yet, boxes are sized with fallback metrics and Arabic overflows. Load it
+// once before any render.
+let _fontReady: Promise<void> | null = null;
+export function ensureMermaidFont(): Promise<void> {
+  if (_fontReady) return _fontReady;
+  _fontReady = (async () => {
+    try {
+      const f: FontFaceSet | undefined = (document as any).fonts;
+      if (!f) return;
+      await Promise.all([
+        f.load('400 16px "Thmanyah Sans"'),
+        f.load('700 16px "Thmanyah Sans"'),
+      ]).catch(() => undefined);
+      await (f.ready as Promise<unknown>).catch(() => undefined);
+    } catch { /* non-fatal */ }
+  })();
+  return _fontReady;
+}
+
+let _svgRid = 0;
+/**
+ * Render Mermaid syntax → themed SVG string (htmlLabels ON so Arabic shapes
+ * correctly via the BiDi algorithm). Used by the document canvas, which embeds
+ * the live SVG (it displays AND prints correctly — unlike a rasterized PNG,
+ * which would need htmlLabels OFF and break Arabic shaping).
+ */
+export async function mermaidToSvg(src: string): Promise<string> {
+  const code = guardMermaidLabels(sanitizeMermaid(src));
+  if (!code) throw new Error('empty mermaid');
+  ensureMermaid();
+  await ensureMermaidFont();
+  const id = `mmd_svg_${_svgRid++}`;
+  return withMermaidLock(async () => {
+    initMermaid(false);                    // htmlLabels ON (brand theme)
+    const { svg } = await mermaid.render(id, code);
+    return svg;
+  });
 }
 
 let _pngRid = 0;
@@ -51,6 +104,7 @@ export async function mermaidToPng(
   const code = guardMermaidLabels(sanitizeMermaid(src));
   if (!code) throw new Error('empty mermaid');
   ensureMermaid();
+  await ensureMermaidFont();
   const id = `mmd_png_${_pngRid++}`;
   // serialize the global-config flip so concurrent renders don't corrupt each other
   const svg: string = await withMermaidLock(async () => {
@@ -321,6 +375,14 @@ export function guardMermaidLabels(src: string): string {
 export function sanitizeMermaid(src: string): string {
   let s = (src || '').trim();
   s = s.replace(/^```(?:mermaid)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  // Strip [مصدر N] / [source N] citation markers the model leaks INTO diagram node
+  // labels — the nested [...] closes the id[label] bracket early and the whole chart
+  // fails to parse (the #1 cause of flowcharts falling back to raw code). The keyword
+  // must be followed by a digit, so real words like "مصدرة" are never touched.
+  s = s.replace(/\s*\[\s*(?:مصدر|sources?|src|ref)\s*\d[^\]]*\]/gi, '');
+  // Strip Arabic diacritics/tashkeel — they can crash Mermaid's label lexer and
+  // are not needed for display in node boxes.
+  s = s.replace(/[ً-ٰٟۖ-ۭ]/g, '');
   // Strip AI-injected <br/> tags — guardLabel will add proper wrapping after label extraction
   s = s.replace(/<br\s*\/?>/gi, ' ');
   // Fix inner double-quotes inside square-bracket node labels: ["foo "bar" baz"] → ["foo 'bar' baz"]

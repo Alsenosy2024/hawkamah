@@ -29,6 +29,30 @@ const INK = '111827';
 const THEME_MAIN = [NAVY, GOLD, CYAN];
 const themeColor = (i: number) => THEME_MAIN[i % THEME_MAIN.length];
 
+// ---------- Ailigent brand (refined teal) — PDF / print theming ----------
+// The PDF is the brand surface: teal-led, no gold. DOCX/PPTX keep their own
+// palette above (owner's Word styling); only the PDF/print CSS uses these.
+const TEAL = '11A8BC';    // brand primary (structure, table headers, cover)
+const TEALD = '0B8090';   // brand-deep (headings, dark text accents)
+const TBLUE = '1E6FA8';   // brand blue (tertiary rotation, replaces cyan)
+const BRAND50 = 'EEF8FA'; // brand-50 light fill (zebra rows, blockquote bg)
+const BRAND100 = 'DEF2F6';
+const TINK = '122A33';    // brand ink (body text)
+// The PDF is always rendered in the brand font (Thmanyah). It loads as woff2
+// (browser-shaped, captured by html2canvas) — the Word-font option (Almarai/
+// Tajawal) does not apply to the PDF surface.
+const PDF_FONT = 'Thmanyah Sans';
+// @font-face for the PDF render holder: real Thmanyah woff2 (loads reliably and
+// shapes Arabic correctly), Almarai kept as a fallback face.
+const PDF_FONTFACE =
+  `@font-face{font-family:'Thmanyah Sans';src:url('/fonts/thmanyah/thmanyahsans-Light.woff2') format('woff2');font-weight:300;font-display:swap;}`
+  + `@font-face{font-family:'Thmanyah Sans';src:url('/fonts/thmanyah/thmanyahsans-Regular.woff2') format('woff2');font-weight:400;font-display:swap;}`
+  + `@font-face{font-family:'Thmanyah Sans';src:url('/fonts/thmanyah/thmanyahsans-Medium.woff2') format('woff2');font-weight:500 600;font-display:swap;}`
+  + `@font-face{font-family:'Thmanyah Sans';src:url('/fonts/thmanyah/thmanyahsans-Bold.woff2') format('woff2');font-weight:700;font-display:swap;}`
+  + `@font-face{font-family:'Thmanyah Sans';src:url('/fonts/thmanyah/thmanyahsans-Black.woff2') format('woff2');font-weight:800 900;font-display:swap;}`
+  + `@font-face{font-family:'Almarai';src:url('/fonts/Almarai-Regular.ttf') format('truetype');font-weight:400 600;font-display:swap;}`
+  + `@font-face{font-family:'Almarai';src:url('/fonts/Almarai-Bold.ttf') format('truetype');font-weight:700 900;font-display:swap;}`;
+
 declare global {
   interface Window {
     jspdf?: { jsPDF: new (...args: any[]) => any };
@@ -1255,14 +1279,10 @@ export async function exportPoliciesManual(model: CompanyGovernanceModel, o?: Ex
 // ============================================================
 
 const PRINT_CSS = (font: string) => `
-  @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=Cairo:wght@400;600;700;900&family=Amiri:ital,wght@0,400;0,700;1,400&display=swap');
-  /* Brand font (owner-approved): Almarai shipped as REAL TrueType so it actually
-     loads in every browser (the thmanyah-sans-*.ttf files are WOFF2-in-a-.ttf and
-     silently fail to load → broken Arabic shaping). Almarai is the reliable primary. */
-  @font-face { font-family:'Almarai'; src:url('/fonts/Almarai-Light.ttf') format('truetype'); font-weight:300; font-display:swap; }
-  @font-face { font-family:'Almarai'; src:url('/fonts/Almarai-Regular.ttf') format('truetype'); font-weight:400 600; font-display:swap; }
-  @font-face { font-family:'Almarai'; src:url('/fonts/Almarai-Bold.ttf') format('truetype'); font-weight:700; font-display:swap; }
-  @font-face { font-family:'Almarai'; src:url('/fonts/Almarai-ExtraBold.ttf') format('truetype'); font-weight:800 900; font-display:swap; }
+  @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&family=Cairo:wght@400;600;700;900&display=swap');
+  /* Brand font: Thmanyah Sans (real woff2 — loads + shapes Arabic correctly under
+     html2canvas). Almarai kept as a fallback face. */
+  ${PDF_FONTFACE}
   /* The app's global stylesheet tracks headings at -0.288px; any non-normal
      letter-spacing makes html2canvas paint text glyph-by-glyph, which destroys
      Arabic joining (headings come out scrambled). Force it off for export. */
@@ -1270,55 +1290,55 @@ const PRINT_CSS = (font: string) => `
   /* Overflow guard (arabic-pdf skill §12): the export holder is a fixed 794px box;
      anything wider gets CLIPPED by html2canvas (long words, URLs, wide tables, code).
      Force every text container to wrap instead of bleed off the page edge. */
-  body, .pdf-root { font-family: '${font}','Cairo','Tajawal',sans-serif; direction: rtl; text-align: right; color:#${INK}; background:#fff; line-height:1.95; font-size:14px; max-width:100%; overflow-wrap:break-word; word-break:break-word; }
+  body, .pdf-root { font-family: '${font}','Almarai','Cairo','Tajawal',sans-serif; direction: rtl; text-align: right; color:#${TINK}; background:#fff; line-height:1.95; font-size:14px; max-width:100%; overflow-wrap:break-word; word-break:break-word; }
   body { padding:36px 42px; }
   h1,h2,h3,h4,h5,h6,p,li,blockquote,th,td { text-align:right; overflow-wrap:break-word; word-break:break-word; }
-  h1 { font-size:23px; color:#${NAVY}; margin:26px 0 12px; line-height:1.45; font-weight:900; border-bottom:3px solid #${GOLD}; padding-bottom:7px; }
-  h2 { font-size:19px; color:#${NAVY}; margin:20px 0 10px; font-weight:800; }
-  h3 { font-size:16px; color:#0A6D82; margin:16px 0 8px; font-weight:700; }
-  h4 { font-size:14.5px; color:#${CYAN}; margin:13px 0 6px; font-weight:700; }
-  h5 { font-size:13.5px; color:#${CYAN}; margin:11px 0 4px; font-weight:700; }
+  h1 { font-size:23px; color:#${TEALD}; margin:26px 0 12px; line-height:1.45; font-weight:900; border-bottom:3px solid #${TEAL}; padding-bottom:7px; }
+  h2 { font-size:19px; color:#${TEALD}; margin:20px 0 10px; font-weight:800; }
+  h3 { font-size:16px; color:#${TEAL}; margin:16px 0 8px; font-weight:700; }
+  h4 { font-size:14.5px; color:#${TBLUE}; margin:13px 0 6px; font-weight:700; }
+  h5 { font-size:13.5px; color:#${TBLUE}; margin:11px 0 4px; font-weight:700; }
   h6 { font-size:13px; color:#${GREY}; margin:10px 0 4px; font-weight:600; }
   p { margin:8px 0; }
   ul,ol { margin:8px 28px 8px 0; padding:0 20px 0 0; }
   li { margin:5px 0; }
-  li::marker { color:#${GOLD}; font-weight:700; }
-  blockquote { margin:14px 0; padding:12px 18px; border-right:5px solid #${GOLD}; background:#${LIGHT}; color:#${NAVY}; font-weight:600; font-style:italic; border-radius:0 8px 8px 0; }
+  li::marker { color:#${TEAL}; font-weight:700; }
+  blockquote { margin:14px 0; padding:12px 18px; border-right:5px solid #${TEAL}; background:#${BRAND50}; color:#${TEALD}; font-weight:600; font-style:italic; border-radius:0 8px 8px 0; }
   /* white-space:pre-wrap + break-word: long code lines wrap on paper instead of
      overflowing (overflow-x:auto gives no scrollbar in a rasterized PDF → clipped). */
-  pre { background:#f1f5f9; padding:14px 16px; border-radius:8px; direction:ltr; text-align:left; margin:10px 0; max-width:100%; white-space:pre-wrap; overflow-wrap:break-word; word-break:break-word; }
-  pre code { font-family:'Courier New',monospace; font-size:13px; color:#0f172a; white-space:pre-wrap; word-break:break-word; }
-  code { background:#f1f5f9; padding:2px 6px; border-radius:4px; font-family:monospace; font-size:0.88em; overflow-wrap:break-word; word-break:break-word; }
-  hr { border:none; border-top:2px solid #${GOLD}; opacity:.5; margin:18px 0; }
+  pre { background:#${BRAND50}; padding:14px 16px; border-radius:8px; direction:ltr; text-align:left; margin:10px 0; max-width:100%; white-space:pre-wrap; overflow-wrap:break-word; word-break:break-word; border:1px solid #${BRAND100}; }
+  pre code { font-family:'Courier New',monospace; font-size:13px; color:#${TINK}; white-space:pre-wrap; word-break:break-word; }
+  code { background:#${BRAND50}; padding:2px 6px; border-radius:4px; font-family:monospace; font-size:0.88em; color:#${TEALD}; overflow-wrap:break-word; word-break:break-word; }
+  hr { border:none; border-top:2px solid #${TEAL}; opacity:.45; margin:18px 0; }
   /* table-layout:fixed pins columns to the page width so a wide table wraps its
      cells rather than stretching past the holder and getting clipped. */
   table { width:100%; max-width:100%; border-collapse:collapse; margin:14px 0; font-size:13px; table-layout:fixed; }
-  th,td { border:1px solid #d4dbe5; padding:9px 12px; vertical-align:top; overflow-wrap:break-word; word-break:break-word; }
-  th { background:#${NAVY}; font-weight:800; color:#fff; }
-  tr:nth-child(even) td { background:#${LIGHT}; }
-  .mermaid { margin:18px auto; text-align:center; max-width:100%; background:#fafbff; border:1px solid #dbe4f0; border-radius:10px; padding:16px; }
+  th,td { border:1px solid #cfe4e9; padding:9px 12px; vertical-align:top; overflow-wrap:break-word; word-break:break-word; }
+  th { background:#${TEALD}; font-weight:800; color:#fff; }
+  tr:nth-child(even) td { background:#${BRAND50}; }
+  .mermaid { margin:18px auto; text-align:center; max-width:100%; background:#f7fafb; border:1px solid #${BRAND100}; border-radius:10px; padding:16px; }
   .mermaid svg, .mermaid-img { max-width:100%; height:auto; }
-  .mermaid-fig { margin:18px auto; text-align:center; background:#fafbff; border:1px solid #dbe4f0; border-radius:10px; padding:14px; }
+  .mermaid-fig { margin:18px auto; text-align:center; background:#f7fafb; border:1px solid #${BRAND100}; border-radius:10px; padding:14px; }
   .cover { text-align:center; padding:70px 0 50px; page-break-after:always; }
   .cover img { width:150px; height:150px; object-fit:contain; margin-bottom:26px; }
-  .cover .title { background:#${NAVY}; color:#fff; font-size:32px; font-weight:900; padding:34px 26px; margin:0; line-height:1.5; }
-  .cover .subtitle { background:#${GOLD}; color:#fff; font-size:18px; font-weight:700; padding:12px 22px; margin:0 36px; }
-  .cover .company { font-size:17px; color:#${NAVY}; margin-top:30px; font-weight:800; }
-  .cover .date { display:inline-block; font-size:13px; color:#${GREY}; margin-top:12px; border-bottom:2px solid #${GOLD}; padding-bottom:4px; }
+  .cover .title { background:linear-gradient(135deg,#${TEAL},#${TBLUE}); color:#fff; font-size:32px; font-weight:900; padding:34px 26px; margin:0; line-height:1.5; border-radius:14px; }
+  .cover .subtitle { color:#${TEALD}; font-size:18px; font-weight:700; padding:14px 22px; margin:8px 36px 0; }
+  .cover .company { font-size:17px; color:#${TEALD}; margin-top:30px; font-weight:800; }
+  .cover .date { display:inline-block; font-size:13px; color:#${GREY}; margin-top:12px; border-bottom:2px solid #${TEAL}; padding-bottom:4px; }
   .toc { page-break-after:always; padding:0 0 20px; }
-  .toc h1 { border-bottom:3px solid #${GOLD}; padding-bottom:8px; }
+  .toc h1 { border-bottom:3px solid #${TEAL}; padding-bottom:8px; }
   .toc ol { list-style:none; margin:10px 0; padding:0; }
-  .toc li { padding:7px 0; border-bottom:1px dotted #c9d3e0; font-weight:600; color:#${NAVY}; }
+  .toc li { padding:7px 0; border-bottom:1px dotted #bfdbe2; font-weight:600; color:#${TEALD}; }
   .toc li a { color:inherit; text-decoration:none; display:flex; align-items:center; }
-  .toc-num { display:inline-block; min-width:26px; height:26px; line-height:26px; text-align:center; background:#${NAVY}; color:#${GOLD}; border-radius:13px; font-size:12px; font-weight:800; margin-left:10px; }
-  .toc li:nth-child(3n+2) .toc-num { background:#${GOLD}; color:#fff; }
-  .toc li:nth-child(3n) .toc-num { background:#${CYAN}; color:#fff; }
-  .sec-h.t1 { color:#${GOLD}; border-bottom-color:#${NAVY}; }
-  .sec-h.t2 { color:#${CYAN}; border-bottom-color:#${NAVY}; }
-  .stat-band { display:flex; gap:0; background:#${NAVY}; border-radius:10px; overflow:hidden; margin:16px 0; }
+  .toc-num { display:inline-block; min-width:26px; height:26px; line-height:26px; text-align:center; background:#${TEAL}; color:#fff; border-radius:13px; font-size:12px; font-weight:800; margin-left:10px; }
+  .toc li:nth-child(3n+2) .toc-num { background:#${TEALD}; color:#fff; }
+  .toc li:nth-child(3n) .toc-num { background:#${TBLUE}; color:#fff; }
+  .sec-h.t1 { color:#${TEAL}; border-bottom-color:#${TEALD}; }
+  .sec-h.t2 { color:#${TBLUE}; border-bottom-color:#${TEALD}; }
+  .stat-band { display:flex; gap:0; background:linear-gradient(135deg,#${TEALD},#${TBLUE}); border-radius:10px; overflow:hidden; margin:16px 0; }
   .stat-band .stat { flex:1; text-align:center; padding:16px 8px; }
-  .stat-band .num { color:#${GOLD}; font-size:30px; font-weight:900; }
-  .stat-band .lbl { color:#fff; font-size:12.5px; margin-top:2px; }
+  .stat-band .num { color:#fff; font-size:30px; font-weight:900; }
+  .stat-band .lbl { color:#${BRAND100}; font-size:12.5px; margin-top:2px; }
   .section { page-break-before:always; padding-top:4px; }
   @media print {
     @page { size:A4; margin:18mm 15mm; }
@@ -1405,7 +1425,7 @@ function printHtml(innerHtml: string, title: string, o?: ExportOptions) {
   const doc = iframe.contentWindow?.document || iframe.contentDocument;
   if (!doc) return;
   doc.open();
-  doc.write(`<html dir="rtl"><head><title>${escapeHtml(title)}</title><style>${PRINT_CSS(o?.fontFamily || 'Almarai')}</style>
+  doc.write(`<html dir="rtl"><head><title>${escapeHtml(title)}</title><style>${PRINT_CSS(PDF_FONT)}</style>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"><\/script>
   </head><body>${innerHtml}<script>
     mermaid.initialize({startOnLoad:true,theme:'neutral',rtl:false,flowchart:{htmlLabels:true,useMaxWidth:true}});
@@ -1444,7 +1464,7 @@ export function exportPdfViaPrint(artifact: GeneratedArtifact, o?: ExportOptions
  * when the file is opened directly (e.g. `file:///…/public/fonts/`).
  */
 export function buildStandalonePdfHtml(artifact: GeneratedArtifact, o?: ExportOptions, fontBase?: string): string {
-  const font = o?.fontFamily || 'Almarai';
+  const font = PDF_FONT;
   const toc = `<div class="toc"><h1>المحتويات</h1><ol>${
     artifact.sections.map((s, i) => `<li><a href="#sec-${i}"><span class="toc-num">${i + 1}</span>${escapeHtml(stripMarkdown(s.title))}</a></li>`).join('')
   }</ol></div>`;
@@ -1646,23 +1666,24 @@ async function htmlToPdfBlob(content: string | string[], title: string, o?: Expo
   try {
     // Explicitly load the weights we render so Arabic shapes with the real font, not a
     // fallback (broken joining). fonts.ready alone doesn't force-load unused families.
-    const fam = o?.fontFamily || 'Almarai';
-    // Register the brand @font-face in the MAIN document up-front so fonts.load can
-    // actually fetch the local ttf (the per-chunk holder style injects it too, but
-    // load() below runs before the first innerHTML write). Almarai is REAL TrueType —
-    // the old thmanyah-sans-*.ttf were WOFF2-in-a-.ttf and silently failed to load.
+    // The PDF surface is always the brand font (Thmanyah), independent of the
+    // Word-font option passed in o.fontFamily.
+    const fam = PDF_FONT;
+    // Register the brand @font-face (Thmanyah woff2 + Almarai fallback) in the MAIN
+    // document up-front so fonts.load can fetch them before the first html2canvas
+    // pass (font-display:swap otherwise rasterizes a glyph-dropping fallback first).
     if (!document.getElementById('brand-pdf-fontface')) {
       const ff = document.createElement('style');
       ff.id = 'brand-pdf-fontface';
-      ff.textContent = `@font-face{font-family:'Almarai';src:url('/fonts/Almarai-Light.ttf') format('truetype');font-weight:300;}`
-        + `@font-face{font-family:'Almarai';src:url('/fonts/Almarai-Regular.ttf') format('truetype');font-weight:400 600;}`
-        + `@font-face{font-family:'Almarai';src:url('/fonts/Almarai-Bold.ttf') format('truetype');font-weight:700;}`
-        + `@font-face{font-family:'Almarai';src:url('/fonts/Almarai-ExtraBold.ttf') format('truetype');font-weight:800 900;}`;
+      ff.textContent = PDF_FONTFACE;
       document.head.appendChild(ff);
     }
     const fontsApi = (document as any).fonts;
     if (fontsApi?.load) {
-      try { await Promise.all(['400 14px', '700 14px'].map(spec => fontsApi.load(`${spec} "${fam}"`))); } catch {}
+      // Preload the EXACT weights PRINT_CSS renders (400 body, 700/900 headings) so
+      // Arabic shapes with Thmanyah, never a fallback that drops letters.
+      try { await Promise.all(['400 14px', '700 14px', '900 14px'].map(spec => fontsApi.load(`${spec} "${fam}"`))); } catch {}
+      try { await fontsApi.load('700 14px "Almarai"'); } catch {}
     }
     if (fontsApi?.ready) { try { await fontsApi.ready; } catch {} }
     const pdf = new jsPDFCtor({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -1671,7 +1692,7 @@ async function htmlToPdfBlob(content: string | string[], title: string, o?: Expo
     let firstPage = true;
     for (const chunk of chunks) {
       // .pdf-root carries the RTL/font/typography rules (body-scoped CSS never applies inside this holder div).
-      holder.innerHTML = `<style>${PRINT_CSS(o?.fontFamily || 'Thmanyah Sans')}</style><div class="pdf-root" dir="rtl" style="padding:30px">${chunk}</div>`;
+      holder.innerHTML = `<style>${PRINT_CSS(PDF_FONT)}</style><div class="pdf-root" dir="rtl" style="padding:30px">${chunk}</div>`;
       await new Promise(r => setTimeout(r, firstPage ? 400 : 60));   // fonts settle once; then minimal
       const estH = holder.scrollHeight || 0;
       const scale = estH * 2 > MAX_CANVAS_PX ? Math.max(1, MAX_CANVAS_PX / Math.max(1, estH)) : 2;

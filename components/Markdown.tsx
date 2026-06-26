@@ -15,6 +15,9 @@ import React from 'react';
 
 // Lazy so the (heavy) Mermaid runtime only loads when a diagram is present.
 const MermaidView = React.lazy(() => import('./MermaidView'));
+// Tiny, dependency-free detector (does NOT import mermaid) so we can recognize a
+// diagram by content even when the model tags the fence wrong / omits the language.
+import { isMermaidBlock } from '../services/mermaidDetect';
 
 export interface CiteRef { num: number; doc: string; heading?: string }
 
@@ -107,7 +110,10 @@ const Markdown: React.FC<Props> = ({ text, rtl = true, className = '', citations
       while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
       i++;
       const code = buf.join('\n');
-      if (lang === 'mermaid' && code.trim()) {
+      // A ```docspec / ```canvas block drives the document canvas — never show it
+      // as raw code in the chat bubble.
+      if (lang === 'docspec' || lang === 'canvas') { continue; }
+      if (code.trim() && isMermaidBlock(lang, code)) {
         // Render as a real, brand-styled diagram.
         blocks.push(
           <React.Suspense key={k++} fallback={<div className="gc-shimmer my-3 h-28 rounded-2xl" />}>

@@ -817,6 +817,29 @@ html.dark .gc-shell {
 .gc-full-in   { animation: gc-full-in   var(--gc-d-expand) var(--gc-ease-decel) both; }
 .gc-morph     { animation: gc-full-in   var(--gc-d-expand) var(--gc-ease-emph)  both; }
 
+/* ── Document canvas (dc-*) — editable document surface ── */
+.dc-overlay { animation: gc-full-in var(--gc-d-expand) var(--gc-ease-decel) both; }
+/* Side-by-side: the canvas fills the viewport EXCEPT the copilot's docked strip
+   (the copilot stays open on its side). Full-screen on small screens. */
+.dc-docked { position: fixed; inset: 0; z-index: 45; }
+@media (min-width: 880px) {
+  .dc-docked {
+    top: 0; bottom: 0;
+    inset-inline-start: 0;
+    inset-inline-end: calc(min(94vw, 440px) + 1.5rem);
+    border-inline-end: 1px solid var(--hw-border);
+    box-shadow: 0 0 40px -10px rgba(11,128,144,0.18);
+  }
+}
+.dc-fade    { animation: gc-fade-in 200ms var(--gc-ease-decel) both; }
+.dc-pop     { animation: gc-pop-in  260ms var(--gc-ease-decel) both; }
+.dc-spark   { display: inline-flex; }
+@keyframes gc-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes gc-pop-in  { from { opacity: 0; transform: translateY(8px) scale(0.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .dc-overlay, .dc-fade, .dc-pop { animation: none !important; }
+}
+
 /* While the copilot is reasoning/streaming, a soft teal wash breathes at the
    top of the panel — a calm "working" cue (Gemini's active-response state). */
 @keyframes gc-bg-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }

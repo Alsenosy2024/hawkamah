@@ -1,30 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 import type { Language } from '../types';
-import { sanitizeMermaid, guardMermaidLabels } from '../services/diagramService';
+import { sanitizeMermaid, guardMermaidLabels, ensureMermaidFont } from '../services/diagramService';
+import { MERMAID_THEME_VARIABLES, MERMAID_THEME_CSS, MERMAID_FONT } from '../services/mermaidTheme';
 
-// Brand-themed Mermaid (refined teal) so every rendered diagram matches the
-// Ailigent palette instead of Mermaid's default purple/lavender.
+// Brand-themed Mermaid (refined teal) so EVERY diagram type — flowchart,
+// sequence, class, state, ER, gantt, pie, journey, git… — matches the Ailigent
+// palette instead of Mermaid's default purple/lavender.
 mermaid.initialize({
   startOnLoad: false,
   theme: 'base',
   securityLevel: 'loose',
-  fontFamily: 'inherit',
-  flowchart: { curve: 'basis', htmlLabels: true },
-  themeVariables: {
-    primaryColor: '#eef8fa',          // node fill (brand-50)
-    primaryBorderColor: '#11a8bc',    // node stroke (brand)
-    primaryTextColor: '#122a33',      // node text (ink)
-    secondaryColor: '#def2f6',
-    tertiaryColor: '#f7fafb',
-    lineColor: '#0b8090',             // edges (brand-deep)
-    fontFamily: 'inherit',
-    fontSize: '14px',
-    clusterBkg: '#f7fafb',
-    clusterBorder: '#bde4ec',
-    titleColor: '#0a6775',
-  },
-});
+  suppressErrorRendering: true,
+  fontFamily: MERMAID_FONT,
+  flowchart: { curve: 'basis', htmlLabels: true, useMaxWidth: true },
+  sequence: { useMaxWidth: true, wrap: true },
+  gantt: { useMaxWidth: true },
+  themeVariables: MERMAID_THEME_VARIABLES,
+  themeCSS: MERMAID_THEME_CSS,
+} as any);
 
 let _rid = 0;
 
@@ -52,7 +46,10 @@ const MermaidView: React.FC<Props> = ({ mermaid: code, title, language }) => {
     const src = guardMermaidLabels(sanitizeMermaid(code || ''))
       .replace(/\("([RACI])"\)/g, '($1)');
     if (!src) { setSvg(''); return; }
-    mermaid.render(id, src)
+    // Load the brand font BEFORE rendering — mermaid measures text synchronously,
+    // so an unloaded font sizes node boxes wrong and Arabic overflows.
+    ensureMermaidFont()
+      .then(() => mermaid.render(id, src))
       .then(({ svg }) => { if (!cancelled) setSvg(svg); })
       .catch((e) => { if (!cancelled) { setErr(e?.message || String(e)); setSvg(''); } });
     return () => { cancelled = true; };
