@@ -5,7 +5,7 @@ import type { ChatTurn } from '../services/agentOrchestrator';
 import { loadChunks, retrieve } from '../services/governanceService';
 import { exportMessageDocx, exportMessageXlsx, exportMessagePdfDirect, exportMessageHtml } from '../services/exportService';
 import { exportMessagePptx } from '../services/pptxExport';
-import { copilotEnabled, askStream as copilotAsk, draft as copilotDraft, exportDoc as copilotExport, stats as copilotStats, ingestFiles as copilotIngest, listConversations, getConversation, saveConversation, deleteConversation, type CopilotConvSummary } from '../services/copilotClient';
+import { copilotEnabled, askStream as copilotAsk, draftStream as copilotDraftStream, exportDoc as copilotExport, stats as copilotStats, ingestFiles as copilotIngest, listConversations, getConversation, saveConversation, deleteConversation, type CopilotConvSummary } from '../services/copilotClient';
 import { generateGroundedDocument } from '../services/geminiService';
 import ThinkingTrace from './ThinkingTrace';
 import Markdown, { type CiteRef } from './Markdown';
@@ -597,7 +597,28 @@ const GovCopilot: React.FC<Props> = (props) => {
           try { await copilotIngest(corpus, att.map(a => a.file)); } catch { /* non-fatal */ }
         }
         if (LONG_RE.test(q)) {
-          const doc = await copilotDraft({ corpus, request: q + FORMAT_HINT, language }, ac.signal);
+          // Long-form drafting runs 7-8 min; narrate the stages so the panel is
+          // never silent (HWK-A1). draftStream() relays real backend events when
+          // /draft/stream is deployed, else a timer-based heartbeat. Dedupe by
+          // stage so a backend that re-emits 'drafting' per section adds no spam.
+          const STAGE_LABELS: Record<string, [string, string]> = {
+            outline:  ['جاري بناء هيكل الوثيقة…',    'Building the document outline…'],
+            drafting: ['جاري صياغة أقسام الوثيقة…',   'Drafting the document sections…'],
+            critique: ['جاري مراجعة جودة المسودة…',    'Reviewing the draft quality…'],
+            revising: ['جاري تحسين الأقسام المحددة…',  'Revising the flagged sections…'],
+          };
+          let lastStage = '';
+          const doc = await copilotDraftStream(
+            { corpus, request: q + FORMAT_HINT, language },
+            ev => {
+              if (ev.stage === lastStage) return;
+              lastStage = ev.stage;
+              const [ar2, en2] = STAGE_LABELS[ev.stage] ?? ['جاري المعالجة…', 'Processing…'];
+              patch(m => ({ ...m, thoughts: [...m.thoughts, { id: nid(), text: t(ar2, en2) }] }));
+              scrollDown();
+            },
+            ac.signal,
+          );
           const docs = [...new Set(doc.sources.map(s => s.doc).filter(Boolean))];
           patch(m => ({ ...m, thinking: false, streaming: false, text: doc.markdown, sources: docs, srcRefs: toCiteRefs(doc.sources) }));
         } else {
