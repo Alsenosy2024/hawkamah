@@ -430,6 +430,7 @@ export function mergeModels(
   }
 
   // --- gaps (by area) — keep resolved; add new open ones ---
+  if (!out.gaps) out.gaps = []; // legacy/partial models may omit gaps (cf. kpis/committees above)
   const gapByArea = new Map(out.gaps.map(g => [norm(g.area), g]));
   for (const fg of fresh.gaps || []) {
     const ex = gapByArea.get(norm(fg.area));
