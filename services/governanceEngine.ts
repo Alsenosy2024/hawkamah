@@ -832,7 +832,7 @@ function modelFacts(m: CompanyGovernanceModel): string {
   const auths = (m.authorities || []).map(a =>
     `- ${a.decision} | المستوى: ${a.level}${a.roleId ? ` | الدور: ${m.roles.find(r => r.id === a.roleId)?.title || '—'}` : ''}`,
   ).join('\n') || 'لا يوجد';
-  const gaps = m.gaps.map(g => `- [${g.severity}] ${g.area}: ${g.description}`).join('\n') || 'لا يوجد';
+  const gaps = (m.gaps || []).map(g => `- [${g.severity}] ${g.area}: ${g.description}`).join('\n') || 'لا يوجد';
   return `# الوحدات التنظيمية\n${units}\n\n# الأدوار\n${roles}\n\n# السياسات الحالية\n${pols}\n\n# الإجراءات الحالية\n${procs}\n\n# مؤشرات الأداء\n${kpis}\n\n# الصلاحيات\n${auths}\n\n# الفجوات\n${gaps}`;
 }
 
