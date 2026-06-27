@@ -19,6 +19,31 @@ const MermaidView = React.lazy(() => import('./MermaidView'));
 // diagram by content even when the model tags the fence wrong / omits the language.
 import { isMermaidBlock } from '../services/mermaidDetect';
 
+// HWK-A4: React.Suspense catches the lazy chunk's loading promise but NOT a
+// render throw from MermaidView (e.g. invalid LLM-generated mermaid syntax). An
+// uncaught throw here escapes the whole Markdown render — and, with no boundary
+// between here and the app root, unmounts the surrounding view (the user's
+// "it did a refresh and disappeared"). This class contains a failed diagram to
+// an inline amber chip with a retry, so one bad diagram never takes down the run.
+class MermaidErrorBoundary extends React.Component<{ rtl: boolean; children: React.ReactNode }, { failed: boolean }> {
+  // This project ships no @types/react, so inherited members aren't typed (see ErrorBoundary.tsx).
+  declare props: { rtl: boolean; children: React.ReactNode };
+  declare setState: (partial: { failed: boolean }) => void;
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="my-3 px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-900/20 text-[12px] text-amber-700 dark:text-amber-400 flex items-center gap-2">
+          <span>{this.props.rtl ? 'تعذّر عرض هذا المخطط' : 'This diagram could not be rendered'}</span>
+          <button type="button" onClick={() => this.setState({ failed: false })} className="underline">{this.props.rtl ? 'إعادة' : 'retry'}</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export interface CiteRef { num: number; doc: string; heading?: string }
 
 interface Props {
@@ -116,9 +141,11 @@ const Markdown: React.FC<Props> = ({ text, rtl = true, className = '', citations
       if (code.trim() && isMermaidBlock(lang, code)) {
         // Render as a real, brand-styled diagram.
         blocks.push(
-          <React.Suspense key={k++} fallback={<div className="gc-shimmer my-3 h-28 rounded-2xl" />}>
-            <div className="my-3"><MermaidView mermaid={code} language={rtl ? 'ar' : 'en'} /></div>
-          </React.Suspense>,
+          <MermaidErrorBoundary key={k++} rtl={rtl}>
+            <React.Suspense fallback={<div className="gc-shimmer my-3 h-28 rounded-2xl" />}>
+              <div className="my-3"><MermaidView mermaid={code} language={rtl ? 'ar' : 'en'} /></div>
+            </React.Suspense>
+          </MermaidErrorBoundary>,
         );
       } else {
         blocks.push(
