@@ -390,6 +390,9 @@ ${content.slice(0, 8000)}`;
   const [modelCanvas, setModelCanvas] = useState(false);
   const [modelCanvasNodes, setModelCanvasNodes] = useState<any[]>([]);
   const [modelCanvasEdges, setModelCanvasEdges] = useState<any[]>([]);
+  // HWK-D2: in-app comment composer (replaces window.prompt); tracks which doc's box is open + its draft.
+  const [commentFor, setCommentFor] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState('');
 
   // rebuild merge toggle (#9)
   const [mergeOnRebuild, setMergeOnRebuild] = useState(true);
@@ -1412,8 +1415,14 @@ ${content.slice(0, 8000)}`;
   };
   const addDocComment = async (d: GovDocumentRecord, text: string) => {
     if (!text.trim()) return;
-    const rec: GovDocumentRecord = { ...d, updatedAt: new Date().toISOString(), comments: [...(d.comments || []), { id: uid('cmt'), at: new Date().toISOString(), author: ADMIN_ACTOR, text: text.trim() }] };
+    // HWK-D2: attribute the comment to the actually signed-in reviewer (was hardcoded ADMIN_ACTOR).
+    const author = auth.currentUser?.email || ADMIN_ACTOR;
+    const rec: GovDocumentRecord = { ...d, updatedAt: new Date().toISOString(), comments: [...(d.comments || []), { id: uid('cmt'), at: new Date().toISOString(), author, text: text.trim() }] };
     await saveGovDocument(rec); await loadAll();
+  };
+  const submitDocComment = async (d: GovDocumentRecord) => {
+    const txt = commentText.trim(); if (!txt) return;
+    await addDocComment(d, txt); setCommentText(''); setCommentFor(null);
   };
   const removeDoc = async (id: string) => {
     if (!confirm(t('حذف هذه الوثيقة من المكتبة؟', 'Delete this document from the library?'))) return;
@@ -3609,13 +3618,22 @@ ${content.slice(0, 8000)}`;
                                 <button onClick={() => handleBatchExport([d], d.title)} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('تصدير', 'Export')}</button>
                                 {d.status !== 'in_review' && <button onClick={() => setDocStatus(d, 'in_review')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('للمراجعة', 'To review')}</button>}
                                 {d.status !== 'approved' && <button onClick={() => setDocStatus(d, 'approved')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد', 'Approve')}</button>}
-                                <button onClick={() => { const c = window.prompt(t('أضف تعليقاً', 'Add a comment')); if (c) addDocComment(d, c); }} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('تعليق', 'Comment')}{d.comments?.length ? ` (${d.comments.length})` : ''}</button>
+                                <button onClick={() => { setCommentText(''); setCommentFor(commentFor === d.id ? null : d.id); }} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('تعليق', 'Comment')}{d.comments?.length ? ` (${d.comments.length})` : ''}</button>
                                 <button onClick={() => removeDoc(d.id)} className="hw-btn hw-btn-sm hw-btn-danger flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                               </div>
+                              {commentFor === d.id && (
+                                <div className="mt-2 flex items-start gap-2">
+                                  <textarea value={commentText} onChange={e => setCommentText(e.target.value)} rows={2} autoFocus placeholder={t('اكتب تعليقاً للمراجعة... (⌘/Ctrl+Enter للإرسال)', 'Write a review comment... (⌘/Ctrl+Enter to send)')} className="hw-input flex-1 text-xs resize-y" onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitDocComment(d); }} />
+                                  <div className="flex flex-col gap-1 shrink-0">
+                                    <button onClick={() => submitDocComment(d)} disabled={!commentText.trim()} className="hw-btn hw-btn-xs hw-btn-primary">{t('إرسال', 'Send')}</button>
+                                    <button onClick={() => { setCommentFor(null); setCommentText(''); }} className="hw-btn hw-btn-xs hw-btn-ghost">{t('إلغاء', 'Cancel')}</button>
+                                  </div>
+                                </div>
+                              )}
                               {d.comments && d.comments.length > 0 && (
                                 <div className="mt-2 space-y-1">
                                   {d.comments.map(c => (
-                                    <div key={c.id} className="text-[11px] text-slate-500 border-s-2 border-slate-200 dark:border-slate-700 ps-2">{c.text} <span className="text-slate-400">· {new Date(c.at).toLocaleDateString()}</span></div>
+                                    <div key={c.id} className="text-[11px] text-slate-500 border-s-2 border-slate-200 dark:border-slate-700 ps-2">{c.text} <span className="text-slate-400">· {c.author} · {new Date(c.at).toLocaleDateString()}</span></div>
                                   ))}
                                 </div>
                               )}
