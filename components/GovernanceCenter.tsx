@@ -8,7 +8,7 @@ import type {
   GovProgress, ArtifactSection, ThinkingStep, ReferenceProject, ProvenanceRef,
   GovDiagram, GovDiagramKind, GovGap, GovDocumentRecord, GovModelSnapshot,
   IntegrityIssue, MaturityReport, CoverageRow, FrameworkAlignment, GovAction,
-  TraceChain, GovAgentStep, DocChunk, GeneratedArtifact,
+  TraceChain, GovAgentStep, DocChunk, GeneratedArtifact, GovOrgUnit,
 } from '../types';
 import { ingestDocument, summarizeSentiment } from '../services/ingestionService';
 import { extractFileText } from '../services/fileExtraction';
@@ -1259,6 +1259,25 @@ ${content.slice(0, 8000)}`;
   const handleModelCanvasChange = async (m: CompanyGovernanceModel) => {
     setModel(m);
     try { await saveModel(m); } catch (e) { console.warn('model save failed', e); }
+  };
+  // HWK-B2: inline org-unit edits directly on the tree, persisted via the same writeback path.
+  // Add/rename are pure; delete is offered ONLY for a leaf unit with no attached roles (the tree
+  // enforces this), so referential integrity is preserved — deeper edits stay in the live canvas.
+  const renameOrgUnit = (id: string, name: string) => {
+    if (!model || !name.trim()) return;
+    handleModelCanvasChange({ ...model, orgUnits: model.orgUnits.map(u => u.id === id ? { ...u, name: name.trim() } : u) });
+  };
+  const addOrgUnit = (parentId?: string) => {
+    if (!model) return;
+    const nu: GovOrgUnit = { id: uid('unit'), name: t('وحدة جديدة', 'New unit'), mandate: '', parentId, provenance: [] };
+    handleModelCanvasChange({ ...model, orgUnits: [...model.orgUnits, nu] });
+  };
+  const deleteOrgUnit = (id: string) => {
+    if (!model) return;
+    // defense-in-depth: only a leaf unit with NOTHING referencing it (no child units, roles,
+    // procedures or KPIs) is safe to remove inline — otherwise we'd orphan a unitId reference.
+    if (orgUnitLocked(model, id) || model.orgUnits.some(u => u.parentId === id)) return;
+    handleModelCanvasChange({ ...model, orgUnits: model.orgUnits.filter(u => u.id !== id) });
   };
 
   // ---- #12 canvas writeback (connect → real authority/edge) + auto-layout ----
@@ -2636,7 +2655,9 @@ ${content.slice(0, 8000)}`;
               {model && model.orgUnits.length > 0 && (
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
                   <div className="font-black text-slate-700 dark:text-slate-200 text-sm mb-3 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>{t('شجرة الوحدات التنظيمية', 'Org-unit tree')} <span className="text-slate-400">({model.orgUnits.length})</span></div>
-                  <OrgUnitTree units={model.orgUnits} ar={ar} />
+                  <OrgUnitTree units={model.orgUnits} ar={ar}
+                    lockedUnitIds={lockedOrgUnitIds(model)}
+                    onRename={renameOrgUnit} onAddChild={addOrgUnit} onDelete={deleteOrgUnit} />
                 </div>
               )}
 
@@ -3737,7 +3758,67 @@ const StageNav: React.FC<{ back?: () => void; next?: () => void; nextLabel?: str
 
 // Recursive interactive org-unit tree. Roots = units with no parent (or whose
 // parent is missing from the set). Renders nested mandate-annotated branches.
-const OrgUnitTree: React.FC<{ units: any[]; ar: boolean }> = ({ units, ar }) => {
+// HWK-B2: org units that something still references (roles / procedures / KPIs) — deleting one
+// inline would orphan that unitId, so the tree only allows deleting a leaf unit absent from this set.
+const lockedOrgUnitIds = (model: any): Set<string> => new Set(
+  ([...(model.roles || []), ...(model.procedures || []), ...(model.kpis || [])]
+    .map((x: any) => x.unitId).filter(Boolean)) as string[]);
+const orgUnitLocked = (model: any, id: string): boolean => lockedOrgUnitIds(model).has(id);
+
+// A single org-tree node. Hoisted to module scope (a STABLE component type) so that OrgUnitTree
+// re-rendering on each keystroke RECONCILES the rename <input> instead of remounting it (which
+// would drop focus). Everything it needs is threaded through one `ctx` object.
+const OrgUnitBranch: React.FC<{ unit: any; depth: number; ctx: any }> = ({ unit, depth, ctx }) => {
+  const { byParent, editable, editId, draft, setEditId, setDraft, commitRename, escRef, lockedUnitIds, onAddChild, onDelete, tt } = ctx;
+  const children = byParent.get(unit.id) || [];
+  const editing = editId === unit.id;
+  const canDelete = editable && children.length === 0 && !lockedUnitIds?.has(unit.id);
+  return (
+    <div className={depth > 0 ? 'border-r border-emerald-200 dark:border-emerald-800 pr-3 mr-1' : ''}>
+      <div className="flex items-baseline gap-2 py-1">
+        <span className="text-emerald-500">{children.length ? '▾' : '•'}</span>
+        {editing ? (
+          <input value={draft} autoFocus
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur(); } else if (e.key === 'Escape') { escRef.current = true; e.currentTarget.blur(); } }}
+            onBlur={() => commitRename(unit)}
+            className="hw-input text-sm py-0.5 px-2" />
+        ) : (
+          <span className="font-bold text-slate-700 dark:text-slate-200 text-sm">{unit.name}</span>
+        )}
+        {!editing && unit.mandate && <span className="text-[12px] text-slate-500 dark:text-slate-400">— {unit.mandate}</span>}
+        {editable && !editing && (
+          <span className="ms-auto flex items-center gap-0.5 shrink-0">
+            <button title={tt('إعادة تسمية', 'Rename')} onClick={() => { setDraft(unit.name); setEditId(unit.id); }} className="hw-btn hw-btn-xs hw-btn-ghost p-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
+            <button title={tt('إضافة وحدة فرعية', 'Add sub-unit')} onClick={() => onAddChild(unit.id)} className="hw-btn hw-btn-xs hw-btn-ghost p-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+            {canDelete && <button title={tt('حذف الوحدة', 'Delete unit')} onClick={() => onDelete(unit.id)} className="hw-btn hw-btn-xs hw-btn-ghost p-1 text-rose-500"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>}
+          </span>
+        )}
+      </div>
+      {children.length > 0 && (
+        <div className="mt-1 space-y-1">
+          {children.map((c: any) => <OrgUnitBranch key={c.id} unit={c} depth={depth + 1} ctx={ctx} />)}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// HWK-B2: read-only by default; when edit callbacks are supplied it renders inline rename /
+// add-sub-unit / add-unit controls, plus delete for a LEAF unit nothing references (the safe
+// cases). Deeper restructuring stays in the live canvas (GovernanceCanvas).
+const OrgUnitTree: React.FC<{
+  units: any[]; ar: boolean;
+  lockedUnitIds?: Set<string>;
+  onRename?: (id: string, name: string) => void;
+  onAddChild?: (parentId?: string) => void;
+  onDelete?: (id: string) => void;
+}> = ({ units, ar, lockedUnitIds, onRename, onAddChild, onDelete }) => {
+  const editable = !!onRename;
+  const tt = (a: string, e: string) => (ar ? a : e);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const escRef = useRef(false);
   const byParent = new Map<string, any[]>();
   const ids = new Set(units.map(u => u.id));
   for (const u of units) {
@@ -3745,26 +3826,20 @@ const OrgUnitTree: React.FC<{ units: any[]; ar: boolean }> = ({ units, ar }) => 
     if (!byParent.has(key)) byParent.set(key, []);
     byParent.get(key)!.push(u);
   }
-  const Branch: React.FC<{ unit: any; depth: number }> = ({ unit, depth }) => {
-    const children = byParent.get(unit.id) || [];
-    return (
-      <div className={depth > 0 ? 'border-r border-emerald-200 dark:border-emerald-800 pr-3 mr-1' : ''}>
-        <div className="flex items-baseline gap-2 py-1">
-          <span className="text-emerald-500">{children.length ? '▾' : '•'}</span>
-          <span className="font-bold text-slate-700 dark:text-slate-200 text-sm">{unit.name}</span>
-          {unit.mandate && <span className="text-[12px] text-slate-500 dark:text-slate-400">— {unit.mandate}</span>}
-        </div>
-        {children.length > 0 && (
-          <div className="mt-1 space-y-1">
-            {children.map(c => <Branch key={c.id} unit={c} depth={depth + 1} />)}
-          </div>
-        )}
-      </div>
-    );
+  // Single commit path (called from onBlur; Enter/Escape both blur the input). escRef = cancel.
+  const commitRename = (unit: any) => {
+    if (escRef.current) { escRef.current = false; setEditId(null); return; }
+    const v = draft.trim();
+    if (v && v !== unit.name) onRename!(unit.id, v);
+    setEditId(null);
   };
+  const ctx = { byParent, editable, editId, draft, setEditId, setDraft, commitRename, escRef, lockedUnitIds, onAddChild, onDelete, tt };
   const roots = byParent.get('__root__') || [];
-  if (!roots.length) return <div className="text-slate-400 text-sm">{ar ? 'لا توجد وحدات.' : 'No units.'}</div>;
-  return <div className="space-y-1" dir={ar ? 'rtl' : 'ltr'}>{roots.map(r => <Branch key={r.id} unit={r} depth={0} />)}</div>;
+  const addRootBtn = editable ? (
+    <button onClick={() => onAddChild!(undefined)} className="hw-btn hw-btn-xs hw-btn-ghost mt-1 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>{tt('إضافة وحدة', 'Add unit')}</button>
+  ) : null;
+  if (!roots.length) return <div className="text-slate-400 text-sm">{ar ? 'لا توجد وحدات.' : 'No units.'}{addRootBtn}</div>;
+  return <div className="space-y-1" dir={ar ? 'rtl' : 'ltr'}>{roots.map(r => <OrgUnitBranch key={r.id} unit={r} depth={0} ctx={ctx} />)}{addRootBtn}</div>;
 };
 
 export default GovernanceCenter;
