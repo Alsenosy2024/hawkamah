@@ -226,6 +226,34 @@ const detectExportIntent = (text: string): { kind: 'pdf' | 'docx' | 'xlsx' | 'pp
 const FORMAT_HINT =
   '\n\n[تعليمات التنسيق — لا تذكرها في الرد: إذا تطلّب الجواب رسمًا بيانيًا أو هيكلاً تنظيميًا أو مخطط تدفّق أو علاقات، فأخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (graph TD / flowchart). لا ترسم المخططات بالحروف أو ASCII أبداً. لا تضع وسوم [مصدر N] أو أقواس مربّعة داخل تسميات عُقد mermaid (تُفسد الرسم)؛ ضع الاستشهادات في النص خارج المخطط فقط. قدّم البيانات الجدولية كجداول Markdown. لا تذكر اسم أداة الرسم (مثل mermaid) داخل نص الوثيقة — اكتفِ بإدراج المخطط نفسه.]';
 
+// HWK-A4: a panel-scoped error boundary. Without it, a render error inside the
+// copilot panel escapes to the app-level ErrorBoundary, which unmounts the
+// whole GovernanceCenter — to the user, the run "did a refresh and disappeared".
+// This catches the error inside the panel, shows an in-app error state with a
+// retry, and leaves the rest of the page intact. It is a backstop; mermaid
+// render throws are already contained by MermaidErrorBoundary in Markdown.tsx.
+class CopilotRunBoundary extends React.Component<{ ar: boolean; children: React.ReactNode }, { error: string | null }> {
+  // This project ships no @types/react, so inherited members aren't typed (see ErrorBoundary.tsx).
+  declare props: { ar: boolean; children: React.ReactNode };
+  declare setState: (partial: { error: string | null }) => void;
+  state: { error: string | null } = { error: null };
+  static getDerivedStateFromError(err: unknown) { return { error: err instanceof Error ? err.message : String(err) }; }
+  componentDidCatch(err: unknown, info: unknown) { console.error('[CopilotRunBoundary]', err, info); }
+  render() {
+    const { ar } = this.props;
+    if (this.state.error !== null) {
+      return (
+        <div className="gc-shell fixed top-3 bottom-3 end-3 z-40 w-[min(94vw,440px)] rounded-[28px] flex flex-col items-center justify-center gap-4 p-6 text-center">
+          <p className="text-[14px] font-bold text-slate-800 dark:text-slate-100">{ar ? 'حدث خطأ في المساعد' : 'Copilot hit an error'}</p>
+          <pre className="text-[11px] text-rose-600 bg-rose-50 dark:bg-rose-900/20 rounded-lg p-3 overflow-auto text-start whitespace-pre-wrap max-w-full">{this.state.error}</pre>
+          <button type="button" onClick={() => this.setState({ error: null })} className="hw-btn hw-btn-primary hw-btn-sm">{ar ? 'إعادة المحاولة' : 'Retry'}</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const GovCopilot: React.FC<Props> = (props) => {
   const { stageKey, stageLabel, model, language, extraContext, logoUrl, tenantId, seedChunks, stateSnapshot, onOpenSource } = props;
   const ar = (language || 'ar') === 'ar';
@@ -664,9 +692,14 @@ const GovCopilot: React.FC<Props> = (props) => {
           onError: () => patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد. أعد المحاولة.', 'Failed. Retry.') })),
         },
       );
-    } catch {
-      // HWK-A2: a failure should flip the active timeline step to error, not leave it spinning.
-      patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد.', 'Failed.'), steps: m.steps.map(s => s.status === 'running' ? { ...s, status: 'error' as const } : s) }));
+    } catch (e) {
+      // HWK-A4: distinguish a user/unmount abort from a real failure so the message
+      // is correct and only genuine errors are logged. HWK-A2: flip the active
+      // timeline step to error, not leave it spinning. Either way the error is
+      // surfaced IN the panel — it never bubbles up to reload/unmount the page.
+      const isAbort = e instanceof DOMException && e.name === 'AbortError';
+      patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || (isAbort ? t('أُلغيت العملية.', 'Cancelled.') : t('تعذّر الرد.', 'Failed.')), steps: m.steps.map(s => s.status === 'running' ? { ...s, status: isAbort ? ('done' as const) : ('error' as const) } : s) }));
+      if (!isAbort) console.error('[GovCopilot] generation error:', e);
     } finally {
       att.forEach(a => URL.revokeObjectURL(a.url));   // free object URLs
       setBusy(false);
@@ -702,6 +735,10 @@ const GovCopilot: React.FC<Props> = (props) => {
     requestClose();
   };
   useEffect(() => () => { if (closeTimer.current) window.clearTimeout(closeTimer.current); }, []);
+  // HWK-A4: if the panel ever unmounts mid-run (parent navigates / an outer
+  // boundary fires), abort the in-flight request instead of leaving a ghost
+  // fetch whose late resolution would setState on an unmounted tree.
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   // Turn any answer into a real downloadable file.
   const exportAs = async (kind: 'docx' | 'xlsx' | 'pdf' | 'pptx' | 'html', md: string) => {
@@ -815,6 +852,7 @@ const GovCopilot: React.FC<Props> = (props) => {
         }}
       />
     )}
+    <CopilotRunBoundary ar={ar}>
     <div className={shellCls} style={shellStyle} onAnimationEnd={onShellAnimEnd}>
       {/* header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--hw-border)] shrink-0">
@@ -921,7 +959,7 @@ const GovCopilot: React.FC<Props> = (props) => {
                     t('جهّز عقد عمل نموذجي', 'Draft a model employment contract'),
                     t('أعدّ تقريراً عن أحدث ممارسات الحوكمة ٢٠٢٦', 'Report on the latest 2026 governance practices'),
                   ].map((ex, x) => (
-                    <button key={x} type="button" onClick={() => send(ex)} className="gc-chip border border-[var(--hw-border)]">
+                    <button key={x} type="button" onClick={() => send(ex).catch(() => {})} className="gc-chip border border-[var(--hw-border)]">
                       {ex}
                     </button>
                   ))}
@@ -1088,14 +1126,14 @@ const GovCopilot: React.FC<Props> = (props) => {
               <textarea
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input).catch(() => {}); } }}
                 rows={full ? 2 : 1}
                 placeholder={t('اكتب سؤالك أو اطلب صياغة كاملة…', 'Ask, or request a full draft…')}
                 className="gc-input"
               />
               {busy
                 ? <button onClick={stop} className="gc-send gc-send-stop" title={t('إيقاف', 'Stop')} aria-label={t('إيقاف', 'Stop')}><IconStop /></button>
-                : <button onClick={() => send(input)} disabled={!input.trim() && !attachments.length} className="gc-send" title={t('إرسال', 'Send')} aria-label={t('إرسال', 'Send')}><IconSend /></button>}
+                : <button onClick={() => send(input).catch(() => {})} disabled={!input.trim() && !attachments.length} className="gc-send" title={t('إرسال', 'Send')} aria-label={t('إرسال', 'Send')}><IconSend /></button>}
             </div>
           </>
         )}
@@ -1126,6 +1164,7 @@ const GovCopilot: React.FC<Props> = (props) => {
         </div>
       </div>
     </div>
+    </CopilotRunBoundary>
     </>
   );
 };
