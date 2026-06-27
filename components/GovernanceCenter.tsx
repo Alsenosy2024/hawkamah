@@ -2054,6 +2054,26 @@ ${content.slice(0, 8000)}`;
                   })}
                 </div>
               )}
+              {/* HWK-B6: structure-build pills (digest → extract → dedup → match)
+                  so the long synchronous build narrates its stage and the bar moves. */}
+              {(['build_digest','build_extract','build_dedup','match'] as const).includes(progress.phase as any) && (
+                <div className="flex items-center gap-1 mb-1.5 flex-wrap">
+                  {([
+                    { k: 'build_digest', ar: 'الأدلة', en: 'Evidence' },
+                    { k: 'build_extract', ar: 'الاستخراج', en: 'Extract' },
+                    { k: 'build_dedup', ar: 'التنظيف', en: 'Dedup' },
+                    { k: 'match', ar: 'المطابقة', en: 'Match' },
+                  ] as const).map((p, idx, arr) => {
+                    const order = arr.findIndex(x => x.k === progress.phase);
+                    const state = idx < order ? 'done' : idx === order ? 'active' : 'todo';
+                    return (
+                      <span key={p.k} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${state === 'active' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : state === 'done' ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
+                        {state === 'done' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5 inline-block me-0.5"><polyline points="20 6 9 17 4 12"/></svg> : null}{ar ? p.ar : p.en}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
               <div className="text-[11px] text-slate-600 mb-1">{progress.label}</div>
               <div className="h-2 bg-emerald-100 rounded-full overflow-hidden">
                 <div className="h-full bg-emerald-500 transition-all" style={{ width: `${progress.total ? Math.round(progress.current / progress.total * 100) : 0}%` }} />

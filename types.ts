@@ -1044,7 +1044,8 @@ export type GovPhase = 'reality' | 'knowledge' | 'recommendation' | 'generation'
 
 // Progress event for ingestion / model-building pipelines.
 export interface GovProgress {
-  phase: GovPhase | 'ingest' | 'embed' | 'entities' | 'sentiment' | 'match';
+  // build_* are the structure-build sub-phases surfaced during buildModel (HWK-B6).
+  phase: GovPhase | 'ingest' | 'embed' | 'entities' | 'sentiment' | 'match' | 'build_digest' | 'build_extract' | 'build_dedup';
   current: number;
   total: number;
   label: string;

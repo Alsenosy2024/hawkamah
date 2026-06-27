@@ -357,7 +357,11 @@ export interface BuildModelParams {
 export async function buildModel(p: BuildModelParams): Promise<CompanyGovernanceModel> {
   const { tenantId, companyName, chunks, signal, onProgress } = p;
 
-  onProgress?.({ phase: 'reality', current: 0, total: 1, label: 'تحليل الواقع وبناء النموذج المؤسسي...' });
+  // HWK-B6: the build is a long synchronous browser task; demarcate its stages
+  // (digest → extract → dedup) over a stable total of 4 so the UI bar advances
+  // through 25%→50%→75%→100% instead of sitting at a single static label.
+  const BUILD_STEPS = 4;
+  onProgress?.({ phase: 'build_digest', current: 0, total: BUILD_STEPS, label: 'تجهيز ملخص الأدلة…' });
 
   // Build a numbered evidence digest the model can cite by index.
   // GovF3: at scale (30–50 docs) a flat slice(0,60000) starves tail documents —
@@ -397,6 +401,8 @@ export async function buildModel(p: BuildModelParams): Promise<CompanyGovernance
     return picked.map(({ c, i }) => entry(c, i)).join('\n\n');
   })();
 
+  onProgress?.({ phase: 'build_digest', current: 1, total: BUILD_STEPS, label: `ملخص الأدلة جاهز: ${chunks.length} مقطع` });
+
   // CRITICAL #2 (cap surface): at very large scale the digest may not fit every chunk
   // even after round-robin. Make that visible instead of silently under-citing.
   const totalDocs = new Set(chunks.map(c => c.docName || '—')).size;
@@ -409,7 +415,7 @@ export async function buildModel(p: BuildModelParams): Promise<CompanyGovernance
     const pct = Math.round((citedDocs / totalDocs) * 100);
     const low = pct < 80;
     onProgress?.({
-      phase: 'reality', current: 0, total: 1,
+      phase: 'build_digest', current: 1, total: BUILD_STEPS,
       label: low
         ? `⚠️ تحذير تغطية: النموذج بُني على ${citedDocs}/${totalDocs} وثيقة فقط (${pct}٪) — أقل من 80٪. الباقي مفهرس لكن خارج سعة هذا التحليل، فقد تنقص دقة الواقع الراهن. الحل: قلّل/ادمج المصادر المكرّرة أو ابنِ النموذج على دفعات.`
         : `تغطية الأدلة: ${citedDocs}/${totalDocs} وثيقة (${pct}٪) ضمن سعة التحليل (الباقي مفهرس لكن خارج هذا الملخص).`,
@@ -479,8 +485,18 @@ ${digest}${entitiesHint}${assessmentBlock}${sent.block}
   // if every attempt fails on a non-empty corpus, THROW so the caller surfaces the
   // failure instead of silently saving a blank model.
   let raw: any = { orgUnits: [], roles: [], policies: [], procedures: [], gaps: [] };
+  // HWK-B6: this single AI round-trip is the longest part of the build (often a
+  // minute+). Mark Extract active and keep the label up for its full duration.
+  onProgress?.({ phase: 'build_extract', current: 2, total: BUILD_STEPS, label: 'استخراج البنية المؤسسية بالذكاء الاصطناعي (قد يستغرق دقيقة أو أكثر)…' });
   try {
-    raw = await withRetry(() => generateJson(prompt, modelSchema, { signal, temperature: 0.2 }), 3, 900, signal);
+    // HWK-B6: treat an empty extraction on a non-empty corpus as a retriable
+    // failure so a single flaky response doesn't silently yield a blank model.
+    raw = await withRetry(async () => {
+      const r: any = await generateJson(prompt, modelSchema, { signal, temperature: 0.2 });
+      const produced = (r?.orgUnits?.length || 0) + (r?.roles?.length || 0) + (r?.policies?.length || 0);
+      if (chunks.length > 0 && produced === 0) throw new Error('استجابة فارغة من النموذج — إعادة المحاولة');
+      return r;
+    }, 3, 900, signal);
   } catch (e: any) {
     if (isAborted(signal)) throw new Error('aborted');
     // No evidence to build from → an empty model is a legitimate (not failed) outcome.
@@ -507,7 +523,7 @@ ${digest}${entitiesHint}${assessmentBlock}${sent.block}
     chunks.forEach((c, gi) => { if (!coveredDocNames.has(c.docName || '—')) missingChunks.push({ c, gi }); });
     const missingDocs = new Set(missingChunks.map(m => m.c.docName || '—'));
     if (missingDocs.size > 0) {
-      onProgress?.({ phase: 'reality', current: 0, total: 1,
+      onProgress?.({ phase: 'build_extract', current: 2, total: BUILD_STEPS,
         label: `استخراج تكميلي: ${missingDocs.size} وثيقة إضافية…` });
       const SUPP_BUDGET = 80000;
       const suppEntry = (c: DocChunk, i: number) => `[S${i}] (${c.docName} › ${c.headingPath})\n${c.text.slice(0, 1400)}`;
@@ -587,9 +603,11 @@ ${suppDigest}
     return [...seen.values()];
   };
 
+  onProgress?.({ phase: 'build_dedup', current: 3, total: BUILD_STEPS, label: 'تنظيف الكيانات وإزالة التكرار…' });
   raw.orgUnits = deduplicateByName(raw.orgUnits || [], 'name');
   raw.roles    = deduplicateByName(raw.roles    || [], 'title');
   raw.policies = deduplicateByName(raw.policies || [], 'title');
+  onProgress?.({ phase: 'build_dedup', current: 4, total: BUILD_STEPS, label: `جاهز: ${raw.orgUnits?.length || 0} وحدة · ${raw.roles?.length || 0} دور · ${raw.policies?.length || 0} سياسة` });
 
   // Resolve evidence indices → provenance refs.
   const prov = (idxs?: number[]): ProvenanceRef[] =>
