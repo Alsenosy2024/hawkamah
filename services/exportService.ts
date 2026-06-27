@@ -1943,7 +1943,11 @@ function companyAssessmentsArtifact(records: AssessmentRecord[], companyName: st
   Array.from(byEmail.entries()).forEach(([, items]) => {
     const sorted = [...items].sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
     const latest = sorted[0]?.reportData?.totalScore;
-    rows.push(`| ${sorted[0]?.userName || '—'} | ${sorted[0]?.jobTitle || '—'} | ${items.length} | ${latest != null ? Math.round(latest) + '%' : '—'} | ${band(latest)} |`);
+    // Band the SAME rounded value that's displayed — banding the raw score while
+    // showing Math.round(latest) made e.g. 84.6 render as "85% | Optimal" (the <85
+    // band) even though the legend puts 85 in the next band up.
+    const shown = latest != null ? Math.round(latest) : undefined;
+    rows.push(`| ${sorted[0]?.userName || '—'} | ${sorted[0]?.jobTitle || '—'} | ${items.length} | ${shown != null ? shown + '%' : '—'} | ${band(shown)} |`);
   });
   sections.push({ id: 'roster', status: 'done', title: ar ? 'سجل الموظفين والدرجات' : 'Employee roster & scores', content: rows.join('\n') });
   // Per-employee detail
