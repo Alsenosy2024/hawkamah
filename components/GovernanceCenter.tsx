@@ -1441,21 +1441,44 @@ ${content.slice(0, 8000)}`;
     await loadAll();
   };
   // HWK-D5: apply the reviewer's comments → a new numbered version. Freeze the CURRENT doc as a
-  // prior version (preserves history + its comments), bump the live doc to v+1, clear the addressed
-  // comments, and set it back to in_review to re-share. (Content edits are made manually in the
-  // canvas; auto-revising from comments via AI is a follow-up.)
+  // prior version (preserves history + its comments), AI-revise the content by applying the comments
+  // (HWK-D5 follow-up), bump the live doc to v+1, clear the addressed comments, and set it back to
+  // in_review to re-share. If the AI revision fails, fall back to a content-unchanged bump.
   const newDocVersion = async (d: GovDocumentRecord) => {
     const now = new Date().toISOString();
+    const comments = d.comments || [];
     const prior: GovDocumentRecord = { ...d, id: uid('govdoc'), title: `${d.title} — ${t('نسخة', 'v')}${d.version || 1}`, updatedAt: now };
-    const next: GovDocumentRecord = { ...d, version: (d.version || 1) + 1, status: 'in_review', comments: [], updatedAt: now };
+    let sections = d.sections, executiveSummary = d.executiveSummary, diagrams = d.diagrams, revised = false;
+    if (model && comments.length) {
+      setBusy(t('تطبيق التعليقات وتنقيح النسخة…', 'Applying comments & revising…'));
+      try {
+        const artifact: GeneratedArtifact = {
+          title: d.title, goal: d.goal || '', language: ar ? 'ar' : 'en',
+          sections: d.sections, executiveSummary: d.executiveSummary, diagrams: d.diagrams,
+          createdAt: new Date(d.createdAt), complete: true,
+        };
+        const instruction = t(
+          `طبّق ملاحظات المراجعين التالية على الوثيقة بدقة، دون تغيير ما لم تُطلب مراجعته:\n${comments.map(c => `- ${c.text}`).join('\n')}`,
+          `Apply the following reviewer comments to the document precisely, leaving untouched anything they don't mention:\n${comments.map(c => `- ${c.text}`).join('\n')}`,
+        );
+        const chunks = await loadChunks(tenantId).catch(() => [] as DocChunk[]);
+        const out = await editArtifact({ artifact, instruction, model, chunks, language: ar ? 'ar' : 'en', sector, referenceProjects: refProjects });
+        sections = out.sections; executiveSummary = out.executiveSummary; diagrams = out.diagrams || d.diagrams; revised = true;
+      } catch (e: any) {
+        alertMsg(t('تعذّر التنقيح التلقائي؛ صدر إصدار جديد بالمحتوى الحالي.', 'Auto-revision failed; released a new version with the current content.') + (e?.message ? ` (${e.message})` : ''));
+      } finally { setBusy(''); }
+    }
+    const next: GovDocumentRecord = { ...d, version: (d.version || 1) + 1, status: 'in_review', comments: [], sections, executiveSummary, diagrams, updatedAt: now };
     await saveGovDocument(prior);
     await saveGovDocument(next);
     if (model) {
-      const m = appendAudit(model, auth.currentUser?.email || ADMIN_ACTOR, 'doc_version', `${d.title} → v${next.version} (${t('طبّق', 'applied')} ${(d.comments || []).length} ${t('تعليق', 'comments')})`);
+      const m = appendAudit(model, auth.currentUser?.email || ADMIN_ACTOR, 'doc_version', `${d.title} → v${next.version} (${revised ? t('نُقِّحت بـ', 'revised from') : t('طبّق', 'applied')} ${comments.length} ${t('تعليق', 'comments')})`);
       await saveModel(m); setModel(m);
     }
     await loadAll();
-    alertMsg(t(`أُصدرت النسخة v${next.version} وأُعيدت للمراجعة؛ حُفظت النسخة السابقة.`, `Released v${next.version} and re-shared for review; the prior version is kept.`));
+    alertMsg(revised
+      ? t(`أُصدرت النسخة v${next.version} بعد تطبيق التعليقات بالذكاء الاصطناعي وأُعيدت للمراجعة؛ حُفظت النسخة السابقة.`, `Released v${next.version} with the comments AI-applied and re-shared; the prior version is kept.`)
+      : t(`أُصدرت النسخة v${next.version} وأُعيدت للمراجعة؛ حُفظت النسخة السابقة.`, `Released v${next.version} and re-shared; the prior version is kept.`));
   };
   const addDocComment = async (d: GovDocumentRecord, text: string) => {
     if (!text.trim()) return;
@@ -3691,7 +3714,7 @@ ${content.slice(0, 8000)}`;
                                 {d.status !== 'in_review' && <button onClick={() => setDocStatus(d, 'in_review')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('للمراجعة', 'To review')}</button>}
                                 {d.status !== 'approved' && <button onClick={() => setDocStatus(d, 'approved')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد', 'Approve')}</button>}
                                 <button onClick={() => { setCommentText(''); setCommentFor(commentFor === d.id ? null : d.id); }} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('تعليق', 'Comment')}{d.comments?.length ? ` (${d.comments.length})` : ''}</button>
-                                {d.comments && d.comments.length > 0 && <button onClick={() => newDocVersion(d)} title={t('احفظ النسخة الحالية كنسخة سابقة، ارفع رقم الإصدار، وأعد الإرسال للمراجعة', 'Freeze the current version, bump the version number, and re-share for review')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>{t('إصدار جديد', 'New version')} <span className="opacity-70">v{(d.version || 1) + 1}</span></button>}
+                                {d.comments && d.comments.length > 0 && <button onClick={() => newDocVersion(d)} title={t('طبّق التعليقات بالذكاء الاصطناعي → نسخة جديدة: تُحفظ النسخة الحالية، يُنقَّح المحتوى وفق التعليقات، ويُرفع الإصدار ويُعاد للمراجعة', 'AI-apply the comments → a new version: the current version is kept, the content is revised from the comments, the version is bumped, and it is re-shared for review')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>{t('إصدار جديد', 'New version')} <span className="opacity-70">v{(d.version || 1) + 1}</span></button>}
                                 <button onClick={() => removeDoc(d.id)} className="hw-btn hw-btn-sm hw-btn-danger flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                               </div>
                               {commentFor === d.id && (
