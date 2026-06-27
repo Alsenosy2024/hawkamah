@@ -868,7 +868,7 @@ ${content.slice(0, 8000)}`;
   };
 
   const handleDeleteDiagram = async (id: string) => {
-    if (!confirm(t('حذف هذا المخطط؟', 'Delete this diagram?'))) return;
+    if (!(await toast.confirm(t('حذف هذا المخطط؟', 'Delete this diagram?'), { danger: true }))) return;
     await deleteDiagram(id);
     if (activeDiag?.id === id) { setActiveDiag(null); setCanvasMode(false); }
     await loadAll();
@@ -1305,7 +1305,7 @@ ${content.slice(0, 8000)}`;
 
   // ---- #9 rollback to a snapshot ----
   const handleRollback = async (s: GovModelSnapshot) => {
-    if (!confirm(t(`استرجاع النموذج إلى نسخة ${new Date(s.at).toLocaleString()}؟ سيُحفظ الوضع الحالي كنسخة.`, `Roll back to ${new Date(s.at).toLocaleString()}? Current state will be snapshotted.`))) return;
+    if (!(await toast.confirm(t(`استرجاع النموذج إلى نسخة ${new Date(s.at).toLocaleString()}؟ سيُحفظ الوضع الحالي كنسخة.`, `Roll back to ${new Date(s.at).toLocaleString()}? Current state will be snapshotted.`)))) return;
     setBusy(t('استرجاع نسخة', 'Rolling back'));
     try {
       if (model) await saveSnapshot({ id: uid('snap'), tenantId, version: model.version || 1, at: new Date().toISOString(), reason: 'pre-rollback', model });
@@ -1492,7 +1492,7 @@ ${content.slice(0, 8000)}`;
     await addDocComment(d, txt); setCommentText(''); setCommentFor(null);
   };
   const removeDoc = async (id: string) => {
-    if (!confirm(t('حذف هذه الوثيقة من المكتبة؟', 'Delete this document from the library?'))) return;
+    if (!(await toast.confirm(t('حذف هذه الوثيقة من المكتبة؟', 'Delete this document from the library?'), { danger: true }))) return;
     await deleteGovDocument(id); await loadAll();
   };
 
@@ -1708,7 +1708,7 @@ ${content.slice(0, 8000)}`;
   // v6-D: reference projects now have a managed home — delete is wired so the
   // library never becomes a write-only dumping ground.
   const handleDeleteRef = async (id: string, name: string) => {
-    if (!window.confirm(t(`حذف المرجع «${name}» نهائيًا؟`, `Permanently delete reference “${name}”?`))) return;
+    if (!(await toast.confirm(t(`حذف المرجع «${name}» نهائيًا؟`, `Permanently delete reference “${name}”?`), { danger: true }))) return;
     // optimistic removal then persist
     setRefProjects(prev => prev.filter(p => p.id !== id));
     try {
@@ -2429,7 +2429,7 @@ ${content.slice(0, 8000)}`;
                         <button title={excludedDocIds.has(d.id) ? t('تضمين في البناء', 'Include in build') : t('استبعاد من البناء', 'Exclude from build')}
                           onClick={() => setExcludedDocIds(prev => { const n = new Set(prev); n.has(d.id) ? n.delete(d.id) : n.add(d.id); return n; })}
                           className="">{excludedDocIds.has(d.id) ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-emerald-600"><polyline points="20 6 9 17 4 12"/></svg> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 text-rose-500"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>}</button>
-                        <button onClick={async () => { if (confirm(t('حذف هذه الوثيقة؟', 'Delete this document?'))) { await onDeleteDocument(d.id); await deleteDocChunks(tenantId, d.id).catch(() => {}); await loadAll(); } }}
+                        <button onClick={async () => { if (await toast.confirm(t('حذف هذه الوثيقة؟', 'Delete this document?'), { danger: true })) { await onDeleteDocument(d.id); await deleteDocChunks(tenantId, d.id).catch(() => {}); await loadAll(); } }}
                           className="text-rose-400 hover:text-rose-600 text-xs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                       </span>
                     </div>
@@ -2490,7 +2490,7 @@ ${content.slice(0, 8000)}`;
                           <span className="flex items-center gap-2 shrink-0">
                             {typeof r.totalScore === 'number' && <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400">{Math.round(r.totalScore)}%</span>}
                             <span className="text-[10px] text-slate-400">{a.timestamp ? new Date(a.timestamp).toLocaleDateString(ar ? 'ar-EG' : 'en-US') : ''}</span>
-                            <button onClick={async (e) => { e.preventDefault(); if (confirm(t('حذف هذا التقييم؟', 'Delete this assessment?'))) { await deleteDoc(doc(db, 'assessments', a.id)).catch(() => {}); await loadAll(); } }}
+                            <button onClick={async (e) => { e.preventDefault(); if (await toast.confirm(t('حذف هذا التقييم؟', 'Delete this assessment?'), { danger: true })) { await deleteDoc(doc(db, 'assessments', a.id)).catch(() => {}); await loadAll(); } }}
                               className="text-rose-400 hover:text-rose-600 leading-none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                           </span>
                         </summary>
