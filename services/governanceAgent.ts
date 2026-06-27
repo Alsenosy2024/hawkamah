@@ -266,7 +266,10 @@ export async function runGovernanceAgent(p: RunAgentParams, cb: AgentCallbacks =
           if (p.autoApply === false) { observation = 'التطبيق التلقائي معطّل — التعديلات بانتظار اعتماد المستخدم.'; break; }
           const res = applyActions(working, lastProposed, 'agent');
           working = res.model;
-          appliedActions.push(...lastProposed.slice(0, res.applied));
+          // Record the actions actually applied (skips are interleaved, so the
+          // old positional `lastProposed.slice(0, res.applied)` recorded the wrong
+          // ones — e.g. a skipped middle action shown as applied, a real one dropped).
+          appliedActions.push(...res.appliedActions);
           // ---- verifier: auto-validate after every apply ----
           const issues = analyzeIntegrity(working);
           const crit = issues.filter(x => x.severity === 'high' || x.severity === 'critical');

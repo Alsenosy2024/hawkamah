@@ -139,6 +139,10 @@ export async function proposeModelActions(
 export interface ApplyResult {
   model: CompanyGovernanceModel;
   applied: number;
+  /** The actions actually applied, in order. Use this for an accurate audit
+   *  trail — skips are interleaved, so reconstructing it positionally from
+   *  `applied` (e.g. `actions.slice(0, applied)`) mislabels skipped actions. */
+  appliedActions: GovAction[];
   skipped: string[];
 }
 
@@ -165,9 +169,11 @@ export function applyActions(
 
   const skipped: string[] = [];
   let applied = 0;
+  const appliedActions: GovAction[] = [];
   const details: string[] = [];
 
   for (const a of actions) {
+    const appliedBefore = applied;
     try {
       switch (a.type) {
         case 'add_unit': {
@@ -304,13 +310,16 @@ export function applyActions(
     } catch (e: any) {
       skipped.push(`خطأ في ${a.type}: ${e?.message || e}`);
     }
+    // Each case does at most one `applied++` on success (and breaks on skip),
+    // so a positive delta means THIS action was applied — record it in order.
+    if (applied > appliedBefore) appliedActions.push(a);
   }
 
   if (applied > 0) {
     const entry: GovAuditEntry = { id: uid('aud'), at: new Date().toISOString(), actor, action: 'apply_actions', detail: details.join('، ').slice(0, 400) };
     m.auditLog!.push(entry);
   }
-  return { model: m, applied, skipped };
+  return { model: m, applied, appliedActions, skipped };
 }
 
 export function appendAudit(model: CompanyGovernanceModel, actor: string, action: string, detail: string): CompanyGovernanceModel {
