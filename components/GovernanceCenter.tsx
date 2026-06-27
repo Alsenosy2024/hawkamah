@@ -2678,6 +2678,27 @@ ${content.slice(0, 8000)}`;
                 </div>
               )}
 
+              {/* HWK-B3: saved structure versions, restorable right here — no need to leave for
+                  the Library › history tab. Newest first; each restores via the existing rollback. */}
+              {model && snapshots.length > 0 && (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                  <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                    <div className="font-bold text-slate-700 dark:text-slate-200 text-sm flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>{t('نسخ الهيكل المحفوظة', 'Saved structure versions')} <span className="text-slate-400">({snapshots.length})</span></div>
+                    <span className="text-[11px] text-slate-400">{t('استرجع نسخة سابقة دون مغادرة هذه المرحلة', 'Step back to a prior iteration without leaving this stage')}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[...snapshots].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 10).map(s => (
+                      <button key={s.id} onClick={() => handleRollback(s)} disabled={!!busy}
+                        title={`${t('استرجاع هذه النسخة', 'Restore this version')} — ${new Date(s.at).toLocaleString(ar ? 'ar' : 'en')}${s.reason ? ` (${s.reason})` : ''}`}
+                        className="hw-btn hw-btn-xs hw-btn-ghost flex items-center gap-1 disabled:opacity-50">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 shrink-0"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 3-7.7L3 7"/></svg>
+                        v{s.version} · {new Date(s.at).toLocaleDateString(ar ? 'ar' : 'en')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {model && activeDiag && activeDiag.kind === 'orgchart' && activeDiag.mermaid && (
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
                   <MermaidView mermaid={activeDiag.mermaid} title={activeDiag.title} language={language} />
