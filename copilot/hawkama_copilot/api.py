@@ -145,6 +145,70 @@ def draft(body: dict[str, Any]) -> dict[str, Any]:
     return _doc_payload(doc)
 
 
+@api.post("/draft/stream", dependencies=[Depends(require_allowed_origin)])
+async def draft_stream(body: dict[str, Any]) -> StreamingResponse:
+    """SSE variant of /draft (HWK-A1). Emits
+        {"type":"progress","stage":...,"done":N,"total":N}
+    events while drafting, then a terminal
+        {"type":"done","doc":{...}}   (or {"type":"error","detail":...}).
+    The blocking /draft endpoint is unchanged; clients fall back to it when this
+    route is absent (older deployment). agent.draft() already accepts an
+    on_progress(stage, done, total) callback (used by the CLI), so this simply
+    relays those callbacks from a worker thread onto an asyncio queue.
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    corpus = body.get("corpus", "default")
+    request = (body.get("request") or body.get("message") or "").strip()
+    if not request:
+        raise HTTPException(400, "request is required")
+    agent = get_agent(corpus)
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    doc_holder: list[dict] = []
+
+    def on_progress(stage: str, done: int, total: int) -> None:
+        loop.call_soon_threadsafe(
+            queue.put_nowait,
+            {"type": "progress", "stage": stage, "done": done, "total": total},
+        )
+
+    def worker() -> None:
+        try:
+            doc = agent.draft(
+                request,
+                language=body.get("language", "ar"),
+                target_pages=body.get("target_pages"),
+                on_progress=on_progress,
+            )
+            doc_holder.append(_doc_payload(doc))
+            loop.call_soon_threadsafe(queue.put_nowait, {"type": "__done__"})
+        except Exception as exc:  # surface the failure to the client as an SSE error
+            loop.call_soon_threadsafe(
+                queue.put_nowait, {"type": "error", "detail": str(exc)}
+            )
+
+    async def event_generator():
+        executor = ThreadPoolExecutor(max_workers=1)
+        fut = loop.run_in_executor(executor, worker)
+        try:
+            while True:
+                ev = await queue.get()
+                if ev["type"] == "__done__":
+                    payload = {"type": "done", "doc": doc_holder[0] if doc_holder else {}}
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    break
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                if ev["type"] == "error":
+                    break
+        finally:
+            await fut
+            executor.shutdown(wait=False)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @api.post("/build_full", dependencies=[Depends(require_allowed_origin)])
 def build_full(body: dict[str, Any]) -> dict[str, Any]:
     corpus = body.get("corpus", "default")

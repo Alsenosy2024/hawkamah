@@ -43,6 +43,18 @@ export interface CopilotDoc {
 
 export type CopilotFormat = 'md' | 'txt' | 'html' | 'docx' | 'pdf' | 'xlsx' | 'pptx' | 'json';
 
+// Progress event for the long-form /draft path. The blocking /draft endpoint is
+// silent for the whole 7-8 min run; draftStream() surfaces named stages so the
+// UI can narrate what the Copilot is doing (HWK-A1). `stage` is a free string
+// (the backend may emit finer-grained names than the four canonical ones below).
+export interface DraftProgressEvent {
+  type: 'progress';
+  stage: string;     // 'outline' | 'drafting' | 'critique' | 'revising' | backend-specific
+  done: number;      // steps completed
+  total: number;     // steps expected
+}
+export type DraftProgressCb = (ev: DraftProgressEvent) => void;
+
 // Durable chat history — a saved conversation thread and its lightweight summary
 // (the shape the history sidebar lists). Messages are stored verbatim, so we keep
 // the type loose (the front-end's own Msg shape minus transient fields).
@@ -126,6 +138,109 @@ export async function draft(
   });
   if (!res.ok) throw new Error(`copilot /draft failed: ${res.status}`);
   return res.json();
+}
+
+/**
+ * Like draft(), but emits progress events during the long generation so the UI
+ * is never silent (HWK-A1). It first probes the additive SSE endpoint
+ * POST /draft/stream and relays real backend stage events; if that endpoint is
+ * absent (404/405) or the network errors, it falls back to the unchanged
+ * blocking draft() wrapped in a timer-based staged heartbeat. Either way the
+ * caller receives ≥1 progress event before completion. The blocking /draft
+ * endpoint and draft() are untouched, so this is non-regressing.
+ */
+export async function draftStream(
+  params: { corpus: string; request: string; language?: string; target_pages?: number },
+  onProgress: DraftProgressCb,
+  signal?: AbortSignal,
+): Promise<CopilotDoc> {
+  let streamAccepted = false;   // true once the backend returned 200 + a body (generation started)
+  try {
+    const res = await fetch(`${BASE}/draft/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+      signal,
+    });
+    if (res.ok && res.body) {
+      streamAccepted = true;
+      return await _consumeDraftStream(res.body, onProgress);
+    }
+    // Non-OK (e.g. 404/405 on an older deployment) → fall through to heartbeat.
+  } catch (e) {
+    // A user/unmount abort must propagate — do NOT silently restart as a blocking run.
+    if (e instanceof Error && e.name === 'AbortError') throw e;
+    // CRITICAL: once the stream was accepted the backend is already drafting; a
+    // mid-stream failure (network drop / 'no document' / SSE error frame) must
+    // NOT fall through to draft() — that would run a SECOND 7-8 min generation
+    // (double cost) while the first may still be executing. Re-throw instead.
+    if (streamAccepted) throw e;
+    // Pre-200 / never-connected network error → safe to fall through to heartbeat.
+  }
+  return _draftWithHeartbeat(params, onProgress, signal);
+}
+
+// Parse the SSE frames from /draft/stream: 'progress' events feed onProgress,
+// the terminal 'done' event carries the finished document, 'error' rejects.
+async function _consumeDraftStream(
+  body: ReadableStream<Uint8Array>,
+  onProgress: DraftProgressCb,
+): Promise<CopilotDoc> {
+  const reader = body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let doc: CopilotDoc | undefined;
+  const handle = (line: string) => {
+    const raw = line.replace(/^data:\s?/, '').trim();
+    if (!raw) return;
+    let ev: any;
+    try { ev = JSON.parse(raw); } catch { return; }
+    if (ev.type === 'progress') onProgress(ev as DraftProgressEvent);
+    else if (ev.type === 'done' && ev.doc) doc = ev.doc as CopilotDoc;
+    else if (ev.type === 'error') throw new Error(`copilot /draft/stream: ${ev.detail || 'error'}`);
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      buf.slice(0, idx).split('\n').forEach(handle);
+      buf = buf.slice(idx + 2);
+    }
+  }
+  if (buf.trim()) buf.split('\n').forEach(handle);
+  if (!doc) throw new Error('copilot /draft/stream: no document received');
+  return doc;
+}
+
+// Fallback for deployments without /draft/stream: run the unchanged blocking
+// draft() while a timer walks named stages so the UI shows live progress. The
+// first event fires immediately (guarantees ≥1 progress event before
+// completion); the interval then advances through the stages and holds on the
+// last one. All timers are cleared when the draft resolves or the run aborts.
+const _HEARTBEAT_STAGES = ['outline', 'drafting', 'critique', 'revising'];
+const _HEARTBEAT_MS = 12_000;
+async function _draftWithHeartbeat(
+  params: { corpus: string; request: string; language?: string; target_pages?: number },
+  onProgress: DraftProgressCb,
+  signal?: AbortSignal,
+): Promise<CopilotDoc> {
+  const total = _HEARTBEAT_STAGES.length;
+  let i = 0;
+  const tick = () => {
+    if (signal?.aborted) return;
+    const idx = Math.min(i, total - 1);
+    onProgress({ type: 'progress', stage: _HEARTBEAT_STAGES[idx], done: idx + 1, total });
+    i++;
+  };
+  tick();                                   // immediate first event — no startup silence
+  const handle = setInterval(tick, _HEARTBEAT_MS);
+  try {
+    return await draft(params, signal);
+  } finally {
+    clearInterval(handle);
+  }
 }
 
 /** Run the whole governance skill → deliverables + a single RTL HTML manual. */
