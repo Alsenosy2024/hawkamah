@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { UI, badge } from '../services/designTokens';
 import { useToast } from './ToastProvider';
-import type { CompanyGovernanceModel, DepartmentPackage, DeptSectionKey, Language } from '../types';
+import type { CompanyGovernanceModel, DepartmentPackage, DeptSectionKey, Language, GovDocumentRecord, ArtifactSection } from '../types';
 import {
   getPackagesForTenant, savePackage, updatePackageSection, deletePackage,
   makeEmptyPackage, generateSection, SECTION_META, ALL_SECTION_KEYS,
 } from '../services/departmentService';
+import { saveGovDocument } from '../services/governanceService';
 import { getStandardsForDepartment } from '../constants/standards';
+
+const gdId = () => `govdoc_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e9).toString(36)}`;
 
 interface Props {
   model: CompanyGovernanceModel;
@@ -147,6 +150,35 @@ export default function DepartmentBuilder({ model, tenantId, language }: Props) 
     toast.success(t('تم حذف الحزمة.', 'Package deleted.', language));
   }, [packages, language]);
 
+  // HWK-C2: publish a department's package to the Library as SEPARATE, exportable documents —
+  // one gov_document per completed section (policies, procedures, KPIs, job descriptions, objectives,
+  // structure, RACI, risk). This bridges the per-department builder to the document library.
+  const [publishing, setPublishing] = useState<string | null>(null);
+  const publishToLibrary = useCallback(async (deptName: string) => {
+    const pkg = getPackageForDept(deptName);
+    const done = pkg?.sections.filter(s => s.status === 'done' && s.content.trim()) || [];
+    if (!done.length) { toast.error(t('لا أقسام جاهزة للنشر — ولّد الحزمة أولاً.', 'No completed sections to publish — generate the package first.', language)); return; }
+    setPublishing(deptName);
+    try {
+      const now = new Date().toISOString();
+      let ok = 0;
+      for (const s of done) {
+        const enTitle = SECTION_META[s.key]?.enTitle || s.key;
+        const sections: ArtifactSection[] = [{ id: `${s.key}_${gdId()}`, title: language === 'ar' ? s.titleAr : enTitle, content: s.content, status: 'done' }];
+        // deterministic id per (tenant, dept, section) → re-publishing UPSERTS instead of duplicating.
+        const docId = `dept_${tenantId}_${s.key}_${deptName.replace(/[/\s]+/g, '_')}`;
+        const rec: GovDocumentRecord = {
+          id: docId, tenantId, kind: `dept_${s.key}`,
+          title: `${deptName} — ${language === 'ar' ? s.titleAr : enTitle}`,
+          scope: `dept:${deptName}`, status: 'draft', version: model.version || 1,
+          createdAt: now, updatedAt: now, sections, comments: [],
+        };
+        try { await saveGovDocument(rec); ok++; } catch { /* keep going */ }
+      }
+      toast.success(t(`نُشرت ${ok} وثيقة من «${deptName}» إلى المكتبة.`, `Published ${ok} document(s) from "${deptName}" to the library.`, language));
+    } finally { setPublishing(null); }
+  }, [packages, tenantId, model, language]);
+
   const selectedUnit = departments.find(d => d.id === selectedDept || d.name === selectedDept);
   const selectedPkg = selectedUnit ? getPackageForDept(selectedUnit.name) : null;
   const standards = selectedUnit ? getStandardsForDepartment(selectedUnit.name) : null;
@@ -267,6 +299,18 @@ export default function DepartmentBuilder({ model, tenantId, language }: Props) 
                       ? t('جارٍ التوليد...', 'Generating…', language)
                       : t('توليد الكل', 'Generate All', language)}
                   </button>
+                  {selectedPkg && selectedPkg.sections.some(s => s.status === 'done') && (
+                    <button
+                      className={UI.btnGhost}
+                      onClick={() => publishToLibrary(selectedUnit.name)}
+                      disabled={publishing === selectedUnit.name}
+                      title={t('انشر الأقسام الجاهزة كوثائق منفصلة في المكتبة', 'Publish the completed sections as separate documents in the library', language)}
+                    >
+                      {publishing === selectedUnit.name
+                        ? t('جارٍ النشر…', 'Publishing…', language)
+                        : t('نشر إلى المكتبة', 'Publish to Library', language)}
+                    </button>
+                  )}
                   {selectedPkg && (
                     <button
                       className={UI.btnGhost}
