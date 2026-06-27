@@ -437,6 +437,14 @@ export async function loadGovDocuments(tenantId: string): Promise<GovDocumentRec
     .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
 }
 
+// Read a single library document by id (HWK-D3 reviewer view). Reads are
+// admin-gated by firestore.rules, so the caller must be a signed-in admin.
+export async function getGovDocument(docId: string): Promise<GovDocumentRecord | null> {
+  const snap = await getDoc(doc(db, C_DOCS, docId));
+  if (!snap.exists()) return null;
+  return snap.data() as GovDocumentRecord;
+}
+
 export async function deleteGovDocument(id: string): Promise<void> {
   await deleteDoc(doc(db, C_DOCS, id)).catch(() => {});
 }

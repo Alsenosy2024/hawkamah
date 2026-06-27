@@ -35,13 +35,18 @@ export async function createSurveyToken(
 export async function getSurveyToken(tokenId: string): Promise<SurveyToken | null> {
   const snap = await getDoc(doc(db, C_TOKENS, tokenId));
   if (!snap.exists()) return null;
-  return snap.data() as SurveyToken;
+  const data = snap.data() as SurveyToken & { type?: string };
+  if (data.type === 'reviewer') return null;   // HWK-D3: a doc-review token shares this collection
+  return data as SurveyToken;
 }
 
 export async function getTokensByTenant(tenantId: string): Promise<SurveyToken[]> {
   const q = query(collection(db, C_TOKENS), where('tenantId', '==', tenantId));
   const snap = await getDocs(q);
-  return snap.docs.map(d => d.data() as SurveyToken);
+  // HWK-D3: reviewer tokens live in the same collection (type:'reviewer') — exclude
+  // them so the survey UI only ever lists actual survey links.
+  return snap.docs.map(d => d.data() as SurveyToken & { type?: string })
+    .filter(d => d.type !== 'reviewer') as SurveyToken[];
 }
 
 export async function savePublicResponse(

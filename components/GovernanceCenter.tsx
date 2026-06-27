@@ -25,6 +25,7 @@ import {
   saveGovDocument, loadGovDocuments, deleteGovDocument,
   saveSnapshot, loadSnapshots, deleteSnapshot,
 } from '../services/governanceService';
+import { createReviewerToken } from '../services/reviewerTokenService';
 import {
   buildModel, generateGovernanceDoc, generateBulkDoc, generateGapFix, editArtifact,
   industryLens, referenceProjectsBlock,
@@ -1450,6 +1451,18 @@ ${content.slice(0, 8000)}`;
   const submitDocComment = async (d: GovDocumentRecord) => {
     const txt = commentText.trim(); if (!txt) return;
     await addDocComment(d, txt); setCommentText(''); setCommentFor(null);
+  };
+  // HWK-D3: mint a /?r= reviewer link for this document, copy it to the clipboard,
+  // and surface it so the owner can send it to a reviewer (who signs in to read &
+  // comment; comments land back on this document).
+  const shareForReview = async (d: GovDocumentRecord) => {
+    try {
+      const { url } = await createReviewerToken(tenantId, d.id, d.title, auth.currentUser?.email || undefined);
+      try { await navigator.clipboard.writeText(url); } catch { /* clipboard blocked — link still shown below */ }
+      alertMsg(t(`نُسخ رابط المراجعة إلى الحافظة:\n${url}`, `Review link copied to clipboard:\n${url}`));
+    } catch {
+      alertMsg(t('تعذّر إنشاء رابط المراجعة.', 'Could not create the review link.'));
+    }
   };
   const removeDoc = async (id: string) => {
     if (!confirm(t('حذف هذه الوثيقة من المكتبة؟', 'Delete this document from the library?'))) return;
@@ -3674,6 +3687,7 @@ ${content.slice(0, 8000)}`;
                                 {d.status !== 'in_review' && <button onClick={() => setDocStatus(d, 'in_review')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('للمراجعة', 'To review')}</button>}
                                 {d.status !== 'approved' && <button onClick={() => setDocStatus(d, 'approved')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد', 'Approve')}</button>}
                                 <button onClick={() => { setCommentText(''); setCommentFor(commentFor === d.id ? null : d.id); }} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('تعليق', 'Comment')}{d.comments?.length ? ` (${d.comments.length})` : ''}</button>
+                                <button onClick={() => shareForReview(d)} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>{t('مشاركة للمراجعة', 'Share for review')}</button>
                                 <button onClick={() => removeDoc(d.id)} className="hw-btn hw-btn-sm hw-btn-danger flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                               </div>
                               {commentFor === d.id && (
