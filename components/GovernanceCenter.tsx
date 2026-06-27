@@ -255,6 +255,7 @@ const GovernanceCenter: React.FC<Props> = ({ documents, settings, language, onBa
   const [diagrams, setDiagrams] = useState<GovDiagram[]>([]);
   const [activeDiag, setActiveDiag] = useState<GovDiagram | null>(null);
   const [diagBusy, setDiagBusy] = useState<GovDiagramKind | null>(null);
+  const [diagFocus, setDiagFocus] = useState('');   // HWK-C4: scope new diagrams to a dept/procedure ('' = whole org)
   const [canvasMode, setCanvasMode] = useState(false);
   const [savingCanvas, setSavingCanvas] = useState(false);
 
@@ -819,18 +820,21 @@ ${content.slice(0, 8000)}`;
   }, [showProjects, stage, chunkCount, model, busy, permissionError]);
 
   // ---- Diagrams ----
-  const handleGenDiagram = async (kind: GovDiagramKind) => {
+  const handleGenDiagram = async (kind: GovDiagramKind, focus?: string) => {
     if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
     abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
     setDiagBusy(kind); setCanvasMode(false);
     try {
       let diag: GovDiagram;
+      // HWK-C4: an optional focus scopes the RACI / swimlane / process diagram to a specific
+      // department or procedure; the scope is appended to the title so it's identifiable.
+      const focusLabel = focus ? ` — ${focus}` : '';
       if (kind === 'swimlane') {
-        const spec = await generateSwimlane(model, { language: ar ? 'ar' : 'en', signal: ac.signal });
-        diag = { id: uid('diag'), tenantId, kind, title: spec.title, mermaid: '', swimlane: spec, updatedAt: Date.now() };
+        const spec = await generateSwimlane(model, { language: ar ? 'ar' : 'en', focus, signal: ac.signal });
+        diag = { id: uid('diag'), tenantId, kind, title: spec.title + focusLabel, mermaid: '', swimlane: spec, updatedAt: Date.now() };
       } else {
-        const { title, mermaid } = await generateMermaid(model, kind, { language: ar ? 'ar' : 'en', signal: ac.signal });
-        diag = { id: uid('diag'), tenantId, kind, title, mermaid, updatedAt: Date.now() };
+        const { title, mermaid } = await generateMermaid(model, kind, { language: ar ? 'ar' : 'en', focus, signal: ac.signal });
+        diag = { id: uid('diag'), tenantId, kind, title: title + focusLabel, mermaid, updatedAt: Date.now() };
       }
       setActiveDiag(diag);
       try { await saveDiagram(diag); await loadAll(); } catch { /* Firestore optional in dev */ }
@@ -2879,9 +2883,29 @@ ${content.slice(0, 8000)}`;
 
               {/* N8: the org chart has ONE home — مرحلة «الهيكل التنظيمي». Excluded here
                   to kill the duplicate generator; a pointer sends the user to its source. */}
+              {/* HWK-C4: scope the next diagram to the whole org, a department, or a procedure. */}
+              {model && (
+                <div className="flex items-center gap-2 mb-2">
+                  <label htmlFor="diag-scope" className="text-xs font-bold text-slate-500 dark:text-slate-400 shrink-0">{t('نطاق المخطط', 'Diagram scope')}</label>
+                  <select id="diag-scope" value={diagFocus} onChange={e => setDiagFocus(e.target.value)} disabled={diagBusy !== null}
+                    className="hw-input text-xs py-1 flex-1 min-w-0">
+                    <option value="">{t('المنظمة كاملة', 'Whole organization')}</option>
+                    {model.orgUnits.length > 0 && (
+                      <optgroup label={t('الإدارات', 'Departments')}>
+                        {model.orgUnits.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+                      </optgroup>
+                    )}
+                    {(model.procedures || []).length > 0 && (
+                      <optgroup label={t('الإجراءات', 'Procedures')}>
+                        {(model.procedures || []).map(p => <option key={p.id} value={p.title}>{p.title}</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {DIAG_KINDS.filter(k => k.kind !== 'orgchart').map(k => (
-                  <button key={k.kind} onClick={() => handleGenDiagram(k.kind)} disabled={!model || diagBusy !== null}
+                  <button key={k.kind} onClick={() => handleGenDiagram(k.kind, diagFocus || undefined)} disabled={!model || diagBusy !== null}
                     className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 p-3 text-start disabled:opacity-50 transition-colors">
                     <div className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{k.icon} {t(k.ar, k.en)}</div>
                     <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{diagBusy === k.kind ? t('جارٍ التوليد…', 'generating…') : t('توليد SVG', 'generate SVG')}</div>
