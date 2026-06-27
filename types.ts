@@ -368,6 +368,19 @@ export interface SurveyToken {
   createdByEmail?: string;
 }
 
+// Reviewer-link token (HWK-D3). Stored in the existing world-readable
+// `survey_tokens` collection with type:'reviewer' so no new collection / rules
+// rule is needed. Carries which gov_document a /?r= link points at.
+export interface ReviewerToken {
+  id: string;            // 16-char = the URL ?r= value
+  type: 'reviewer';      // discriminates from SurveyToken in the shared collection
+  tenantId: string;
+  docId: string;         // the gov_document under review
+  docTitle: string;      // shown at the top of the review page
+  createdAt: string;     // ISO
+  createdByEmail?: string;
+}
+
 // One employee's public survey response (written by anonymous; read by admin).
 export interface PublicSurveyResponse {
   id: string;                       // Firestore auto-ID

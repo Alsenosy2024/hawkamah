@@ -28,6 +28,7 @@ import EmployeePortalScreen from './components/EmployeePortalScreen';
 import { PaperAssessmentPortal } from './components/PaperAssessmentPortal';
 import { OnlineAssessmentPortal } from './components/OnlineAssessmentPortal';
 import UnifiedAssessmentPortal from './components/UnifiedAssessmentPortal';
+import PublicReviewScreen from './components/PublicReviewScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider, useToast } from './components/ToastProvider';
 import { buildFontCss } from './services/designTokens';
@@ -849,6 +850,13 @@ const App: React.FC = () => {
   const assessToken = new URLSearchParams(window.location.search).get('assess');
   if (assessToken) {
     return <UnifiedAssessmentPortal token={assessToken} />;
+  }
+
+  // Document reviewer link — ?r=TOKEN (HWK-D3): a shared governance document,
+  // opened by a signed-in reviewer who can read it and add comments.
+  const reviewToken = new URLSearchParams(window.location.search).get('r');
+  if (reviewToken) {
+    return <PublicReviewScreen token={reviewToken} />;
   }
 
   return (
