@@ -2035,7 +2035,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                                   {req.urgency === 'high' ? (language === 'ar' ? 'مستعجل طارئ' : 'Emergency') : req.urgency === 'medium' ? (language === 'ar' ? 'مؤكد' : 'Medium') : (language === 'ar' ? 'طبيعي' : 'Standard')}
                                 </span>
                                 <h6 className="inline-block font-black text-slate-800 text-sm">{req.clientName}</h6>
-                                <span className="text-xs text-slate-400 font-bold block mt-0.5 md:inline md:mt-0 md:ml-2">({req.industry})</span>
+                                <span className="text-xs text-slate-400 font-bold block mt-0.5 md:inline md:mt-0 md:ms-2">({req.industry})</span>
                               </div>
                               <span className={`inline-block px-2 py-0.5 text-[10px] font-bold rounded-md ${
                                 req.status === 'completed'
@@ -2282,7 +2282,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                             {starValue <= revRating ? '★' : '☆'}
                           </button>
                         ))}
-                        <span className="text-xs font-bold text-slate-500 ml-2">({revRating} / 5)</span>
+                        <span className="text-xs font-bold text-slate-500 ms-2">({revRating} / 5)</span>
                       </div>
                     </div>
                   </div>
