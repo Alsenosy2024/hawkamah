@@ -416,6 +416,7 @@ ${content.slice(0, 8000)}`;
   });
   const [catFilter, setCatFilter] = useState<string>('');
   const [batchRunning, setBatchRunning] = useState(false);
+  const [seqGen, setSeqGen] = useState(false);   // HWK-C3: sequential "training-studio" generation (watch each doc build)
   const [batchLog, setBatchLog] = useState<string[]>([]);
 
   // assurance (#5/#7/#13) — derived, memoized
@@ -926,8 +927,9 @@ ${content.slice(0, 8000)}`;
       const sharedFacts: string[] = [];
       setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
 
-      // bounded concurrency pool (cap 3) with retry/backoff — parallel but rate-safe
-      const CONCURRENCY = 3;
+      // bounded concurrency pool with retry/backoff. HWK-C3: sequential (1) for the
+      // "training-studio" watch-each-build mode, otherwise parallel-but-rate-safe (3).
+      const CONCURRENCY = seqGen ? 1 : 3;
       const MAX_RETRY = 2;
       let cursor = 0;
       let activeLabel = '';
@@ -983,7 +985,9 @@ ${content.slice(0, 8000)}`;
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY, picked.length) }, () => worker()));
 
       await loadAll().catch(() => {});
-      if (okCount) alertMsg(t(`اكتمل توليد ${okCount} وثيقة (بالتوازي) وحُفظت بالمكتبة مع تماسك مرجعي مشترك.`, `Generated ${okCount} document(s) in parallel, saved to library with shared coherence.`));
+      if (okCount) alertMsg(seqGen
+        ? t(`اكتمل توليد ${okCount} وثيقة (بالتتابع) وحُفظت بالمكتبة مع تماسك مرجعي مشترك.`, `Generated ${okCount} document(s) sequentially, saved to library with shared coherence.`)
+        : t(`اكتمل توليد ${okCount} وثيقة (بالتوازي) وحُفظت بالمكتبة مع تماسك مرجعي مشترك.`, `Generated ${okCount} document(s) in parallel, saved to library with shared coherence.`));
     } catch (e: any) {
       alertMsg(t('فشل التوليد بالدفعة: ', 'Batch generation failed: ') + (e?.message || e));
     } finally { setBatchRunning(false); setGenerating(false); }
@@ -3052,6 +3056,12 @@ ${content.slice(0, 8000)}`;
                       <span className="text-[11px] text-slate-500 dark:text-slate-400 flex-1">
                         {selectedCount > 0 ? t(`${selectedCount} وثيقة محددة للتوليد`, `${selectedCount} docs selected`) : t('لم تُحدَّد وثيقة بعد', 'No docs selected')}
                       </span>
+                      {!batchRunning && (
+                        <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300 cursor-pointer select-none me-1" title={t('وضع التتابع: تُبنى الوثائق واحدة تلو الأخرى لتشاهد كل واحدة وهي تُبنى', 'Sequential: documents build one after another so you can watch each one')}>
+                          <input type="checkbox" checked={seqGen} onChange={e => setSeqGen(e.target.checked)} className="accent-emerald-600" />
+                          {t('تتابعي', 'Sequential')}
+                        </label>
+                      )}
                       {!batchRunning ? (
                         <button onClick={handleCreateBatch} disabled={!model || !!busy || selectedCount === 0}
                           className="hw-btn hw-btn-primary">
