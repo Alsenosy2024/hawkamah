@@ -213,6 +213,16 @@ export interface ThinkingStep {
   text: string;
 }
 
+// A named step in a live generation timeline (HWK-A2). Unlike ThinkingStep
+// (an append-only log line), a ProgressStep has a status that transitions
+// pending → running → done/error, so the UI can show "did X ✓, did Y ✓, now Z…".
+export interface ProgressStep {
+  id: string;
+  step: string;     // stable key (the backend/heartbeat stage name) — used to upsert
+  label: string;    // bilingual display text already resolved for the active language
+  status: 'pending' | 'running' | 'done' | 'error';
+}
+
 export interface ProposedAction {
   format: ExportFormat;
   label: string;          // Arabic button label, e.g. "تصدير Word"

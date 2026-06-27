@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { CompanyGovernanceModel, DocChunk, Language, ThinkingStep } from '../types';
+import type { CompanyGovernanceModel, DocChunk, Language, ThinkingStep, ProgressStep } from '../types';
 import { stageChat, type GovStageKey, type GovCopilotMode, type GovStateSnapshot } from '../services/governanceChat';
 import type { ChatTurn } from '../services/agentOrchestrator';
 import { loadChunks, retrieve } from '../services/governanceService';
@@ -8,6 +8,7 @@ import { exportMessagePptx } from '../services/pptxExport';
 import { copilotEnabled, askStream as copilotAsk, draftStream as copilotDraftStream, exportDoc as copilotExport, stats as copilotStats, ingestFiles as copilotIngest, listConversations, getConversation, saveConversation, deleteConversation, type CopilotConvSummary } from '../services/copilotClient';
 import { generateGroundedDocument } from '../services/geminiService';
 import ThinkingTrace from './ThinkingTrace';
+import StepTimeline from './StepTimeline';
 import Markdown, { type CiteRef } from './Markdown';
 import DocumentCanvas from './DocumentCanvas';
 import { looksLikeDocument } from '../services/canvasDocument';
@@ -40,6 +41,7 @@ interface Msg {
   sender: 'user' | 'agent';
   text: string;
   thoughts: ThinkingStep[];
+  steps: ProgressStep[];   // live generation-step timeline (HWK-A2); transient, not persisted
   thinking: boolean;
   streaming: boolean;
   sources?: string[];   // doc names grounded this answer (deduped, for the footer)
@@ -277,7 +279,7 @@ const GovCopilot: React.FC<Props> = (props) => {
     id: m.id || nid(),
     sender: m.sender === 'user' ? 'user' : 'agent',
     text: m.text || '',
-    thoughts: [], thinking: false, streaming: false,
+    thoughts: [], steps: [], thinking: false, streaming: false,
     sources: m.sources, srcRefs: m.srcRefs, webSources: m.webSources, searchHtml: m.searchHtml,
   }));
 
@@ -332,7 +334,7 @@ const GovCopilot: React.FC<Props> = (props) => {
         id: m.id || nid(),
         sender: m.sender === 'user' ? 'user' : 'agent',
         text: m.text || '',
-        thoughts: [], thinking: false, streaming: false,
+        thoughts: [], steps: [], thinking: false, streaming: false,
         sources: m.sources, srcRefs: m.srcRefs, webSources: m.webSources, searchHtml: m.searchHtml,
       })));
       convIdRef.current = conv.id; setConvId(conv.id);
@@ -515,18 +517,18 @@ const GovCopilot: React.FC<Props> = (props) => {
           const noDoc: Msg = {
             id: nid(), sender: 'agent',
             text: t('لا توجد وثيقة لتصديرها بعد — اطلب إنشاء وثيقة أولاً.', 'No document to export yet — ask me to create one first.'),
-            thoughts: [], thinking: false, streaming: false,
+            thoughts: [], steps: [], thinking: false, streaming: false,
           };
           setMsgs(m => [...m, noDoc]);
           scrollDown();
           return;
         }
-        const userMsg: Msg = { id: nid(), sender: 'user', text: q, thoughts: [], thinking: false, streaming: false };
+        const userMsg: Msg = { id: nid(), sender: 'user', text: q, thoughts: [], steps: [], thinking: false, streaming: false };
         const doneId = nid();
         const statusMsg: Msg = {
           id: doneId, sender: 'agent',
           text: t(`جارٍ تجهيز ملف ${exp.label} للتحميل…`, `Preparing your ${exp.label} file for download…`),
-          thoughts: [], thinking: false, streaming: false,
+          thoughts: [], steps: [], thinking: false, streaming: false,
         };
         setMsgs(m => [...m, userMsg, statusMsg]);
         scrollDown();
@@ -548,9 +550,9 @@ const GovCopilot: React.FC<Props> = (props) => {
     setInput('');
     setAttachments([]);
     const attNote = att.length ? t(` (${att.length} ملف مرفق)`, ` (${att.length} file(s) attached)`) : '';
-    const userMsg: Msg = { id: nid(), sender: 'user', text: q + attNote, thoughts: [], thinking: false, streaming: false };
+    const userMsg: Msg = { id: nid(), sender: 'user', text: q + attNote, thoughts: [], steps: [], thinking: false, streaming: false };
     const agentId = nid();
-    const agentMsg: Msg = { id: agentId, sender: 'agent', text: '', thoughts: [], thinking: true, streaming: true };
+    const agentMsg: Msg = { id: agentId, sender: 'agent', text: '', thoughts: [], steps: [], thinking: true, streaming: true };
     const history: ChatTurn[] = msgs.map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text }] }));
     ensureConvId();   // stable thread id for this turn (and durable autosave)
     setMsgs(m => [...m, userMsg, agentMsg]);
@@ -614,13 +616,25 @@ const GovCopilot: React.FC<Props> = (props) => {
               if (ev.stage === lastStage) return;
               lastStage = ev.stage;
               const [ar2, en2] = STAGE_LABELS[ev.stage] ?? ['جاري المعالجة…', 'Processing…'];
-              patch(m => ({ ...m, thoughts: [...m.thoughts, { id: nid(), text: t(ar2, en2) }] }));
+              const label = t(ar2, en2);
+              // HWK-A2: render each stage as a live timeline step — mark the
+              // previously-running step done, then upsert this stage as running,
+              // so the user sees "did X ✓, did Y ✓, now doing Z…".
+              patch(m => {
+                const prior = m.steps.map(s => s.status === 'running' ? { ...s, status: 'done' as const } : s);
+                const exists = prior.some(s => s.step === ev.stage);
+                const steps: ProgressStep[] = exists
+                  ? prior.map(s => s.step === ev.stage ? { ...s, label, status: 'running' as const } : s)
+                  : [...prior, { id: nid(), step: ev.stage, label, status: 'running' as const }];
+                return { ...m, steps };
+              });
               scrollDown();
             },
             ac.signal,
           );
           const docs = [...new Set(doc.sources.map(s => s.doc).filter(Boolean))];
-          patch(m => ({ ...m, thinking: false, streaming: false, text: doc.markdown, sources: docs, srcRefs: toCiteRefs(doc.sources) }));
+          // Generation finished → close out every step in the timeline.
+          patch(m => ({ ...m, thinking: false, streaming: false, text: doc.markdown, sources: docs, srcRefs: toCiteRefs(doc.sources), steps: m.steps.map(s => s.status === 'running' || s.status === 'pending' ? { ...s, status: 'done' as const } : s) }));
         } else {
           await copilotAsk(
             { corpus, message: q + FORMAT_HINT, history: history.map(h => ({ role: h.role, content: h.parts?.[0]?.text || '' })), conversation_id: convIdRef.current },
@@ -651,7 +665,8 @@ const GovCopilot: React.FC<Props> = (props) => {
         },
       );
     } catch {
-      patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد.', 'Failed.') }));
+      // HWK-A2: a failure should flip the active timeline step to error, not leave it spinning.
+      patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد.', 'Failed.'), steps: m.steps.map(s => s.status === 'running' ? { ...s, status: 'error' as const } : s) }));
     } finally {
       att.forEach(a => URL.revokeObjectURL(a.url));   // free object URLs
       setBusy(false);
@@ -915,8 +930,11 @@ const GovCopilot: React.FC<Props> = (props) => {
             )}
             {msgs.map(m => (
               <div key={m.id} className={`space-y-1 ${m.sender === 'user' ? 'flex flex-col items-end' : ''}`}>
-                {m.sender === 'agent' && (m.thinking || m.thoughts.length > 0) && (
+                {m.sender === 'agent' && (m.thoughts.length > 0 || (m.thinking && m.steps.length === 0)) && (
                   <ThinkingTrace thoughts={m.thoughts} active={m.thinking} language={language || 'ar'} />
+                )}
+                {m.sender === 'agent' && m.steps.length > 0 && (
+                  <StepTimeline steps={m.steps} active={m.thinking} language={language || 'ar'} />
                 )}
                 {m.sender === 'user' ? (
                   <div className="gc-msg-user gc-msg-in">{m.text}</div>
