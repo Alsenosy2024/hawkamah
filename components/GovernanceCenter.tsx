@@ -255,6 +255,7 @@ const GovernanceCenter: React.FC<Props> = ({ documents, settings, language, onBa
   const [diagrams, setDiagrams] = useState<GovDiagram[]>([]);
   const [activeDiag, setActiveDiag] = useState<GovDiagram | null>(null);
   const [diagBusy, setDiagBusy] = useState<GovDiagramKind | null>(null);
+  const [diagFocus, setDiagFocus] = useState('');   // HWK-C4: scope new diagrams to a dept/procedure ('' = whole org)
   const [canvasMode, setCanvasMode] = useState(false);
   const [savingCanvas, setSavingCanvas] = useState(false);
 
@@ -390,6 +391,9 @@ ${content.slice(0, 8000)}`;
   const [modelCanvas, setModelCanvas] = useState(false);
   const [modelCanvasNodes, setModelCanvasNodes] = useState<any[]>([]);
   const [modelCanvasEdges, setModelCanvasEdges] = useState<any[]>([]);
+  // HWK-D2: in-app comment composer (replaces window.prompt); tracks which doc's box is open + its draft.
+  const [commentFor, setCommentFor] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState('');
 
   // rebuild merge toggle (#9)
   const [mergeOnRebuild, setMergeOnRebuild] = useState(true);
@@ -413,6 +417,7 @@ ${content.slice(0, 8000)}`;
   });
   const [catFilter, setCatFilter] = useState<string>('');
   const [batchRunning, setBatchRunning] = useState(false);
+  const [seqGen, setSeqGen] = useState(false);   // HWK-C3: sequential "training-studio" generation (watch each doc build)
   const [batchLog, setBatchLog] = useState<string[]>([]);
 
   // assurance (#5/#7/#13) — derived, memoized
@@ -815,18 +820,21 @@ ${content.slice(0, 8000)}`;
   }, [showProjects, stage, chunkCount, model, busy, permissionError]);
 
   // ---- Diagrams ----
-  const handleGenDiagram = async (kind: GovDiagramKind) => {
+  const handleGenDiagram = async (kind: GovDiagramKind, focus?: string) => {
     if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
     abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
     setDiagBusy(kind); setCanvasMode(false);
     try {
       let diag: GovDiagram;
+      // HWK-C4: an optional focus scopes the RACI / swimlane / process diagram to a specific
+      // department or procedure; the scope is appended to the title so it's identifiable.
+      const focusLabel = focus ? ` — ${focus}` : '';
       if (kind === 'swimlane') {
-        const spec = await generateSwimlane(model, { language: ar ? 'ar' : 'en', signal: ac.signal });
-        diag = { id: uid('diag'), tenantId, kind, title: spec.title, mermaid: '', swimlane: spec, updatedAt: Date.now() };
+        const spec = await generateSwimlane(model, { language: ar ? 'ar' : 'en', focus, signal: ac.signal });
+        diag = { id: uid('diag'), tenantId, kind, title: spec.title + focusLabel, mermaid: '', swimlane: spec, updatedAt: Date.now() };
       } else {
-        const { title, mermaid } = await generateMermaid(model, kind, { language: ar ? 'ar' : 'en', signal: ac.signal });
-        diag = { id: uid('diag'), tenantId, kind, title, mermaid, updatedAt: Date.now() };
+        const { title, mermaid } = await generateMermaid(model, kind, { language: ar ? 'ar' : 'en', focus, signal: ac.signal });
+        diag = { id: uid('diag'), tenantId, kind, title: title + focusLabel, mermaid, updatedAt: Date.now() };
       }
       setActiveDiag(diag);
       try { await saveDiagram(diag); await loadAll(); } catch { /* Firestore optional in dev */ }
@@ -923,8 +931,9 @@ ${content.slice(0, 8000)}`;
       const sharedFacts: string[] = [];
       setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
 
-      // bounded concurrency pool (cap 3) with retry/backoff — parallel but rate-safe
-      const CONCURRENCY = 3;
+      // bounded concurrency pool with retry/backoff. HWK-C3: sequential (1) for the
+      // "training-studio" watch-each-build mode, otherwise parallel-but-rate-safe (3).
+      const CONCURRENCY = seqGen ? 1 : 3;
       const MAX_RETRY = 2;
       let cursor = 0;
       let activeLabel = '';
@@ -980,7 +989,9 @@ ${content.slice(0, 8000)}`;
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY, picked.length) }, () => worker()));
 
       await loadAll().catch(() => {});
-      if (okCount) alertMsg(t(`اكتمل توليد ${okCount} وثيقة (بالتوازي) وحُفظت بالمكتبة مع تماسك مرجعي مشترك.`, `Generated ${okCount} document(s) in parallel, saved to library with shared coherence.`));
+      if (okCount) alertMsg(seqGen
+        ? t(`اكتمل توليد ${okCount} وثيقة (بالتتابع) وحُفظت بالمكتبة مع تماسك مرجعي مشترك.`, `Generated ${okCount} document(s) sequentially, saved to library with shared coherence.`)
+        : t(`اكتمل توليد ${okCount} وثيقة (بالتوازي) وحُفظت بالمكتبة مع تماسك مرجعي مشترك.`, `Generated ${okCount} document(s) in parallel, saved to library with shared coherence.`));
     } catch (e: any) {
       alertMsg(t('فشل التوليد بالدفعة: ', 'Batch generation failed: ') + (e?.message || e));
     } finally { setBatchRunning(false); setGenerating(false); }
@@ -1431,8 +1442,14 @@ ${content.slice(0, 8000)}`;
   };
   const addDocComment = async (d: GovDocumentRecord, text: string) => {
     if (!text.trim()) return;
-    const rec: GovDocumentRecord = { ...d, updatedAt: new Date().toISOString(), comments: [...(d.comments || []), { id: uid('cmt'), at: new Date().toISOString(), author: ADMIN_ACTOR, text: text.trim() }] };
+    // HWK-D2: attribute the comment to the actually signed-in reviewer (was hardcoded ADMIN_ACTOR).
+    const author = auth.currentUser?.email || ADMIN_ACTOR;
+    const rec: GovDocumentRecord = { ...d, updatedAt: new Date().toISOString(), comments: [...(d.comments || []), { id: uid('cmt'), at: new Date().toISOString(), author, text: text.trim() }] };
     await saveGovDocument(rec); await loadAll();
+  };
+  const submitDocComment = async (d: GovDocumentRecord) => {
+    const txt = commentText.trim(); if (!txt) return;
+    await addDocComment(d, txt); setCommentText(''); setCommentFor(null);
   };
   const removeDoc = async (id: string) => {
     if (!confirm(t('حذف هذه الوثيقة من المكتبة؟', 'Delete this document from the library?'))) return;
@@ -2654,7 +2671,7 @@ ${content.slice(0, 8000)}`;
 
               {model && model.orgUnits.length > 0 && (
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                  <div className="font-black text-slate-700 dark:text-slate-200 text-sm mb-3 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>{t('شجرة الوحدات التنظيمية', 'Org-unit tree')} <span className="text-slate-400">({model.orgUnits.length})</span></div>
+                  <div className="font-black text-slate-700 dark:text-slate-200 text-sm mb-3 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>{t('شجرة الوحدات التنظيمية', 'Org-unit tree')} <span className="text-slate-400">({model.orgUnits.length})</span>{!modelCanvas && (<button onClick={openModelCanvas} title={t('حرِّر الهيكل في المحرّر الحي: أضِف وحدة/دور، أعد التسمية أو احذف', 'Edit the structure in the live canvas: add a unit/role, rename or delete')} className="hw-btn hw-btn-xs hw-btn-ghost ms-auto shrink-0 font-bold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>{t('تحرير / إضافة', 'Edit / add')}</button>)}</div>
                   <OrgUnitTree units={model.orgUnits} ar={ar}
                     lockedUnitIds={lockedOrgUnitIds(model)}
                     onRename={renameOrgUnit} onAddChild={addOrgUnit} onDelete={deleteOrgUnit} />
@@ -2887,9 +2904,29 @@ ${content.slice(0, 8000)}`;
 
               {/* N8: the org chart has ONE home — مرحلة «الهيكل التنظيمي». Excluded here
                   to kill the duplicate generator; a pointer sends the user to its source. */}
+              {/* HWK-C4: scope the next diagram to the whole org, a department, or a procedure. */}
+              {model && (
+                <div className="flex items-center gap-2 mb-2">
+                  <label htmlFor="diag-scope" className="text-xs font-bold text-slate-500 dark:text-slate-400 shrink-0">{t('نطاق المخطط', 'Diagram scope')}</label>
+                  <select id="diag-scope" value={diagFocus} onChange={e => setDiagFocus(e.target.value)} disabled={diagBusy !== null}
+                    className="hw-input text-xs py-1 flex-1 min-w-0">
+                    <option value="">{t('المنظمة كاملة', 'Whole organization')}</option>
+                    {model.orgUnits.length > 0 && (
+                      <optgroup label={t('الإدارات', 'Departments')}>
+                        {model.orgUnits.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+                      </optgroup>
+                    )}
+                    {(model.procedures || []).length > 0 && (
+                      <optgroup label={t('الإجراءات', 'Procedures')}>
+                        {(model.procedures || []).map(p => <option key={p.id} value={p.title}>{p.title}</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {DIAG_KINDS.filter(k => k.kind !== 'orgchart').map(k => (
-                  <button key={k.kind} onClick={() => handleGenDiagram(k.kind)} disabled={!model || diagBusy !== null}
+                  <button key={k.kind} onClick={() => handleGenDiagram(k.kind, diagFocus || undefined)} disabled={!model || diagBusy !== null}
                     className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 p-3 text-start disabled:opacity-50 transition-colors">
                     <div className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{k.icon} {t(k.ar, k.en)}</div>
                     <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{diagBusy === k.kind ? t('جارٍ التوليد…', 'generating…') : t('توليد SVG', 'generate SVG')}</div>
@@ -3064,6 +3101,12 @@ ${content.slice(0, 8000)}`;
                       <span className="text-[11px] text-slate-500 dark:text-slate-400 flex-1">
                         {selectedCount > 0 ? t(`${selectedCount} وثيقة محددة للتوليد`, `${selectedCount} docs selected`) : t('لم تُحدَّد وثيقة بعد', 'No docs selected')}
                       </span>
+                      {!batchRunning && (
+                        <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300 cursor-pointer select-none me-1" title={t('وضع التتابع: تُبنى الوثائق واحدة تلو الأخرى لتشاهد كل واحدة وهي تُبنى', 'Sequential: documents build one after another so you can watch each one')}>
+                          <input type="checkbox" checked={seqGen} onChange={e => setSeqGen(e.target.checked)} className="accent-emerald-600" />
+                          {t('تتابعي', 'Sequential')}
+                        </label>
+                      )}
                       {!batchRunning ? (
                         <button onClick={handleCreateBatch} disabled={!model || !!busy || selectedCount === 0}
                           className="hw-btn hw-btn-primary">
@@ -3630,13 +3673,22 @@ ${content.slice(0, 8000)}`;
                                 <button onClick={() => handleBatchExport([d], d.title)} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('تصدير', 'Export')}</button>
                                 {d.status !== 'in_review' && <button onClick={() => setDocStatus(d, 'in_review')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('للمراجعة', 'To review')}</button>}
                                 {d.status !== 'approved' && <button onClick={() => setDocStatus(d, 'approved')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد', 'Approve')}</button>}
-                                <button onClick={() => { const c = window.prompt(t('أضف تعليقاً', 'Add a comment')); if (c) addDocComment(d, c); }} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('تعليق', 'Comment')}{d.comments?.length ? ` (${d.comments.length})` : ''}</button>
+                                <button onClick={() => { setCommentText(''); setCommentFor(commentFor === d.id ? null : d.id); }} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('تعليق', 'Comment')}{d.comments?.length ? ` (${d.comments.length})` : ''}</button>
                                 <button onClick={() => removeDoc(d.id)} className="hw-btn hw-btn-sm hw-btn-danger flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                               </div>
+                              {commentFor === d.id && (
+                                <div className="mt-2 flex items-start gap-2">
+                                  <textarea value={commentText} onChange={e => setCommentText(e.target.value)} rows={2} autoFocus placeholder={t('اكتب تعليقاً للمراجعة... (⌘/Ctrl+Enter للإرسال)', 'Write a review comment... (⌘/Ctrl+Enter to send)')} className="hw-input flex-1 text-xs resize-y" onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitDocComment(d); }} />
+                                  <div className="flex flex-col gap-1 shrink-0">
+                                    <button onClick={() => submitDocComment(d)} disabled={!commentText.trim()} className="hw-btn hw-btn-xs hw-btn-primary">{t('إرسال', 'Send')}</button>
+                                    <button onClick={() => { setCommentFor(null); setCommentText(''); }} className="hw-btn hw-btn-xs hw-btn-ghost">{t('إلغاء', 'Cancel')}</button>
+                                  </div>
+                                </div>
+                              )}
                               {d.comments && d.comments.length > 0 && (
                                 <div className="mt-2 space-y-1">
                                   {d.comments.map(c => (
-                                    <div key={c.id} className="text-[11px] text-slate-500 border-s-2 border-slate-200 dark:border-slate-700 ps-2">{c.text} <span className="text-slate-400">· {new Date(c.at).toLocaleDateString()}</span></div>
+                                    <div key={c.id} className="text-[11px] text-slate-500 border-s-2 border-slate-200 dark:border-slate-700 ps-2">{c.text} <span className="text-slate-400">· {c.author} · {new Date(c.at).toLocaleDateString()}</span></div>
                                   ))}
                                 </div>
                               )}

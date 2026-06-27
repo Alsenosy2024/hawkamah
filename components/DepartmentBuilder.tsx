@@ -28,6 +28,8 @@ export default function DepartmentBuilder({ model, tenantId, language }: Props) 
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
   const [generating, setGenerating] = useState<Partial<Record<DeptSectionKey, boolean>>>({});
   const [expanded, setExpanded] = useState<DeptSectionKey | null>(null);
+  // HWK-B5: progress while building every department in turn (null = not running).
+  const [allDeptProgress, setAllDeptProgress] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => {
     if (!tenantId) { setLoading(false); return; }
@@ -117,6 +119,26 @@ export default function DepartmentBuilder({ model, tenantId, language }: Props) 
     }
   }, [handleGenerate, packages]);
 
+  // HWK-B5: build EVERY department's package in turn (each dept builds all its sections via
+  // handleGenerateAll). Sequential by design — surfaces the dept in progress and a done/total count.
+  const handleGenerateAllDepartments = useCallback(async () => {
+    if (allDeptProgress) return; // already running
+    setAllDeptProgress({ done: 0, total: departments.length });
+    try {
+      for (let i = 0; i < departments.length; i++) {
+        const dept = departments[i];
+        setSelectedDept(dept.id);
+        await handleGenerateAll(dept.name, (dept as any).nameAr || dept.name);
+        setAllDeptProgress({ done: i + 1, total: departments.length });
+      }
+      toast.success(t('تم بناء كل الإدارات.', 'All departments built.', language));
+    } catch (err: any) {
+      toast.error(t('فشل بناء كل الإدارات: ', 'Failed to build all departments: ', language) + (err?.message || err));
+    } finally {
+      setAllDeptProgress(null);
+    }
+  }, [departments, handleGenerateAll, allDeptProgress, language]);
+
   const handleDelete = useCallback(async (deptName: string) => {
     const pkg = getPackageForDept(deptName);
     if (!pkg) return;
@@ -156,6 +178,26 @@ export default function DepartmentBuilder({ model, tenantId, language }: Props) 
             <span className="ms-1.5 font-normal text-slate-400">({departments.length})</span>
           </span>
         </div>
+        {departments.length > 1 && (
+          <button
+            onClick={handleGenerateAllDepartments}
+            disabled={!!allDeptProgress || Object.values(generating).some(Boolean)}
+            title={t('بناء حزمة كل الإدارات بالتتابع', 'Build every department’s package in turn', language)}
+            className="mb-1.5 w-full px-3 py-2 rounded-md text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1.5"
+          >
+            {allDeptProgress ? (
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                {t(`بناء ${allDeptProgress.done}/${allDeptProgress.total}…`, `Building ${allDeptProgress.done}/${allDeptProgress.total}…`, language)}
+              </>
+            ) : (
+              <>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7l-2-2H5a2 2 0 0 0-2 2z"/></svg>
+                {t('بناء كل الإدارات', 'Build all departments', language)}
+              </>
+            )}
+          </button>
+        )}
         {departments.map(dept => {
           const pkg = getPackageForDept(dept.name);
           const doneCount = pkg?.sections.filter(s => s.status === 'done').length ?? 0;

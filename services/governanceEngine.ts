@@ -929,6 +929,11 @@ ${docStandards(p.kind)}`;
   const secMin = targetPages ? Math.max(4, Math.round(targetPages * 1.3)) : 6;
   const secMax = targetPages ? Math.max(secMin + 1, Math.round(targetPages * 1.8)) : 10;
   const wordsPerSection = targetPages ? Math.max(120, Math.round((targetPages * 320) / ((secMin + secMax) / 2))) : 0;
+  // HWK-C1: the depth setting must deepen the EVIDENCE too, not just the word budget.
+  // Deeper docs retrieve more chunks and longer excerpts per section; concise/standard
+  // (targetPages ≤ 3, incl. the bulk default of 0) keep the prior k=12 / 600-char behaviour.
+  const evidenceK = targetPages >= 10 ? 24 : targetPages >= 4 ? 18 : 12;
+  const evidenceChars = targetPages >= 10 ? 1200 : targetPages >= 4 ? 900 : 600;
   const lenDirective = wordsPerSection
     ? `\nالطول المستهدف لهذا القسم: ~${wordsPerSection} كلمة (الوثيقة كلها ≈ ${targetPages} صفحة). اكتب بعمق كافٍ لبلوغ هذا الطول دون حشو.`
     : '';
@@ -971,7 +976,7 @@ ${docStandards(p.kind)}`;
   // Coherence holds via the shared outline + coherenceMemo in sys + globalFacts.
   onProgress?.({ phase: 'section', current: 0, total: plans.length, label: 'استرجاع الأدلة لكل الأقسام...' });
   const evidences = await mapPool(plans, 6, signal, async pl => {
-    try { return await retrieve(`${pl.title} ${pl.query}`, chunks, 12, signal); } catch { return []; }
+    try { return await retrieve(`${pl.title} ${pl.query}`, chunks, evidenceK, signal); } catch { return []; }
   });
   let writtenCount = 0;
   await mapPool(plans, 3, signal, async (pl, i) => {
@@ -984,7 +989,7 @@ ${docStandards(p.kind)}`;
     const refs = chunksToProvenance(rc);
     artifact.citations[pl.id] = refs;
     const evidence = rc.length
-      ? rc.map((r, n) => `[مصدر ${n + 1}] (${r.chunk.docName} › ${r.chunk.headingPath})\n${r.chunk.text.slice(0, 600)}`).join('\n\n')
+      ? rc.map((r, n) => `[مصدر ${n + 1}] (${r.chunk.docName} › ${r.chunk.headingPath})\n${r.chunk.text.slice(0, evidenceChars)}`).join('\n\n')
       : '(لا توجد أدلة مسترجعة لهذا القسم — اكتب من النموذج فقط دون اختلاق أرقام.)';
 
     const memo = globalFacts.length ? `\nحقائق مثبتة سابقاً في الوثيقة (التزم بها):\n${globalFacts.slice(-12).join('\n')}` : '';
