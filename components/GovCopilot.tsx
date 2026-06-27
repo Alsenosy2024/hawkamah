@@ -269,6 +269,17 @@ const GovCopilot: React.FC<Props> = (props) => {
   }, [tenantId]);
 
   const lsKey = (tid: string) => `gc_conv:${tid}`;
+  // HWK-A3: a localStorage mirror of the IN-FLIGHT run so a refresh/crash mid-generation
+  // can be recovered. The backend autosave only fires once a turn settles (!busy), so a
+  // reload during the 7–8 min draft would otherwise lose everything.
+  const lsDraftKey = (tid: string) => `gc_draft:${tid}`;
+  const hydrateDraftMsgs = (arr: any[]): Msg[] => (arr || []).map((m: any): Msg => ({
+    id: m.id || nid(),
+    sender: m.sender === 'user' ? 'user' : 'agent',
+    text: m.text || '',
+    thoughts: [], thinking: false, streaming: false,
+    sources: m.sources, srcRefs: m.srcRefs, webSources: m.webSources, searchHtml: m.searchHtml,
+  }));
 
   // Serialize the live messages to the durable shape (drop transient fields).
   const serializeMsgs = (ms: Msg[]) => ms
@@ -305,6 +316,8 @@ const GovCopilot: React.FC<Props> = (props) => {
     try {
       const summary = await saveConversation(tenantId!, { id, messages, created_at: convCreatedRef.current });
       setConvs(cs => [summary, ...cs.filter(c => c.id !== summary.id)]);
+      // HWK-A3: the turn is now durably saved → the in-flight recovery mirror is no longer needed.
+      try { if (tenantId) localStorage.removeItem(lsDraftKey(tenantId)); } catch { /* ignore */ }
     } catch { /* offline → will retry on the next turn */ }
   };
 
@@ -332,7 +345,7 @@ const GovCopilot: React.FC<Props> = (props) => {
 
   const newChat = () => {
     setMsgs([]); convIdRef.current = ''; setConvId(''); convCreatedRef.current = undefined;
-    try { if (tenantId) localStorage.removeItem(lsKey(tenantId)); } catch { /* ignore */ }
+    try { if (tenantId) { localStorage.removeItem(lsKey(tenantId)); localStorage.removeItem(lsDraftKey(tenantId)); } } catch { /* ignore */ }
     setHistOpen(false); setInput('');
     setAttachments(a => { a.forEach(x => URL.revokeObjectURL(x.url)); return []; });
   };
@@ -344,14 +357,26 @@ const GovCopilot: React.FC<Props> = (props) => {
     if (convIdRef.current === id) newChat();
   };
 
-  // On open: load the history list and resume the last thread (if any).
+  // On open: recover an interrupted run first, then load history / resume the last thread.
   useEffect(() => {
-    if (!open || !historyOn) return;
-    refreshConvs();
+    if (!open || !tenantId) return;
     if (!convIdRef.current && !msgs.length) {
-      let saved = ''; try { saved = localStorage.getItem(lsKey(tenantId!)) || ''; } catch { /* ignore */ }
-      if (saved) loadConversation(saved);
+      // HWK-A3: a refresh mid-generation left a draft mirror → restore it (works even when
+      // the backend history is off). Not suppressing autosave, so the recovered run is then
+      // saved to the backend normally and the mirror is cleared.
+      let draft: any = null;
+      try { const raw = localStorage.getItem(lsDraftKey(tenantId)); if (raw) draft = JSON.parse(raw); } catch { /* ignore */ }
+      if (draft && Array.isArray(draft.msgs) && draft.msgs.length) {
+        setMsgs(hydrateDraftMsgs(draft.msgs));
+        if (draft.convId) { convIdRef.current = draft.convId; setConvId(draft.convId); }
+        if (draft.created) convCreatedRef.current = draft.created;  // keep the original created_at through recovery
+        scrollDown();
+      } else if (historyOn) {
+        let saved = ''; try { saved = localStorage.getItem(lsKey(tenantId)) || ''; } catch { /* ignore */ }
+        if (saved) loadConversation(saved);
+      }
     }
+    if (historyOn) refreshConvs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tenantId]);
 
@@ -363,6 +388,19 @@ const GovCopilot: React.FC<Props> = (props) => {
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [msgs, busy]);
+
+  // HWK-A3: while a turn is streaming, mirror it to localStorage so a refresh/crash mid-run
+  // can be recovered on next open. Cleared once the turn is durably persisted (persistConversation)
+  // or on newChat. Only writes while busy, so it never interferes with settled-turn autosave.
+  useEffect(() => {
+    if (!tenantId || !busy || !msgs.length) return;
+    try {
+      localStorage.setItem(lsDraftKey(tenantId), JSON.stringify({
+        convId: convIdRef.current, created: convCreatedRef.current, msgs: serializeMsgs(msgs), at: Date.now(),
+      }));
+    } catch { /* localStorage quota — ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [msgs, busy, tenantId]);
 
   // Lazily load the tenant's chunks once the panel opens (RAG corpus).
   useEffect(() => {
