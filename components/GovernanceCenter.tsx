@@ -26,6 +26,7 @@ import {
   saveSnapshot, loadSnapshots, deleteSnapshot,
 } from '../services/governanceService';
 import { createReviewerToken } from '../services/reviewerTokenService';
+import { composeReviewerInviteMailto } from '../services/notifyService';
 import {
   buildModel, generateGovernanceDoc, generateBulkDoc, generateGapFix, editArtifact,
   industryLens, referenceProjectsBlock,
@@ -406,6 +407,12 @@ ${content.slice(0, 8000)}`;
 
   // gov_documents library (#3/#4/#14)
   const [govDocs, setGovDocs] = useState<GovDocumentRecord[]>([]);
+  // HWK-D4: notify the owner of new review comments since they last looked.
+  // "Seen" is a per-tenant localStorage timestamp; the count excludes the
+  // owner's own comments so it surfaces reviewer feedback specifically.
+  const [libSeenAt, setLibSeenAt] = useState<string>(() => {
+    try { return localStorage.getItem(`gov_lib_seen:${settings.activeClientProfileId || 'default'}`) || ''; } catch { return ''; }
+  });
   const [genDocKind, setGenDocKind] = useState<GovDocumentRecord['kind']>('governance');
 
   // creation checklist (multi-select doc kinds + per-item page counts) — covers full catalog
@@ -1459,10 +1466,25 @@ ${content.slice(0, 8000)}`;
     try {
       const { url } = await createReviewerToken(tenantId, d.id, d.title, auth.currentUser?.email || undefined);
       try { await navigator.clipboard.writeText(url); } catch { /* clipboard blocked — link still shown below */ }
-      alertMsg(t(`نُسخ رابط المراجعة إلى الحافظة:\n${url}`, `Review link copied to clipboard:\n${url}`));
+      // HWK-D4: best-effort — also open a pre-filled mail draft so the owner can
+      // send the invite by email (client mail handler — no server send / no
+      // credentials). May be blocked by the browser; the link is on the clipboard
+      // regardless, so the owner can always paste it into their own email.
+      try { window.open(composeReviewerInviteMailto({ reviewerUrl: url, docTitle: d.title, language: ar ? 'ar' : 'en' }), '_blank'); } catch { /* mail handler unavailable */ }
+      alertMsg(t(`نُسخ رابط المراجعة إلى الحافظة (وفُتحت مسودّة بريد إن سمح المتصفّح):\n${url}`, `Review link copied to clipboard (a mail draft opened, if the browser allowed it):\n${url}`));
     } catch {
       alertMsg(t('تعذّر إنشاء رابط المراجعة.', 'Could not create the review link.'));
     }
+  };
+  // HWK-D4: new review comments (from others) since the owner last viewed the library.
+  const newReviewComments = useMemo<number>(() => {
+    const me = auth.currentUser?.email || '';
+    return govDocs.reduce((n, d) => n + (d.comments || []).filter(c => c.author !== me && (!libSeenAt || c.at > libSeenAt)).length, 0);
+  }, [govDocs, libSeenAt]);
+  const markLibSeen = () => {
+    const now = new Date().toISOString();
+    setLibSeenAt(now);
+    try { localStorage.setItem(`gov_lib_seen:${tenantId}`, now); } catch { /* quota — ignore */ }
   };
   const removeDoc = async (id: string) => {
     if (!confirm(t('حذف هذه الوثيقة من المكتبة؟', 'Delete this document from the library?'))) return;
@@ -3634,6 +3656,17 @@ ${content.slice(0, 8000)}`;
                 <summary className="font-black text-slate-800 dark:text-slate-100 text-sm cursor-pointer flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>{t('مكتبة الوثائق المولّدة', 'Generated documents library')} <span className="text-slate-400">({govDocs.length})</span></summary>
                 <div className="mt-2 space-y-3">
                   {govDocs.length === 0 && <div className="text-sm text-slate-400">{t('لا وثائق محفوظة بعد. ولّد وثيقة ثم "احفظ بالمكتبة".', 'No saved documents yet. Generate then "Save to library".')}</div>}
+
+                  {/* HWK-D4: owner notification — new reviewer comments since last look */}
+                  {newReviewComments > 0 && (
+                    <div className="flex items-center justify-between gap-2 rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2">
+                      <span className="text-[12px] font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                        {t(`${newReviewComments} تعليق مراجعة جديد منذ آخر زيارة`, `${newReviewComments} new review comment${newReviewComments === 1 ? '' : 's'} since your last visit`)}
+                      </span>
+                      <button onClick={markLibSeen} className="hw-btn hw-btn-xs hw-btn-subtle shrink-0">{t('تعليم كمقروء', 'Mark as seen')}</button>
+                    </div>
+                  )}
 
                   {/* Batch-export toolbar (#6/#8): Word/PDF × merged/separate, then export all */}
                   {govDocs.length > 0 && (
