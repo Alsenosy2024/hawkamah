@@ -145,7 +145,10 @@ export function scoreAttempt(questions: PaperQuestion[], answers: Record<number,
   if (!mcq.length) return 0;
   const correct = mcq.filter(({ q, i }) => {
     const chosen = answers[i] ?? '';
-    return chosen.trim().startsWith(q.correctAnswer);
+    // Guard: an empty correctAnswer (degenerate model output) makes startsWith('')
+    // true for every chosen value — which would score the question correct for all
+    // candidates. No defined answer ⇒ no one can be correct.
+    return !!q.correctAnswer && chosen.trim().startsWith(q.correctAnswer);
   }).length;
   return Math.round((correct / mcq.length) * 100);
 }

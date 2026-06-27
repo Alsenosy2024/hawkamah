@@ -137,4 +137,12 @@ describe('scoreAttempt', () => {
   it('returns 0 for an empty answer set', () => {
     expect(scoreAttempt([q('A'), q('B')], {})).toBe(0);
   });
+
+  it('never scores a question correct when its correctAnswer is empty', () => {
+    // A degenerate question (model emitted an empty correctAnswer) must NOT be
+    // counted correct for everyone — startsWith('') is always true. Regression
+    // guard: only the genuinely-correct Q1 should count.
+    expect(scoreAttempt([q(''), q('B')], { 0: 'anything', 1: 'B) آخر' })).toBe(50);
+    expect(scoreAttempt([q('')], { 0: '' })).toBe(0);
+  });
 });
