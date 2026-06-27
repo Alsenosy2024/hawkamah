@@ -327,10 +327,16 @@ const App: React.FC = () => {
       await setDoc(doc(db, 'documents', fullDoc.id), fullDoc);
     } catch (err) {
       console.error("Firestore Write Document Failed:", err);
-      handleFirestoreError(err, OperationType.WRITE, `documents/${fullDoc.id}`);
-      // Roll back the optimistic insert and signal failure so the ingest pipeline
-      // reports it honestly (not a silent "saved" that drops the source).
+      // Roll back the optimistic insert FIRST and signal failure so the ingest
+      // pipeline reports it honestly (not a silent "saved" that drops the source).
       setDocuments(prev => prev.filter(d => d.id !== fullDoc.id));
+      // handleFirestoreError logs rich diagnostics but ALWAYS throws (firebase.ts);
+      // calling it before the rollback made the lines below unreachable, leaving a
+      // phantom document in the list and breaking the documented null contract that
+      // callers rely on (GovernanceCenter checks `saved && saved.id`; confirmExtracted
+      // has no try/catch, so the throw became an unhandled rejection). Keep the
+      // diagnostics, but don't let the re-throw escape — honor the null contract.
+      try { handleFirestoreError(err, OperationType.WRITE, `documents/${fullDoc.id}`); } catch { /* diagnostics only */ }
       return null;
     }
     return fullDoc;  // returned so callers (e.g. Governance Center) can ingest immediately
