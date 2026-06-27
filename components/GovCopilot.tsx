@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { CompanyGovernanceModel, DocChunk, Language, ThinkingStep, ProgressStep } from '../types';
 import { stageChat, type GovStageKey, type GovCopilotMode, type GovStateSnapshot } from '../services/governanceChat';
 import type { ChatTurn } from '../services/agentOrchestrator';
+import { toStreamCallbacks, toAskCallbacks, type GenerationProgressHandler } from '../services/generationProgress';
 import { loadChunks, retrieve } from '../services/governanceService';
 import { exportMessageDocx, exportMessageXlsx, exportMessagePdfDirect, exportMessageHtml } from '../services/exportService';
 import { exportMessagePptx } from '../services/pptxExport';
@@ -664,14 +665,16 @@ const GovCopilot: React.FC<Props> = (props) => {
           // Generation finished → close out every step in the timeline.
           patch(m => ({ ...m, thinking: false, streaming: false, text: doc.markdown, sources: docs, srcRefs: toCiteRefs(doc.sources), steps: m.steps.map(s => s.status === 'running' || s.status === 'pending' ? { ...s, status: 'done' as const } : s) }));
         } else {
+          // HWK-A5: route /ask through the unified generation-progress contract.
+          const onAsk: GenerationProgressHandler = ev => {
+            if (ev.type === 'sources') { const d = [...new Set(ev.items.map(s => s.doc).filter(Boolean))]; const refs = toCiteRefs(ev.items); patch(m => ({ ...m, sources: d.length ? d : m.sources, srcRefs: refs.length ? refs : m.srcRefs })); }
+            else if (ev.type === 'delta') { patch(m => ({ ...m, thinking: false, text: m.text + ev.text })); scrollDown(); }
+            else if (ev.type === 'done') { patch(m => ({ ...m, thinking: false, streaming: false })); }
+            else if (ev.type === 'error') { patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد. أعد المحاولة.', 'Failed. Retry.') })); }
+          };
           await copilotAsk(
             { corpus, message: q + FORMAT_HINT, history: history.map(h => ({ role: h.role, content: h.parts?.[0]?.text || '' })), conversation_id: convIdRef.current },
-            {
-              onSources: ss => { const d = [...new Set(ss.map(s => s.doc).filter(Boolean))]; const refs = toCiteRefs(ss); patch(m => ({ ...m, sources: d.length ? d : m.sources, srcRefs: refs.length ? refs : m.srcRefs })); },
-              onAnswer: chunk => { patch(m => ({ ...m, thinking: false, text: m.text + chunk })); scrollDown(); },
-              onDone: () => patch(m => ({ ...m, thinking: false, streaming: false })),
-              onError: () => patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد. أعد المحاولة.', 'Failed. Retry.') })),
-            },
+            toAskCallbacks(onAsk),
             ac.signal,
           );
         }
@@ -679,18 +682,20 @@ const GovCopilot: React.FC<Props> = (props) => {
       }
       const { ctx, count, sources } = await buildFileContext(q, ac.signal);
       if (sources.length) patch(m => ({ ...m, sources }));
+      // HWK-A5: route stageChat through the same unified generation-progress contract.
+      const onStage: GenerationProgressHandler = ev => {
+        if (ev.type === 'thought') { patch(m => ({ ...m, thoughts: [...m.thoughts, { id: nid(), text: ev.text }] })); scrollDown(); }
+        else if (ev.type === 'delta') { patch(m => ({ ...m, thinking: false, text: m.text + ev.text })); scrollDown(); }
+        else if (ev.type === 'done') { patch(m => ({ ...m, thinking: false, streaming: false })); }
+        else if (ev.type === 'error') { patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد. أعد المحاولة.', 'Failed. Retry.') })); }
+      };
       await stageChat(
         {
           stage: stageKey, model, history, message: q + FORMAT_HINT, language, signal: ac.signal,
           extraContext, mode, fileContext: ctx, fileCount: count, longForm: LONG_RE.test(q),
           stateSnapshot,
         },
-        {
-          onThought: chunk => { patch(m => ({ ...m, thoughts: [...m.thoughts, { id: nid(), text: chunk }] })); scrollDown(); },
-          onAnswer: chunk => { patch(m => ({ ...m, thinking: false, text: m.text + chunk })); scrollDown(); },
-          onDone: () => patch(m => ({ ...m, thinking: false, streaming: false })),
-          onError: () => patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد. أعد المحاولة.', 'Failed. Retry.') })),
-        },
+        toStreamCallbacks(onStage),
       );
     } catch (e) {
       // HWK-A4: distinguish a user/unmount abort from a real failure so the message
