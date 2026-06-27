@@ -3839,6 +3839,17 @@ const OrgUnitBranch: React.FC<{ unit: any; depth: number; ctx: any }> = ({ unit,
           <span className="font-bold text-slate-700 dark:text-slate-200 text-sm">{unit.name}</span>
         )}
         {!editing && unit.mandate && <span className="text-[12px] text-slate-500 dark:text-slate-400">— {unit.mandate}</span>}
+        {!editing && (() => {
+          // HWK-B4: show which uploaded file(s) this unit was derived from (evidence provenance).
+          const srcs = [...new Set((unit.provenance || []).map((p: any) => p.docName).filter(Boolean))] as string[];
+          if (!srcs.length) return null;
+          return (
+            <span className="text-[10px] text-teal-600 dark:text-teal-400 ms-1 inline-flex items-center gap-0.5 whitespace-nowrap" title={tt('مُشتقّ من: ', 'Derived from: ') + srcs.join('، ')}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5 shrink-0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M13 2v7h7"/></svg>
+              {srcs.length === 1 ? srcs[0] : tt(`${srcs.length} مصادر`, `${srcs.length} sources`)}
+            </span>
+          );
+        })()}
         {editable && !editing && (
           <span className="ms-auto flex items-center gap-0.5 shrink-0">
             <button title={tt('إعادة تسمية', 'Rename')} onClick={() => { setDraft(unit.name); setEditId(unit.id); }} className="hw-btn hw-btn-xs hw-btn-ghost p-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></button>
