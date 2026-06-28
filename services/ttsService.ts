@@ -28,6 +28,11 @@ const TTS_MODELS = [MODELS.TTS, MODELS.TTS_FALLBACK]; // 3.1-flash-tts (+retry)
 export type TtsGender = 'male' | 'female';
 const VOICE: Record<TtsGender, string> = { male: 'Puck', female: 'Kore' };
 
+// Diagnostics / UI: the configured neural voice name (male = Puck per owner
+// mandate 2026-06-16). Lets callers verify or label which voice the candidate
+// hears — locks the Puck mandate in tests and backs a future voice badge. (A4)
+export function configuredVoice(gender: TtsGender): string { return VOICE[gender]; }
+
 // Per-attempt generation budget. Past this we abandon the model and try the
 // next one (or Web Speech) so the interview never stalls on a cold model.
 // MEASURED 2026-06-14: real neural TTS for a full greeting+scenario prompt takes
@@ -51,6 +56,7 @@ const styled = (text: string): string =>
 let _audio: HTMLAudioElement | null = null;     // currently-playing element
 let _objectUrl: string | null = null;
 let _genId = 0;                                  // bumps on every cancel to abandon stale playback
+let _speakingGen = -1;                            // _genId of an in-flight speak() — keeps isSpeaking() true during neural GENERATION (before _audio is set), so the proctor alarm defers instead of cancel-killing a still-generating question (A4)
 
 // ---- Autoplay unlock --------------------------------------------------------
 // The neural blob is generated 5-8s AFTER the join gesture; by then a fresh
@@ -115,6 +121,32 @@ export function cancelSpeech(): void {
   _audio = null;
   if (_objectUrl) { try { URL.revokeObjectURL(_objectUrl); } catch { /* noop */ } _objectUrl = null; }
   try { if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel(); } catch { /* noop */ }
+}
+
+// True while audio is actively playing — the neural <audio> element OR the browser
+// Web Speech engine. The proctor alarm consults this so it never speaks over (and
+// cancelSpeech-kills) in-progress question narration. (A4)
+export function isSpeaking(): boolean {
+  if (_speakingGen === _genId) return true;   // a narration is generating or playing for the current generation
+  if (_audio && !_audio.paused && !_audio.ended) return true;
+  try {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis.speaking) return true;
+  } catch { /* noop */ }
+  return false;
+}
+
+// Voice-status notifications for the UI. 'neural' = the natural Puck voice played;
+// 'fallback' = the neural chain was unavailable and we resorted to the robotic
+// browser voice. The exam portal subscribes to SHOW a visible "voice unavailable"
+// notice instead of silently swapping the jarring fallback voice in (A4). One
+// global listener — only one candidate-facing narration surface is live at a time.
+export type VoiceStatus = 'neural' | 'fallback';
+let _voiceFallbackHandler: ((s: VoiceStatus) => void) | null = null;
+export function setVoiceFallbackHandler(fn: ((s: VoiceStatus) => void) | null): void {
+  _voiceFallbackHandler = fn;
+}
+function notifyVoice(s: VoiceStatus): void {
+  try { _voiceFallbackHandler?.(s); } catch { /* a listener must never break playback */ }
 }
 
 // ---- PCM(base64) → WAV(blob) ------------------------------------------------
@@ -453,45 +485,59 @@ const INSTANT_GRACE_MS = 2600;
  * `instant`: cap time-to-first-sound at INSTANT_GRACE_MS — play warm/quick neural
  * if it arrives, else speak via Web Speech right away (no long wait, ever).
  */
-export async function speak(text: string, opts: { gender?: TtsGender; lang?: string; instant?: boolean } = {}): Promise<void> {
+export async function speak(text: string, opts: { gender?: TtsGender; lang?: string; instant?: boolean; notify?: boolean } = {}): Promise<void> {
   const clean = (text || '').trim();
   if (!clean) return;
   cancelSpeech();
   const myGen = _genId;
+  _speakingGen = myGen;            // mark in-progress NOW (covers the generate-before-playback window) so the proctor alarm defers (A4)
   const gender = opts.gender || 'male';
   const lang = opts.lang || 'ar-SA';
+  // notify (default on) drives the candidate "voice unavailable" notice. The
+  // proctor alarm passes notify:false so its OWN fallback never mislabels the
+  // candidate's question-voice status (A4).
+  const notify = opts.notify !== false;
+  try {
+    if (opts.instant) {
+      // Race the neural blob (warm cache / in-flight gen) against a short grace.
+      // obtainBlob caches its result, so even if the grace wins now, the neural
+      // audio is ready for a later replay.
+      const blob = await Promise.race<Blob | null>([
+        obtainBlob(clean, gender).catch(() => null),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), INSTANT_GRACE_MS)),
+      ]);
+      if (myGen !== _genId) return;
+      if (blob) {
+        try { await playBlob(blob, myGen); return; }
+        catch { /* autoplay blocked → fall through to Web Speech */ }
+        if (myGen !== _genId) return;
+      }
+      // Neural not ready within grace → speak now via the browser voice.
+      await webSpeechSpeak(clean, lang, myGen, gender);
+      return;
+    }
 
-  if (opts.instant) {
-    // Race the neural blob (warm cache / in-flight gen) against a short grace.
-    // obtainBlob caches its result, so even if the grace wins now, the neural
-    // audio is ready for a later replay.
-    const blob = await Promise.race<Blob | null>([
-      obtainBlob(clean, gender).catch(() => null),
-      new Promise<null>(resolve => setTimeout(() => resolve(null), INSTANT_GRACE_MS)),
-    ]);
-    if (myGen !== _genId) return;
+    let blob: Blob | null = null;
+    try { blob = await obtainBlob(clean, gender); } catch { blob = null; }
+    if (myGen !== _genId) return;          // cancelled while generating
     if (blob) {
-      try { await playBlob(blob, myGen); return; }
+      // notify('neural') only AFTER playback actually starts — if play() rejects
+      // (autoplay blocked) we fall through to 'fallback' below, so emitting
+      // 'neural' first would flicker the notice clear→show. The per-question
+      // notice reset (portal, keyed on qIndex) handles staleness across questions.
+      try { await playBlob(blob, myGen); if (notify) notifyVoice('neural'); return; }
       catch { /* autoplay blocked → fall through to Web Speech */ }
       if (myGen !== _genId) return;
     }
-    // Neural not ready within grace → speak now via the browser voice.
+
+    // Gemini chain produced nothing (no key / quota / timeout) OR playback was
+    // blocked → robotic browser voice. Tell the UI so it can label this as a
+    // degraded last-resort voice instead of silently swapping it in (A4).
+    if (notify) notifyVoice('fallback');
     await webSpeechSpeak(clean, lang, myGen, gender);
-    return;
+  } finally {
+    if (_speakingGen === myGen) _speakingGen = -1;   // clear only if a newer speak() hasn't taken over
   }
-
-  let blob: Blob | null = null;
-  try { blob = await obtainBlob(clean, gender); } catch { blob = null; }
-  if (myGen !== _genId) return;          // cancelled while generating
-  if (blob) {
-    try { await playBlob(blob, myGen); return; }
-    catch { /* autoplay blocked → fall through to Web Speech */ }
-    if (myGen !== _genId) return;
-  }
-
-  // Gemini chain produced nothing (no key / quota / timeout) OR playback was
-  // blocked → browser voice (often allowed where blob autoplay is not).
-  await webSpeechSpeak(clean, lang, myGen, gender);
 }
 
 export const ttsSupported = true;  // always — Gemini path needs no browser voices

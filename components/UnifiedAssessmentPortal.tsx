@@ -10,7 +10,7 @@ import { getUnifiedToken, saveUnifiedResult, scoreAttempt } from '../services/un
 import { generatePaperQuestions } from '../services/paperAssessmentService';
 import { createLiveProctor, speakProctorAlarm, type LiveProctorHandle } from '../services/proctorService';
 import { type ProctorSummary } from '../services/proctorCore';
-import { speak as ttsSpeak, cancelSpeech, prefetch as ttsPrefetch } from '../services/ttsService';
+import { speak as ttsSpeak, cancelSpeech, prefetch as ttsPrefetch, unlockAudio, setVoiceFallbackHandler } from '../services/ttsService';
 import { transcribeAudio } from '../services/geminiService';
 import { MicRecorder, MicRecordError } from '../lib/audioRecorder';
 import type { UnifiedAssessmentToken, UnifiedAssessmentResult, UnifiedAttempt, PaperQuestion } from '../types';
@@ -112,6 +112,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [genError, setGenError]   = useState('');
   const [camError, setCamError]   = useState('');
   const [voiceError, setVoiceError] = useState('');
+  const [voiceFallback, setVoiceFallback] = useState(false);   // A4 — true while narration is on the robotic Web-Speech fallback (neural Puck unavailable)
   const [micLevel, setMicLevel]   = useState(0);   // live VU 0..1 — proves the mic is actually capturing
   const [skipConfirm, setSkipConfirm] = useState(false); // A5 — inline two-step guard for the one-way skip
   const [onboardAck, setOnboardAck] = useState(false);   // A2 — explicit «I read & agree» gate before entry
@@ -485,7 +486,15 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   // answer, skip, timer-expiry, or the voice "next" button) so it never leaks
   // across questions. This also neutralises an MCQ answer→skip double-tap: the
   // auto-advance changes qIndex, which closes the confirm before it can fire.
-  useEffect(() => { setSkipConfirm(false); }, [examState?.qIndex]);
+  useEffect(() => { setSkipConfirm(false); setVoiceFallback(false); }, [examState?.qIndex]);
+
+  // A4 — show a visible notice when narration falls back to the robotic browser
+  // voice (neural Puck unavailable) instead of silently swapping it in. The handler
+  // also fires 'neural' on a successful Puck play, which clears the notice.
+  useEffect(() => {
+    setVoiceFallbackHandler(s => setVoiceFallback(s === 'fallback'));
+    return () => setVoiceFallbackHandler(null);
+  }, []);
 
   // ─── Generate questions ───────────────────────────────────────────────
   const generateQuestions = useCallback(async () => {
@@ -608,6 +617,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     if (tok.accessCode && accessCode.trim() !== tok.accessCode.trim()) {
       setAccessError('رمز الوصول غير صحيح.'); return;
     }
+    unlockAudio();               // bless an audio element on THIS gesture so the delayed neural Puck blob can play; without it the blob is autoplay-blocked → robotic Web-Speech voice (A4)
     requestScreenForProctor();   // grab the screen on THIS click (gesture), before the async generate
     generateQuestions();
   }, [tok, accessCode, generateQuestions, requestScreenForProctor]);
@@ -616,6 +626,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const retry = useCallback(() => {
     setQuestions([]);
     setVoiceError('');
+    unlockAudio();               // re-prime audio on the retry gesture too (A4)
     requestScreenForProctor();   // re-grab the screen on the retry click (gesture)
     generateQuestions();
   }, [generateQuestions, requestScreenForProctor]);
@@ -1132,6 +1143,15 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
               {q.isVoice && <span className="hw-badge-info text-xs">سؤال صوتي</span>}
             </div>
           </div>
+
+          {/* A4 — voice-fallback notice: the natural Puck voice is unavailable and a
+              lower-quality browser voice is being used. Labelled, not a silent swap. */}
+          {voiceFallback && (
+            <div className="flex items-center gap-2 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs leading-relaxed" role="status">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+              <span>تعذّر تشغيل الصوت الطبيعي مؤقتًا — يُستخدم صوت احتياطي بجودة أقل. الأسئلة معروضة نصيًّا أيضاً.</span>
+            </div>
+          )}
 
           {/* Question card */}
           <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-5">
