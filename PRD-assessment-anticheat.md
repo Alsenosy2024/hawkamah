@@ -101,7 +101,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A6 | Completion / exit flow polish | P2 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #34](https://github.com/Alsenosy2024/hawkamah/pull/34) · `e3c6045` (prod) | 2026-06-28 16:12 |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1457-c8d2 | [PR #36](https://github.com/Alsenosy2024/hawkamah/pull/36) · `7ea75fd` (prod) | 2026-06-28 21:48 |
 | B2 | Multi-monitor / extended-display detection | P1 | M | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1514-f086 | [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) · `c426878` (prod) | 2026-06-28 16:37 |
-| B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | 🟪 PR-OPEN | s-0628-1457-c8d2 | [PR #39](https://github.com/Alsenosy2024/hawkamah/pull/39) `item/B3-anticheat-surfaces` | 2026-06-28 21:52 |
+| B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | 🟪 PR-OPEN | s-0628-1457-c8d2 | [PR #39](https://github.com/Alsenosy2024/hawkamah/pull/39) `item/B3-anticheat-surfaces` | 2026-06-28 22:10 |
 
 **Polite build order (not enforced):** A3 → A4 → A5 → A2 → A1 → B1 → B2 → B3 → A6.
 **Dependencies:** B3 needs **B1 SHIPPED** (B1's owner flips B3 → ⬜ TODO on merge). A3 is terminal except its ⏳ live verification — claim only the verification, never re-implement it.
@@ -450,36 +450,47 @@ Detect when the candidate is on an **extended/multi-monitor** setup and treat it
 ---
 
 ## B3 — Apply anti-cheat to all candidate-facing surfaces
-**Track:** ⛔ BLOCKED (needs B1 🚢) · **Owner:** — · **Branch·PR:** `item/B3-anticheat-surfaces` · **Updated:** — · **ACs:** 0/4  ·  *(do not claim until B1 is SHIPPED; B1's owner flips this to ⬜ TODO on merge)*
+**Track:** 🟪 PR-OPEN ([PR #39](https://github.com/Alsenosy2024/hawkamah/pull/39)) · **Owner:** s-0628-1457-c8d2 · **Branch·PR:** `item/B3-anticheat-surfaces` · **Updated:** 2026-06-28 22:10 · **ACs:** 4/4
 
-**Type:** Feature · **Priority:** P1 · **Effort:** L · **Depends on:** B1
+**Type:** Feature · **Priority:** P1 · **Effort:** L · **Depends on:** B1 (🚢 SHIPPED)
 
-### What exists today
-- Proctoring only on the 3 assessment portals. **Surveys/environment-survey surfaces are unguarded.**
+### What existed today (resolved)
+- Proctoring only on the 3 assessment portals. **All survey surfaces were unguarded** — now closed.
 
-### Candidate-facing surfaces to cover (confirm the set — Q1)
-- `UnifiedAssessmentPortal.tsx` — ✅ already (migrate to hook)
-- `OnlineAssessmentPortal.tsx` — ✅ already (migrate to hook)
-- `VerbalAssessmentScreen.tsx` — ✅ already (migrate to hook)
-- `AssessmentScreen.tsx` — ❌ not instrumented (`code-explorer` flagged it as bare)
-- `PaperAssessmentPortal.tsx` — ❌ audit
-- `PublicSurveyScreen.tsx` / `WorkplaceSurveyScreen.tsx` — ❌ environment survey (استبيان البيئة) — currently no proctoring
-- `EmployeePortalScreen.tsx` — ❌ audit
-- `PublicReviewScreen.tsx` — ❌ audit
+### Resolved scope (Q1 = candidate-facing only · Q2 = FULL proctoring everywhere) — audited surface-by-surface
+**Instrumented (camera + screen-share → Gemini Live via `useProctor`, summary persisted):**
+- `UnifiedAssessmentPortal.tsx` — ✅ (B1)
+- `OnlineAssessmentPortal.tsx` — ✅ (B1)
+- `VerbalAssessmentScreen.tsx` — ✅ (B1)
+- `EmployeePortalScreen.tsx` (`?emp=` · تقييم الموظفين) — ✅ **B3** · `proctorSummary` → `EmployeeResponse`
+- `PublicSurveyScreen.tsx` (`?s=` · استبيان البيئة) — ✅ **B3** · `proctorSummary` → `PublicSurveyResponse`
+- `MonitoredSurveyScreen.tsx` (**NEW** wrapper for the in-app self-assessment `Screen.SURVEY`) — ✅ **B3** · adds the begin-gate gesture; `proctorSummary` → `assessments` record via `ResultsScreen`
 
-> **Note:** Surveys may warrant a *lighter* proctoring profile (DOM-event integrity + optional camera) rather than full screen-share, since they're not graded exams. Decide per surface (Q2).
+> **All survey types now proctored** (owner directive): the work-environment survey is monitored in all three places it can be taken — employee portal (`?emp=`), public survey link (`?s=`), and the in-app self-assessment flow. `WorkplaceSurveyScreen` is the shared inner question UI of all three, so its parent owns the proctor.
 
-### Goal
-Every candidate-facing assessment/survey surface runs the standard proctoring (via the B1 hook), with a per-surface profile (full vs. lightweight), and records a `ProctorSummary` where applicable.
+**Skipped (verified — not candidate test surfaces, nothing to attach a summary to):**
+- `PaperAssessmentPortal.tsx` — print/PDF tool, no candidate save.
+- `PublicReviewScreen.tsx` — signed-in document reviewer (`?r=`), not a test.
+- `AssessmentScreen.tsx` / standalone `WorkplaceSurveyScreen.tsx` — inner UIs of the proctored parents; no independent candidate save.
+- No proctoring added to any admin/builder page.
+
+### Goal (met)
+Every candidate-facing assessment/survey surface runs the standard FULL proctoring (via the B1 hook), with a consistent UI (shared `ProctorOverlay`), and records a `ProctorSummary` where the surface persists a result.
 
 ### Acceptance criteria
-- [ ] Each surface in the confirmed set mounts `useProctor` with an appropriate profile.
-- [ ] Survey results carry an integrity summary where applicable.
-- [ ] No proctoring on internal admin/builder pages (unless Q1 says otherwise).
-- [ ] Consistent UI (camera tile, status chip, alert banner) across surfaces.
+- [x] Each surface in the confirmed set mounts `useProctor` with the full profile.
+- [x] Survey results carry an integrity summary where applicable (EmployeeResponse, PublicSurveyResponse, in-app `assessments`).
+- [x] No proctoring on internal admin/builder pages.
+- [x] Consistent UI (camera tile, status chip, alert banner) across surfaces — shared `components/ProctorOverlay.tsx`.
 
 ### Files
-- All surface components above + `hooks/useProctor.ts`
+- **New:** `components/ProctorOverlay.tsx`, `components/MonitoredSurveyScreen.tsx`
+- **Edited:** `components/EmployeePortalScreen.tsx`, `components/PublicSurveyScreen.tsx`, `App.tsx`, `components/ResultsScreen.tsx`, `types.ts`
+- **Reused:** `hooks/useProctor.ts`, `services/proctorCore.ts`
+
+### Verification
+- **Gate 1 (deterministic):** `tsc --noEmit` 0 errors · `vitest run` 103 pass · `vite build` ok.
+- **Gate 2 (generation-blind adversarial review):** TWO rounds, all SHIP, 0 confirmed defects. Round 1 (EmployeePortal + PublicSurvey): 4 reviewers SHIP; one low disclosure gap fixed → consent notices added. Round 2 (in-app `MonitoredSurveyScreen` + App/ResultsScreen threading): 3 reviewers SHIP; one low nit fixed → `setProctorSummary` made unconditional.
 
 ---
 
@@ -546,3 +557,5 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 21:51 UTC · s-0628-1457-c8d2 · B3 · wip · built FULL proctoring on EmployeePortalScreen (?emp=) + PublicSurveyScreen (?s=); new shared components/ProctorOverlay.tsx; +proctorSummary on EmployeeResponse/PublicSurveyResponse. Skipped (verified): Paper (print tool, no save), PublicReview (doc reviewer), AssessmentScreen/standalone WorkplaceSurvey (internal admin Screen-flow; WorkplaceSurvey is the inner UI of the two portals). gate1 GREEN (tsc 0, 103 tests, build ok); branch pushed (commit 4846591); adversarial review in flight.
 - 20:17 UTC · s-0628-1453-525d · — · note · MILESTONE: backlog 100% shipped to prod (A1–A6, B1, B2); B3 in progress (c8d2). Integration QA of the merged flow + manual audit of B1 useProctor × A6 exit-lock teardown: HEALTHY — proctor (camera+screen+Live) released on attempt-finish & unmount, exit-lock can't leak it; 103 tests green. Remaining gate = LIVE verification (needs human): A3 mic VU, A4 Puck voice by ear, B2 dual-monitor warning.
 - 20:18 UTC · s-0628-1514-f086 · — · note · doc-sync: refreshed the top Status line and repurposed the Summary table's last column to CURRENT status (was the stale pre-work "In code today?" baseline; baseline preserved in per-item «What exists today» + git history). Reflects 8/9 shipped + B3 PR-open; no board-row/owned-block edits.
+- 21:52 UTC · s-0628-1457-c8d2 · B3 · pr-open · round-1 adversarial review (4 reviewers, EmployeePortal+PublicSurvey) all SHIP, 0 confirmed defects; fixed 1 low (added camera/screen consent notices). PR #39 opened.
+- 22:10 UTC · s-0628-1457-c8d2 · B3 · wip · owner directive "anti-cheat on ALL survey types" → also proctored the in-app self-assessment survey (Screen.SURVEY): new components/MonitoredSurveyScreen.tsx (begin-gate gesture wrapper); summary threaded App→ResultsScreen→assessments record. Now all 3 survey surfaces (?emp=, ?s=, in-app) proctored. gate1 GREEN; round-2 review (3 reviewers) all SHIP, 0 defects; fixed 1 low (unconditional setProctorSummary). PR #39 updated → 1e1e0f5. ACs 4/4. Awaiting owner go for merge+deploy.
