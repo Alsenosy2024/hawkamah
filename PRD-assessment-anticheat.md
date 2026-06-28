@@ -94,7 +94,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | Item | Title | P | Eff | Status | Owner (SID) | Branch · PR | Updated (UTC) |
 |------|-------|----|-----|--------|-------------|-------------|----------------|
 | A1 | Auto-suggest job titles from company industry | P1 | M | ⬜ TODO | — | — | — |
-| A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | 🟦 CLAIMED | s-0628-1453-525d | item/A2-onboarding-rules | 2026-06-28 15:20 |
+| A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | 🟪 PR-OPEN | s-0628-1453-525d | [PR #32](https://github.com/Alsenosy2024/hawkamah/pull/32) | 2026-06-28 15:28 |
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
 | A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🟦 CLAIMED | s-0628-1514-f086 | item/A4-puck-voice | 2026-06-28 15:15 |
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
@@ -185,12 +185,12 @@ When the setup modal opens, the job-titles field is **pre-filled with sensible, 
 ---
 
 ## A2 — Pre-test onboarding: exam rules, prohibitions & attempts
-**Track:** 🟦 CLAIMED · **Owner:** s-0628-1453-525d · **Branch·PR:** `item/A2-onboarding-rules` · **Updated:** 2026-06-28 15:20 · **ACs:** 0/5
+**Track:** 🟪 PR-OPEN · **Owner:** s-0628-1453-525d · **Branch·PR:** [PR #32](https://github.com/Alsenosy2024/hawkamah/pull/32) · **Updated:** 2026-06-28 15:28 · **ACs:** 4/5 *(5th N/A — no i18n in this portal)*
 **Subtasks (owner):**
-- [ ] New `onboarding` stage between `briefing` and `generating` (forward gate; access-code validated on entry)
-- [ ] How-it-works panel + dynamic attempts from `tok.maxAttempts`
-- [ ] Prohibitions: always-on DOM group (tab/blur/fullscreen/copy) + camera-gated vision group — mirror `proctorCore` signals
-- [ ] Monitoring notice + explicit acknowledgement checkbox gating «أوافق وأبدأ»
+- [x] New `onboarding` stage between `briefing` and `generating` (forward gate; access-code validated on entry)
+- [x] How-it-works panel + dynamic attempts from `tok.maxAttempts`
+- [x] Prohibitions: always-on DOM group (tab/blur/fullscreen/copy) + camera-gated vision group — mirror `proctorCore` signals
+- [x] Monitoring notice + explicit acknowledgement checkbox gating «أوافق وأبدأ»
 
 **Type:** Feature · **Priority:** P1 · **Effort:** M
 **Recording:** *"It should tell him: these are the instructions — the exam works like this, you have only two attempts. Then: do this, you'll take that, note — forbidden X, forbidden Y, forbidden Z — so onboarding starts."* (~1:10–1:32)
@@ -213,11 +213,11 @@ A dedicated **onboarding/instructions step** (between `briefing` and the first q
 - A **"أوافق وأبدأ" (I agree & start)** button that gates entry.
 
 ### Acceptance criteria
-- [ ] Before the first question, the candidate sees a distinct instructions/prohibitions screen.
-- [ ] Attempts count is shown dynamically from the token (`maxAttempts`).
-- [ ] The prohibitions listed match the signals the proctor actually detects (no rule we don't enforce, no enforced rule we don't disclose).
-- [ ] Entry is gated by an explicit acknowledgement.
-- [ ] Bilingual (AR/EN) via the existing i18n `t()` pattern; RTL correct.
+- [x] Before the first question, the candidate sees a distinct instructions/prohibitions screen.
+- [x] Attempts count is shown dynamically from the token (`maxAttempts`).
+- [x] The prohibitions listed match the signals the proctor actually detects (no rule we don't enforce, no enforced rule we don't disclose).
+- [x] Entry is gated by an explicit acknowledgement.
+- [~] Bilingual (AR/EN) — **N/A**: no i18n in this component; hardcoded Arabic/RTL to match the portal. RTL correct.
 
 ### Files
 - `components/UnifiedAssessmentPortal.tsx` (`644–857` stages; add/extend a step)
@@ -513,3 +513,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 15:09 UTC · s-0628-1453-525d · A5 · shipped · PR #30 merged (3c7e580) + deployed to prod (hawkamah.web.app); skip control live
 - 15:20 UTC · s-0628-1453-525d · A2 · claim · pre-test onboarding/rules step; branch item/A2-onboarding-rules
 - 15:15 UTC · s-0628-1514-f086 · A4 · claim · Puck-voice reliability — make Puck path reliable, demote/gate Web-Speech fallback, audit proctor-alarm voice; branch item/A4-puck-voice
+- 15:28 UTC · s-0628-1453-525d · A2 · pr-open · PR #32 — onboarding stage (rules/prohibitions/attempts + ack gate); tsc/build clean; ACs 4/5 (5th N/A)
