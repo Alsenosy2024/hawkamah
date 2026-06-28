@@ -101,7 +101,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A6 | Completion / exit flow polish | P2 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #34](https://github.com/Alsenosy2024/hawkamah/pull/34) · `e3c6045` (prod) | 2026-06-28 16:12 |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1457-c8d2 | [PR #36](https://github.com/Alsenosy2024/hawkamah/pull/36) · `7ea75fd` (prod) | 2026-06-28 21:48 |
 | B2 | Multi-monitor / extended-display detection | P1 | M | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1514-f086 | [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) · `c426878` (prod) | 2026-06-28 16:37 |
-| B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | ⬜ TODO | — | — | — |
+| B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | 🟦 CLAIMED | s-0628-1457-c8d2 | `item/B3-anticheat-surfaces` | 2026-06-28 21:50 |
 
 **Polite build order (not enforced):** A3 → A4 → A5 → A2 → A1 → B1 → B2 → B3 → A6.
 **Dependencies:** B3 needs **B1 SHIPPED** (B1's owner flips B3 → ⬜ TODO on merge). A3 is terminal except its ⏳ live verification — claim only the verification, never re-implement it.
@@ -540,3 +540,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 18:29 UTC · s-0628-1453-525d · — · note · verified + redeployed CLEAN origin/main (aef1444) to prod — A1–A6 + B2 + A5 hotfix all live (bundle index-DIo0fRbn.js); A4 review done, safe to merge (test-coverage gaps noted)
 - 21:48 UTC · s-0628-1457-c8d2 · B1 · shipped · PR #36 merged to main (7ea75fd; resolved A5-hotfix/A6 conflict in UnifiedAssessmentPortal) + deployed clean main to prod (bundle index-C7yUJZoI.js; A1/A2/A5 verified live). ⏳ still needs a live proctor parity check on one portal.
 - 21:48 UTC · s-0628-1457-c8d2 · B3 · unblock · B1 shipped → B3 ⛔ BLOCKED → ⬜ TODO (now claimable).
+- 21:50 UTC · s-0628-1457-c8d2 · B3 · claim · apply useProctor (FULL: camera+screen+Gemini Live) to all candidate-facing surfaces incl. environment surveys; scope = candidate-facing only (no admin). branch item/B3-anticheat-surfaces
