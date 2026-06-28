@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 import type { Language } from '../types';
-import { sanitizeMermaid, guardMermaidLabels, ensureMermaidFont } from '../services/diagramService';
+import { prepareMermaidForRender, ensureMermaidFont } from '../services/diagramService';
 import { MERMAID_THEME_VARIABLES, MERMAID_THEME_CSS, MERMAID_FONT } from '../services/mermaidTheme';
 
 // Brand-themed Mermaid (refined teal) so EVERY diagram type — flowchart,
@@ -40,11 +40,10 @@ const MermaidView: React.FC<Props> = ({ mermaid: code, title, language }) => {
     let cancelled = false;
     setErr('');
     const id = `mmd_${_rid++}`;
-    // Guard + sanitize raw stored code so unquoted long Arabic labels / stray
-    // fences never crash the live render (root cause of "الرسم مش شغال").
-    // guardMermaidLabels wraps (A)→("A") which breaks Mermaid edge-label parsing
-    const src = guardMermaidLabels(sanitizeMermaid(code || ''))
-      .replace(/\("([RACI])"\)/g, '($1)');
+    // Type-aware clean+guard of raw stored code: flowcharts get long-Arabic-label
+    // quoting; gantt/sequence/pie/class/state/etc. keep their real syntax so they
+    // render instead of degrading to raw source (root cause of "الرسم مش شغال").
+    const src = prepareMermaidForRender(code || '');
     if (!src) { setSvg(''); return; }
     // Load the brand font BEFORE rendering — mermaid measures text synchronously,
     // so an unloaded font sizes node boxes wrong and Arabic overflows.

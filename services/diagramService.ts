@@ -67,7 +67,7 @@ let _svgRid = 0;
  * which would need htmlLabels OFF and break Arabic shaping).
  */
 export async function mermaidToSvg(src: string): Promise<string> {
-  const code = guardMermaidLabels(sanitizeMermaid(src));
+  const code = prepareMermaidForRender(src);
   if (!code) throw new Error('empty mermaid');
   ensureMermaid();
   await ensureMermaidFont();
@@ -100,8 +100,8 @@ export async function mermaidToPng(
 ): Promise<{ png: string; width: number; height: number }> {
   const scale = opts.scale ?? 2;
   // guard long Arabic labels (wrap/truncate) only for the rasterized PNG → prevents
-  // node-box overflow in PDF/Word; canvas/flow parsing still uses the raw sanitized code.
-  const code = guardMermaidLabels(sanitizeMermaid(src));
+  // node-box overflow in PDF/Word; type-aware so gantt/sequence/etc. aren't corrupted.
+  const code = prepareMermaidForRender(src);
   if (!code) throw new Error('empty mermaid');
   ensureMermaid();
   await ensureMermaidFont();
@@ -267,8 +267,8 @@ export async function generateMermaid(
       });
       title = (res.title || title).trim();
       const code = sanitizeMermaid(res.mermaid);
-      // validate the SAME transform used at render/export time (guarded labels)
-      const err = await validateMermaid(guardMermaidLabels(code));
+      // validate the SAME transform used at render/export time (type-aware guard)
+      const err = await validateMermaid(prepareMermaidForRender(res.mermaid));
       if (!err) return { title, mermaid: code };
       lastErr = err;
       console.warn(`[diagram] generated mermaid invalid (try ${attempt + 1}/${MAX_TRIES}): ${err}`);
@@ -283,6 +283,13 @@ export async function generateMermaid(
   const fb = deterministicFallback(model);
   console.warn('[diagram] AI output invalid after retries — using deterministic model-derived fallback.');
   return { title, mermaid: fb };
+}
+
+/** Validate a Mermaid string the way it will ACTUALLY render (type-aware prepare →
+ *  mermaid.parse). Returns null when valid, else the parser error. Used by the
+ *  natural-language editor's repair loop so it only accepts diagrams that draw. */
+export async function validateMermaidForRender(code: string): Promise<string | null> {
+  return validateMermaid(prepareMermaidForRender(code));
 }
 
 /** Validate Mermaid via the real parser. Returns null if valid, else the error string. */
@@ -350,31 +357,117 @@ const wrapBody = (body: string): string | null => {
   if (!t) return null;
   return guardLabel(t).replace(/"/g, "'");
 };
-// Order matters: quoted-bracket → double-paren → plain-bracket → curly → single-paren.
+// Bracket/brace shapes have unambiguous [ / { delimiters, so a global pass is safe:
+// quoted-square → plain-square → curly. Round (..) shapes are handled by
+// guardRoundNodes (anchored on the node id) so parens sitting INSIDE a label or an
+// |edge label| are never mis-wrapped to ("..").
 const GUARD_PASSES: { re: RegExp; o: string; c: string }[] = [
-  { re: /\["([^"]*?)"\]/g,      o: '["', c: '"]' },   // already-quoted square
-  { re: /\(\(([^()"]*?)\)\)/g,  o: '(("', c: '"))' }, // round-round (paren/quote-free body)
-  { re: /\[([^"\[\]]*?)\]/g,    o: '["', c: '"]' },   // plain square — parens allowed
-  { re: /\{([^{}"]*?)\}/g,      o: '{"', c: '"}' },   // curly — parens allowed
-  { re: /\(([^()"]*?)\)/g,      o: '("', c: '")' },   // round (paren/quote-free body — skips already-quoted)
+  { re: /\["([^"]*?)"\]/g,            o: '["', c: '"]' },   // already-quoted square (re-wrap → guardLabel)
+  { re: /\[(?![(\/\\])([^"\[\]]*?)\]/g, o: '["', c: '"]' }, // plain square — inner parens allowed; skip decorated [(cyl)] [/para/] [\trap\] so their shape survives
+  { re: /\{([^{}"]*?)\}/g,            o: '{"', c: '"}' },   // curly — inner parens allowed
 ];
 
-/** Wrap long Arabic labels inside every node shape so they never overflow. */
-export function guardMermaidLabels(src: string): string {
-  let out = src;
-  for (const { re, o, c } of GUARD_PASSES) {
-    out = out.replace(re, (m, body: string) => {
-      const wrapped = wrapBody(body);
-      if (wrapped === null) return m;
-      return `${o}${wrapped}${c}`;
+// Round node shapes id((label)) / id(label) — ONLY when the ( directly follows an id
+// char. This lets a flowchart label keep literal parens ("اللجنة (التنفيذية)") and an
+// |edge (label)| keep its parens, instead of them being re-quoted to ("..").
+function guardRoundNodes(line: string): string {
+  return line
+    .replace(/([A-Za-z0-9_])\(\(([^()"]*?)\)\)/g, (m, id, body) => {
+      const w = wrapBody(body); return w === null ? m : `${id}(("${w}"))`;
+    })
+    .replace(/([A-Za-z0-9_])\(([^()"]*?)\)/g, (m, id, body) => {
+      const w = wrapBody(body); return w === null ? m : `${id}("${w}")`;
     });
+}
+
+// The Mermaid diagram type from the first meaningful line (after optional
+// %%{init}%% directives / YAML front-matter / comments). Lowercased keyword;
+// 'graph' normalizes to 'flowchart' and '-v2'/'-beta' suffixes are dropped.
+// '' when the head is not a recognized Mermaid header.
+export function detectMermaidType(src: string): string {
+  let s = (src || '').replace(/^﻿/, '');
+  s = s.replace(/^\s*---\r?\n[\s\S]*?\r?\n---\s*\r?\n/, ''); // YAML front-matter block
+  for (const raw of s.split('\n')) {
+    let line = raw.trim();
+    if (!line) continue;
+    line = line.replace(/^%%\{[^}]*\}%%\s*/, '').trim();     // inline %%{init}%% directive
+    if (!line || line.startsWith('%%')) continue;            // blank / comment
+    const m = line.match(/^(flowchart|graph|sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|erDiagram|gantt|pie|journey|mindmap|timeline|quadrantChart|gitGraph|requirementDiagram|C4\w*|sankey(?:-beta)?|xychart(?:-beta)?|block(?:-beta)?|packet(?:-beta)?|architecture(?:-beta)?|kanban|radar|treemap|zenuml)\b/i);
+    if (!m) return '';
+    const k = m[1].toLowerCase();
+    return k === 'graph' ? 'flowchart' : k.replace(/-v2$|-beta$/, '');
   }
-  return out;
+  return '';
+}
+
+// Only true flowcharts use [..]/(..)/{..} as node-LABEL shapes that our quote-guard
+// rewrites. In gantt/class/er/sequence/state/pie/etc. those brackets are real
+// syntax (task rows, members, attributes, [*] markers, composite { }), so guarding
+// them everywhere is what made non-flowchart diagrams fall back to raw code.
+function isFlowchartLike(src: string): boolean {
+  return detectMermaidType(src) === 'flowchart';
+}
+
+// Mermaid *structure/directive* lines — their parens/brackets are syntax (subgraph
+// titles, style rules, class refs), never labels. The guard must leave them alone
+// (e.g. `subgraph الوضع الراهن (الخصم)` must NOT become `("الخصم")`).
+const STRUCT_LINE = /^\s*(?:subgraph\b|end\b|direction\b|style\b|classDef\b|class\b|linkStyle\b|click\b|accTitle\b|accDescr\b|%%)/i;
+
+/** Wrap long Arabic labels inside every node shape so they never overflow.
+ *  Line-aware: structural/directive lines pass through untouched so subgraph
+ *  titles and style rules with parens are never mangled. */
+export function guardMermaidLabels(src: string): string {
+  return src.split('\n').map((line) => {
+    if (STRUCT_LINE.test(line)) return line;
+    let out = line;
+    for (const { re, o, c } of GUARD_PASSES) {
+      out = out.replace(re, (m, body: string) => {
+        const wrapped = wrapBody(body);
+        if (wrapped === null) return m;
+        return `${o}${wrapped}${c}`;
+      });
+    }
+    return guardRoundNodes(out);
+  }).join('\n');
+}
+
+// The model frequently invents a `radar-chart` dialect (header `radar-chart`,
+// an `axes` block of `"label" : value` rows) that Mermaid has NO diagram type
+// for — it throws "No diagram type detected" and the chart falls back to raw
+// code. Mermaid 11's real radar diagram is `radar-beta`. Translate the invented
+// syntax into valid radar-beta so it renders. Returns the input unchanged if it
+// can't extract any axis rows (so a genuinely-different chart is never mangled).
+export function convertRadarChart(src: string): string {
+  let title = '';
+  const axes: { label: string; value: number }[] = [];
+  for (const raw of src.split('\n')) {
+    const line = raw.trim();
+    if (!line || /^(radar-chart|axes)\b/i.test(line) || line.startsWith('%%')) continue;
+    const tm = line.match(/^title\b\s*(.+)$/i);
+    if (tm) { title = tm[1].replace(/^["']|["']$/g, '').trim(); continue; }
+    const am = line.match(/^["']?(.+?)["']?\s*:\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if (am) axes.push({ label: am[1].trim(), value: parseFloat(am[2]) });
+  }
+  if (!axes.length) return src;                       // nothing to convert → leave as-is
+  const q = (t: string) => t.replace(/"/g, "'");
+  const axisLine = 'axis ' + axes.map((a, i) => `a${i}["${q(a.label)}"]`).join(', ');
+  const curveLine = `curve c0["${q(title || 'القيمة')}"]{${axes.map(a => a.value).join(', ')}}`;
+  const max = Math.max(5, Math.ceil(Math.max(...axes.map(a => a.value))));
+  return [
+    'radar-beta',
+    title ? `  title "${q(title)}"` : '',
+    `  ${axisLine}`,
+    `  ${curveLine}`,
+    `  max ${max}`,
+  ].filter(Boolean).join('\n');
 }
 
 export function sanitizeMermaid(src: string): string {
   let s = (src || '').trim();
   s = s.replace(/^```(?:mermaid)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  // Invalid `radar-chart` dialect → real `radar-beta` (must run before type
+  // detection so the rest of the pipeline sees a recognised diagram type).
+  if (/^\s*radar-chart\b/i.test(s)) s = convertRadarChart(s);
   // Strip [مصدر N] / [source N] citation markers the model leaks INTO diagram node
   // labels — the nested [...] closes the id[label] bracket early and the whole chart
   // fails to parse (the #1 cause of flowcharts falling back to raw code). The keyword
@@ -385,17 +478,37 @@ export function sanitizeMermaid(src: string): string {
   s = s.replace(/[ً-ٰٟۖ-ۭ]/g, '');
   // Strip AI-injected <br/> tags — guardLabel will add proper wrapping after label extraction
   s = s.replace(/<br\s*\/?>/gi, ' ');
-  // Fix inner double-quotes inside square-bracket node labels: ["foo "bar" baz"] → ["foo 'bar' baz"]
-  // The GUARD_PASSES regex [^"]*? stops at inner quotes, leaving them unprocessed.
-  s = s.replace(/\["[^\]]*"\]/g, m => '["' + m.slice(2, -2).replace(/"/g, "'") + '"]');
-  // stateDiagram-v2: parentheses inside quoted labels crash the parser
-  if (/^stateDiagram/i.test(s)) {
+  // Collapse literal "\n" line-break artifacts the model leaves inside labels —
+  // Mermaid renders them as the characters "\n", not a break. guardLabel re-wraps.
+  s = s.replace(/\\n/g, ' ');
+  // ---- type-gated rewrites: valid ONLY for flowchart/state syntax. Applying them
+  // to gantt/sequence/pie/class/er/etc. corrupts real syntax (the root cause of
+  // those diagram types degrading to raw code).
+  const _type = detectMermaidType(s);
+  if (_type === 'flowchart') {
+    // Fix inner double-quotes inside square-bracket node labels: ["foo "bar" baz"] → ["foo 'bar' baz"]
+    // The GUARD_PASSES regex [^"]*? stops at inner quotes, leaving them unprocessed.
+    s = s.replace(/\["[^\]]*"\]/g, m => '["' + m.slice(2, -2).replace(/"/g, "'") + '"]');
+    // RACI/flowchart: inner quotes around single letters ("A") inside node labels → (A)
+    s = s.replace(/\("([RACI])"\)/g, '($1)');
+  } else if (_type === 'statediagram') {
+    // stateDiagram-v2: parentheses inside quoted labels crash the parser
     s = s.replace(/state\s+"([^"]+)"\s+as/g, (_m, lbl) =>
       `state "${lbl.replace(/\s*\([^)]*\)/g, '').trim()}" as`
     );
   }
-  // RACI/flowchart: inner quotes around single letters ("A") inside node labels → (A)
-  s = s.replace(/\("([RACI])"\)/g, '($1)');
+  return s;
+}
+
+/** Type-aware pre-render transform — the SINGLE transform MermaidView, mermaidToSvg
+ *  and the AI validator all use. Cleans EVERY diagram type, but only applies the
+ *  flowchart quote-guard to actual flowcharts, so gantt/sequence/pie/class/er/
+ *  state/journey/mindmap/timeline/etc. render instead of falling back to raw source. */
+export function prepareMermaidForRender(code: string): string {
+  const s = sanitizeMermaid(code);
+  if (isFlowchartLike(s)) {
+    return guardMermaidLabels(s).replace(/\("([RACI])"\)/g, '($1)');
+  }
   return s;
 }
 
