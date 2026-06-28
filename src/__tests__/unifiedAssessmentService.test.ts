@@ -145,4 +145,15 @@ describe('scoreAttempt', () => {
     expect(scoreAttempt([q(''), q('B')], { 0: 'anything', 1: 'B) آخر' })).toBe(50);
     expect(scoreAttempt([q('')], { 0: '' })).toBe(0);
   });
+
+  it('treats a skipped question (no recorded answer) as incorrect — A5 skip', () => {
+    // A5: skipping records NO entry for that index. Q1 + Q3 answered correctly,
+    // Q2 skipped → 2 of 3 MCQs correct. The skipped question stays in the
+    // denominator (it counts against the score), so totals stay consistent —
+    // a skip is exactly equivalent to a wrong answer, never silently dropped.
+    const questions = [q('A'), q('B'), q('C')];
+    expect(scoreAttempt(questions, { 0: 'A) ok', 2: 'C) ok' })).toBe(67); // round(2/3*100)
+    // Every question skipped → 0.
+    expect(scoreAttempt(questions, {})).toBe(0);
+  });
 });

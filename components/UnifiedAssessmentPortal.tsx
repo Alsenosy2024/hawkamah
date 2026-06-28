@@ -113,6 +113,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [camError, setCamError]   = useState('');
   const [voiceError, setVoiceError] = useState('');
   const [micLevel, setMicLevel]   = useState(0);   // live VU 0..1 — proves the mic is actually capturing
+  const [skipConfirm, setSkipConfirm] = useState(false); // A5 — inline two-step guard for the one-way skip
   const [fullscreenBanner, setFullscreenBanner] = useState(false);
 
   // --- Briefing device checks (mic + camera readiness before the exam) ---
@@ -462,6 +463,28 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       setTimeout(() => handleFinishAttempt(next), 400);
     }
   }, [stopTimer, goNextQ, handleFinishAttempt, questions]);
+
+  // A5 — Skip the current question. One-way: records NO answer, so the question
+  // stays absent from `answers`/`voiceAnswers` and scoreAttempt counts it incorrect
+  // (denominator unchanged). Advances through the shared goNextQ path — which is
+  // forward-only, so a skipped question is never revisitable — and finishes the
+  // attempt when it's the last one. Aborts any in-progress recording to free the
+  // mic, and stops the timer first so the expiry path can't also fire (no double
+  // advance: skip and timer-expiry both converge on goNextQ).
+  const goSkipQ = useCallback(() => {
+    const es = examRef.current;
+    if (!es) return;
+    stopTimer();
+    if (micRef.current) { micRef.current.abort(); micRef.current = null; setMicLevel(0); }
+    setVoiceError('');
+    goNextQ(es);
+  }, [stopTimer, goNextQ]);
+
+  // Reset the skip-confirm prompt whenever the question changes (via any path:
+  // answer, skip, timer-expiry, or the voice "next" button) so it never leaks
+  // across questions. This also neutralises an MCQ answer→skip double-tap: the
+  // auto-advance changes qIndex, which closes the confirm before it can fire.
+  useEffect(() => { setSkipConfirm(false); }, [examState?.qIndex]);
 
   // ─── Generate questions ───────────────────────────────────────────────
   const generateQuestions = useCallback(async () => {
@@ -1085,6 +1108,41 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
                 {examState.qIndex < questions.length - 1 ? 'السؤال التالي' : 'إنهاء الاختبار'}
               </button>
             )}
+
+            {/* A5 — Skip (one-way, no return). Two-step inline confirm guards an
+                accidental tap; on confirm the question is left unanswered. */}
+            <div className="pt-3 border-t border-slate-100">
+              {!skipConfirm ? (
+                <button
+                  type="button"
+                  onClick={() => setSkipConfirm(true)}
+                  className="flex items-center gap-1.5 text-slate-400 hover:text-slate-600 text-xs font-medium transition-colors duration-150"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7M18 19l-7-7 7-7" /></svg>
+                  تجاوز السؤال
+                </button>
+              ) : (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <span className="text-slate-600 text-xs font-medium">تخطّي بدون إجابة؟ لن تعود لهذا السؤال.</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={goSkipQ}
+                      className="bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded-md text-xs font-semibold transition-colors duration-150"
+                    >
+                      {examState.qIndex < questions.length - 1 ? 'نعم، تجاوز' : 'تجاوز وإنهاء'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSkipConfirm(false)}
+                      className="text-slate-500 hover:text-slate-700 px-2 py-1.5 text-xs font-medium transition-colors duration-150"
+                    >
+                      إلغاء
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Attempt count */}
