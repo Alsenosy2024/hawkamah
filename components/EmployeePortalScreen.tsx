@@ -10,6 +10,12 @@ import WorkplaceSurveyScreen from './WorkplaceSurveyScreen';
 import ProctorOverlay from './ProctorOverlay';
 import { useProctor } from '../hooks/useProctor';
 import { useToast } from './ToastProvider';
+import PortalShell from './PortalShell';
+import PortalSpinner from './PortalSpinner';
+import PortalErrorCard from './PortalErrorCard';
+import PortalThankYou from './PortalThankYou';
+import ParticipantInfoForm from './ParticipantInfoForm';
+import MonitoringConsentNotice from './MonitoringConsentNotice';
 import type {
   EmployeeToken, Question, UserResponse, WorkEnvironmentAnswers, Language,
 } from '../types';
@@ -297,146 +303,51 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   // ── LOADING ──
   if (phase === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB]" dir="rtl">
-        <div className="text-center space-y-4">
-          <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-slate-500 text-sm">جارٍ التحقق من الرابط…</p>
-        </div>
-      </div>
+      <PortalShell language={language} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
+        <PortalSpinner message="جارٍ التحقق من الرابط…" />
+      </PortalShell>
     );
   }
 
   // ── ERROR ──
   if (phase === 'error') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-6" dir={ar ? 'rtl' : 'ltr'}>
-        <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-sm w-full text-center space-y-4">
-          <div className="w-10 h-10 rounded-full bg-rose-50 border border-rose-200 flex items-center justify-center mx-auto">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-rose-500" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-            </svg>
-          </div>
-          <h2 className="text-base font-bold text-slate-800">{t('رابط غير صالح', 'Invalid Link')}</h2>
-          <p className="text-slate-500 text-sm leading-relaxed">{errorMsg}</p>
-        </div>
-      </div>
+      <PortalShell language={language} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
+        <PortalErrorCard title={t('رابط غير صالح', 'Invalid Link')} message={errorMsg} language={language} />
+      </PortalShell>
     );
   }
 
-  const dir = ar ? 'rtl' : 'ltr';
   const companyName = empToken?.companyName || '';
   const logoUrl = empToken?.companyLogoUrl;
 
-  // Shared header
-  const header = (
-    <div className="flex flex-col items-center gap-3 mb-6">
-      {logoUrl ? (
-        <img src={logoUrl} alt={companyName} className="h-12 max-w-[180px] object-contain" />
-      ) : (
-        <div className="w-11 h-11 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-lg font-bold">
-          {companyName.slice(0, 1)}
-        </div>
-      )}
-      <div className="text-center space-y-0.5">
-        <h1 className="text-base font-bold text-slate-800">{companyName}</h1>
-        <p className="text-xs text-slate-400">{t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}</p>
-      </div>
-    </div>
-  );
-
   // ── INFO FORM ──
   if (phase === 'info_form') {
-    const jobRoles = empToken?.jobRoles || [];
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
-        <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-md w-full">
-          {header}
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5">{t('الاسم الكامل *', 'Full Name *')}</label>
-              <input
-                className="hw-input w-full"
-                placeholder={t('أدخل اسمك الكامل', 'Enter your full name')}
-                value={empName} onChange={e => setEmpName(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5">{t('البريد الإلكتروني *', 'Email *')}</label>
-              <input
-                type="email"
-                className="hw-input w-full"
-                placeholder={t('example@company.com', 'example@company.com')}
-                value={empEmail} onChange={e => setEmpEmail(e.target.value)}
-                dir="ltr"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5">{t('المسمى الوظيفي *', 'Job Title *')}</label>
-              {jobRoles.length > 0 ? (
-                <select
-                  className="hw-input w-full bg-white"
-                  value={jobTitle} onChange={e => setJobTitle(e.target.value)}
-                >
-                  <option value="">{t('اختر مسماك الوظيفي', 'Select your job title')}</option>
-                  {jobRoles.map(r => (
-                    <option key={r.id} value={ar ? r.title_ar : r.title_en}>
-                      {ar ? r.title_ar : r.title_en}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  className="hw-input w-full"
-                  placeholder={t('مثال: مدير موارد بشرية', 'e.g. HR Manager')}
-                  value={jobTitle} onChange={e => setJobTitle(e.target.value)}
-                />
-              )}
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5">{t('الإدارة / القسم', 'Department')}</label>
-              <input
-                className="hw-input w-full"
-                placeholder={t('اختياري', 'Optional')}
-                value={department} onChange={e => setDepartment(e.target.value)}
-              />
-            </div>
-            {formErr && (
-              <p className="text-xs text-rose-600 font-medium flex items-center gap-1.5">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-                {formErr}
-              </p>
-            )}
-            <button
-              onClick={handleInfoSubmit}
-              className="hw-btn hw-btn-primary hw-btn-w mt-2"
-            >
-              {t('متابعة', 'Continue')}
-            </button>
-          </div>
-          <p className="text-xs text-center text-slate-400 mt-5">
-            {t('بياناتك محمية ولن تُشارك مع أطراف خارجية.', 'Your data is protected and will not be shared with third parties.')}
-          </p>
-        </div>
-      </div>
+      <PortalShell language={language} companyName={companyName} logoUrl={logoUrl} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
+        <ParticipantInfoForm
+          values={{ name: empName, email: empEmail, jobTitle, department }}
+          onChange={patch => {
+            if (patch.name !== undefined) setEmpName(patch.name);
+            if (patch.email !== undefined) setEmpEmail(patch.email);
+            if (patch.jobTitle !== undefined) setJobTitle(patch.jobTitle);
+            if (patch.department !== undefined) setDepartment(patch.department);
+          }}
+          onSubmit={handleInfoSubmit}
+          error={formErr}
+          language={language}
+          jobRoles={empToken?.jobRoles}
+        />
+      </PortalShell>
     );
   }
 
   // ── GENERATING ──
   if (phase === 'generating') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
-        <div className="bg-white border border-slate-200 rounded-xl p-10 max-w-sm w-full text-center space-y-5">
-          {header}
-          <div className="space-y-3">
-            <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-slate-500 text-sm leading-relaxed">
-              {t('يجري إعداد أسئلة التقييم المخصصة لمسماك الوظيفي…', 'Preparing personalized assessment questions for your role…')}
-            </p>
-          </div>
-        </div>
-      </div>
+      <PortalShell language={language} companyName={companyName} logoUrl={logoUrl} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
+        <PortalSpinner message={t('يجري إعداد أسئلة التقييم المخصصة لمسماك الوظيفي…', 'Preparing personalized assessment questions for your role…')} />
+      </PortalShell>
     );
   }
 
@@ -454,9 +365,8 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
     ];
 
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
+      <PortalShell language={language} companyName={companyName} logoUrl={logoUrl} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
         <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-lg w-full space-y-6">
-          {header}
           <div className="text-center space-y-1">
             <h2 className="text-lg font-bold text-slate-800">
               {t('أهلاً بك في التقييم', `Welcome, ${empName}`)}
@@ -483,15 +393,7 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
             )}
           </div>
           {/* B3 — proctoring disclosure: capture starts on «ابدأ التقييم», so warn here first. */}
-          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
-            <svg className="w-4 h-4 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M23 7l-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-            </svg>
-            <span className="text-xs leading-relaxed">
-              {t('تُراقَب هذه الجلسة آلياً عبر الكاميرا ومشاركة الشاشة لضمان نزاهة التقييم. بالبدء فإنك توافق على ذلك.',
-                 'This session is monitored automatically via your camera and screen-share to ensure assessment integrity. By starting, you consent to this.')}
-            </span>
-          </div>
+          <MonitoringConsentNotice language={language} context="assessment" />
 
           <button
             onClick={handleStartAssessment}
@@ -500,7 +402,7 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
             {t('ابدأ التقييم', 'Start Assessment')}
           </button>
         </div>
-      </div>
+      </PortalShell>
     );
   }
 
@@ -511,7 +413,7 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
     const isMultiChoice = q.options && q.options.length >= 2;
 
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
+      <PortalShell language={language} companyName={companyName} logoUrl={logoUrl} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
         {proctorOverlay}
         <div className="bg-white border border-slate-200 rounded-xl p-6 max-w-2xl w-full space-y-5">
           {/* Progress bar + metadata row */}
@@ -601,80 +503,48 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
               : t('انتقل لاستبيان بيئة العمل', 'Go to Work Environment Survey')}
           </button>
         </div>
-      </div>
+      </PortalShell>
     );
   }
 
   // ── SURVEY ──
   if (phase === 'survey') {
     return (
-      <div className="min-h-screen bg-[#F7FAFB] p-4" dir={dir}>
+      <PortalShell language={language} companyName={companyName} logoUrl={logoUrl} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
         {proctorOverlay}
-        <div className="max-w-2xl mx-auto space-y-4">
-          <div className="bg-white border border-slate-200 rounded-lg px-4 py-3 flex items-center gap-3">
-            {logoUrl ? (
-              <img src={logoUrl} alt={companyName} className="h-7 w-auto object-contain" />
-            ) : (
-              <div className="w-7 h-7 rounded bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">{companyName.slice(0, 1)}</div>
-            )}
-            <div>
-              <div className="font-semibold text-slate-800 text-sm">{companyName}</div>
-              <div className="text-xs text-slate-400">{t('استبيان بيئة العمل', 'Work Environment Survey')}</div>
-            </div>
-          </div>
+        <div className="w-full max-w-2xl">
           <WorkplaceSurveyScreen
             onSubmit={handleSurveySubmit}
             language={language}
             mandatory={true}
           />
         </div>
-      </div>
+      </PortalShell>
     );
   }
 
   // ── SAVING ──
   if (phase === 'saving') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
-        <div className="bg-white border border-slate-200 rounded-xl p-10 max-w-sm w-full text-center space-y-4">
-          <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-slate-500 text-sm">
-            {t('جارٍ حفظ إجاباتك…', 'Saving your responses…')}
-          </p>
-        </div>
-      </div>
+      <PortalShell language={language} companyName={companyName} logoUrl={logoUrl} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
+        <PortalSpinner message={t('جارٍ حفظ إجاباتك…', 'Saving your responses…')} />
+      </PortalShell>
     );
   }
 
   // ── DONE ──
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
-      <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-sm w-full text-center space-y-5">
-        {header}
-        <div className="w-12 h-12 rounded-full bg-green-50 border border-green-200 flex items-center justify-center mx-auto">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-green-600" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-          </svg>
-        </div>
-        <div className="space-y-1">
-          <h2 className="text-lg font-bold text-slate-800">
-            {t('شكراً لك!', 'Thank You!')}
-          </h2>
-          <p className="text-slate-500 text-sm leading-relaxed">
-            {t(
-              `تم تسجيل إجاباتك بنجاح يا ${empName}. سيتم مراجعة نتائج التقييم من قِبل الفريق المختص وإعداد تقرير شامل.`,
-              `Your responses have been recorded successfully, ${empName}. The assessment results will be reviewed by the relevant team and a comprehensive report will be prepared.`,
-            )}
-          </p>
-        </div>
-        <div className="border border-green-200 rounded-lg px-4 py-3 bg-green-50 text-sm text-green-700 font-medium">
-          {t('التقييم مكتمل — يمكنك إغلاق هذه الصفحة.', 'Assessment complete — you may close this page.')}
-        </div>
-        <p className="text-xs text-slate-400">
-          {companyName} · {new Date().toLocaleDateString(ar ? 'ar-SA' : 'en-US')}
-        </p>
-      </div>
-    </div>
+    <PortalShell language={language} companyName={companyName} logoUrl={logoUrl} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
+      <PortalThankYou
+        title={t('شكراً لك!', 'Thank You!')}
+        message={t(
+          `تم تسجيل إجاباتك بنجاح يا ${empName}. سيتم مراجعة نتائج التقييم من قِبل الفريق المختص وإعداد تقرير شامل.`,
+          `Your responses have been recorded successfully, ${empName}. The assessment results will be reviewed by the relevant team and a comprehensive report will be prepared.`,
+        )}
+        footnote={t('التقييم مكتمل — يمكنك إغلاق هذه الصفحة.', 'Assessment complete — you may close this page.')}
+        language={language}
+      />
+    </PortalShell>
   );
 };
 

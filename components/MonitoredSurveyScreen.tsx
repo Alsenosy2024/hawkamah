@@ -14,6 +14,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import WorkplaceSurveyScreen from './WorkplaceSurveyScreen';
 import ProctorOverlay from './ProctorOverlay';
+import MonitoringConsentNotice from './MonitoringConsentNotice';
 import { useProctor } from '../hooks/useProctor';
 import type { WorkEnvironmentAnswers, Language } from '../types';
 import type { ProctorSummary } from '../services/proctorCore';
@@ -108,10 +109,7 @@ const MonitoredSurveyScreen: React.FC<Props> = ({ onSubmit, language, wordLimits
             <h2 className="font-serif text-xl font-bold text-slate-800 dark:text-slate-100">
               {t('استبيان بيئة العمل', 'Work Environment Survey')}
             </h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
-              {t('الخطوة الأخيرة. تُراقَب هذه الجلسة آلياً عبر الكاميرا ومشاركة الشاشة لضمان النزاهة. بالبدء فإنك توافق على ذلك.',
-                 'Final step. This session is monitored automatically via your camera and screen-share to ensure integrity. By starting, you consent to this.')}
-            </p>
+            <MonitoringConsentNotice language={ar ? 'ar' : 'en'} context="survey" />
           </div>
           <button onClick={handleBegin} className="hw-btn hw-btn-primary hw-btn-lg w-full">
             {t('ابدأ الاستبيان المُراقَب', 'Begin monitored survey')}
