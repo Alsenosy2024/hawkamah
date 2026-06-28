@@ -96,7 +96,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A1 | Auto-suggest job titles from company industry | P1 | M | 🚢 SHIPPED | s-0628-1457-c8d2 | [PR #31](https://github.com/Alsenosy2024/hawkamah/pull/31) · `6ef8c27` (prod) | 2026-06-28 18:28 |
 | A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | 🚢 SHIPPED | s-0628-1453-525d | [PR #32](https://github.com/Alsenosy2024/hawkamah/pull/32) · `36ab0a9` (prod) | 2026-06-28 15:44 |
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
-| A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🟪 PR-OPEN | s-0628-1514-f086 | [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) | 2026-06-28 15:48 |
+| A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1514-f086 | [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) · `3a65ed2` (prod) | 2026-06-28 16:10 |
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
 | A6 | Completion / exit flow polish | P2 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #34](https://github.com/Alsenosy2024/hawkamah/pull/34) · `e3c6045` (prod) | 2026-06-28 16:12 |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | 🟦 CLAIMED | s-0628-1457-c8d2 | `item/B1-useproctor-hook` | 2026-06-28 18:28 |
@@ -269,7 +269,7 @@ Voice answers record reliably **during a live proctored exam**, with the capture
 ---
 
 ## A4 — Narration uses the robotic fallback voice instead of Puck
-**Track:** 🟪 PR-OPEN · **Owner:** s-0628-1514-f086 · **Branch·PR:** [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) · **Updated:** 2026-06-28 15:48 · **ACs:** 2/3
+**Track:** 🚢 SHIPPED · ⏳ VERIFY · **Owner:** s-0628-1514-f086 · **Branch·PR:** [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) · `3a65ed2` (prod) · **Updated:** 2026-06-28 16:10 · **ACs:** 2/3 · *(AC1 "plays in Puck, by ear" — verify live at hawkamah.web.app)*
 **Subtasks (owner):**
 - [x] Diagnose why the Puck path falls through to Web-Speech — root cause: portal never called `unlockAudio()`, so the neural blob (played ~5–8 s post-gesture) was autoplay-blocked; plus the proctor alarm's `cancelSpeech()` cut narration off
 - [x] Make the Puck path reliable — `unlockAudio()` now primed on the start/retry gestures (the real fix; existing `ttsPrefetch` retained)
@@ -525,3 +525,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 15:48 UTC · s-0628-1514-f086 · A4 · pr-open · PR #33 — unlockAudio on start gesture (Puck autoplay-block fix) + proctor-alarm defers through narration incl. gen window + labelled voice-fallback notice; tsc clean, 77/77 tests, adversarial review (2 real bugs caught+fixed); ACs 2/3 (AC1 = by-ear verify)
 - 18:28 UTC · s-0628-1457-c8d2 · A1 · shipped · PR #31 merged to main (6ef8c27); final reviewed version already live in prod (verified via live bundle: fixed titles present, 0 originals). Gate 1 (lint 0 / 83 tests / build ✓) + Gate 2 (3 reviewers all-SHIP).
 - 18:28 UTC · s-0628-1457-c8d2 · B1 · claim · extract shared useProctor hook from the 3 portals (Unified/Online/Verbal); branch item/B1-useproctor-hook (isolated worktree). Unblocks B3 on merge.
+- 16:10 UTC · s-0628-1514-f086 · A4 · shipped · PR #33 merged (3a65ed2) + built & deployed to prod (hawkamah.web.app, 72 files); Puck autoplay-block fix + non-interrupting alarm + fallback notice live. AC1 (Puck by ear) ⏳ verify in prod.
