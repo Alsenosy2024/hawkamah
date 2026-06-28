@@ -97,7 +97,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | ⬜ TODO | — | — | — |
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
 | A4 | Narration uses robotic fallback voice, not Puck | P1 | M | ⬜ TODO | — | — | — |
-| A5 | Skip question (one-way, no return) | P1 | S | ⬜ TODO | — | — | — |
+| A5 | Skip question (one-way, no return) | P1 | S | 🟦 CLAIMED | s-0628-1453-525d | item/A5-skip-question | 2026-06-28 14:53 |
 | A6 | Completion / exit flow polish | P2 | S | ⬜ TODO | — | — | — |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | ⬜ TODO | — | — | — |
 | B2 | Multi-monitor / extended-display detection | P1 | M | ⬜ TODO | — | — | — |
@@ -298,7 +298,12 @@ The candidate consistently hears the **Puck** voice for question narration and o
 ---
 
 ## A5 — Skip question (one-way, no return)
-**Track:** ⬜ TODO · **Owner:** — · **Branch·PR:** `item/A5-skip-question` · **Updated:** — · **ACs:** 0/4  ·  *(tick this item's `### Acceptance criteria` boxes in place as they land; owner adds subtasks here on claim)*
+**Track:** 🟦 CLAIMED · **Owner:** s-0628-1453-525d · **Branch·PR:** `item/A5-skip-question` · **Updated:** 2026-06-28 14:53 · **ACs:** 0/4
+**Subtasks (owner):**
+- [ ] Add `goSkipQ()` path (record current Q as unanswered, advance via `goNextQ`, never revisit)
+- [ ] Skip button on MCQ render + voice render
+- [ ] Converge timer-expiry / skip / answer on one advance path (no double-advance)
+- [ ] Confirm scoring treats skipped as unanswered/incorrect (unit test)
 
 **Type:** Feature · **Priority:** P1 · **Effort:** S
 **Recording:** *"The question I can't answer — it's right in front of me — 'skip the question', done. It doesn't come back — of course, once skipped."* (~1:55–2:08)
@@ -493,3 +498,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 06:05 UTC · s-0628-0558-main · A3 · shipped · ScriptProcessorNode resume-assert + native-rate fallback + VU meter; committed 709e02a, deployed to prod
 - 06:06 UTC · s-0628-0558-main · A3 · verify · released for live VU-meter check in a real proctored exam (camera + screen-share); anyone may claim the verification
 - 16:50 UTC · s-0628-0558-main · — · note · tracking system added to this PRD (coordination header, claims board, per-item Track lines, this log)
+- 14:53 UTC · s-0628-1453-525d · A5 · claim · skip-question control (MCQ + voice), one-way no-return; branch item/A5-skip-question
