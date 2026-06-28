@@ -115,6 +115,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [micLevel, setMicLevel]   = useState(0);   // live VU 0..1 — proves the mic is actually capturing
   const [skipConfirm, setSkipConfirm] = useState(false); // A5 — inline two-step guard for the one-way skip
   const [onboardAck, setOnboardAck] = useState(false);   // A2 — explicit «I read & agree» gate before entry
+  const [sessionClosed, setSessionClosed] = useState(false); // A6 — terminal lock after the candidate exits
   const [fullscreenBanner, setFullscreenBanner] = useState(false);
 
   // --- Briefing device checks (mic + camera readiness before the exam) ---
@@ -659,6 +660,23 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   );
 
   // ─── STAGE: loading ───────────────────────────────────────────────────
+  // ─── A6: terminal lock ────────────────────────────────────────────────
+  // Once the candidate has explicitly exited from all_done, this guard wins
+  // over every stage — there is no control back into the question flow, so the
+  // session can't be resumed within the same page load.
+  if (sessionClosed) return (
+    <div className={`${NAVY.bg} flex items-center justify-center p-6`} dir="rtl">
+      <div className={`${NAVY.card} p-10 max-w-sm w-full text-center space-y-5`}>
+        <Logo />
+        <div className="w-14 h-14 rounded-full bg-slate-100 border-2 border-slate-200 flex items-center justify-center mx-auto">
+          <svg className="w-7 h-7 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        </div>
+        <h2 className="text-lg font-bold text-slate-800">تم إنهاء الجلسة</h2>
+        <p className="text-slate-500 text-sm leading-relaxed">شكراً لك. تم تسجيل إجاباتك بنجاح. يمكنك إغلاق هذه النافذة الآن.</p>
+      </div>
+    </div>
+  );
+
   if (stage === 'loading') return (
     <div className={`${NAVY.bg} flex items-center justify-center`} dir="rtl">
       <div className="flex items-center gap-3 text-slate-400 text-sm">
@@ -1279,6 +1297,8 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     const cancelled  = lastAttempt?.cancelled;
     const canRetry   = tok && attempts.length < tok.maxAttempts;
     const passed     = attemptScore >= (tok?.passingScore ?? 60);
+    const remaining  = tok ? tok.maxAttempts - attempts.length : 0;
+    const remainingLabel = remaining === 1 ? 'محاولة واحدة' : remaining === 2 ? 'محاولتان' : `${remaining} محاولات`;
 
     return (
       <div className={`${NAVY.bg} flex items-center justify-center p-6`} dir="rtl">
@@ -1311,17 +1331,25 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
 
           {canRetry ? (
             <div className="space-y-3">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5 text-sm text-emerald-800">
+                لديك <span className="font-bold">{remainingLabel}</span> متبقية.
+              </div>
               <button className={`${NAVY.btn} hw-btn-w`} onClick={retry}>
-                إعادة المحاولة ({tok!.maxAttempts - attempts.length} متبقية)
+                إعادة المحاولة ({remaining} متبقية)
               </button>
               <button className={`${NAVY.btnGhost} hw-btn-w`} onClick={() => setStage('all_done')}>
                 إنهاء
               </button>
             </div>
           ) : (
-            <button className={`${NAVY.btn} hw-btn-w`} onClick={() => setStage('all_done')}>
-              عرض النتيجة النهائية
-            </button>
+            <div className="space-y-3">
+              <div className="bg-rose-50 border border-rose-200 rounded-lg px-4 py-2.5 text-sm text-rose-700">
+                استنفدت محاولاتك — لا يمكنك إعادة الاختبار.
+              </div>
+              <button className={`${NAVY.btn} hw-btn-w`} onClick={() => setStage('all_done')}>
+                عرض النتيجة النهائية
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -1362,6 +1390,9 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
           <p className="text-slate-400 text-xs leading-relaxed">
             شكراً. ستُراجَع نتيجتك من قِبل الإدارة.
           </p>
+          <button className={`${NAVY.btn} hw-btn-w`} onClick={() => setSessionClosed(true)}>
+            إنهاء وإغلاق الجلسة
+          </button>
         </div>
       </div>
     );
