@@ -3,7 +3,7 @@
 **Project:** Hawkamah (`ai-interviewer`) — Arabic-first RTL governance & employee-assessment webapp
 **Author / source:** Karem — extracted from voice note `WhatsApp_Ptt_2026-06-26` + 4 reference screenshots
 **Date:** 2026-06-28
-**Status:** Draft for build — work the items **one by one**, top to bottom
+**Status:** Build essentially complete — **8/9 items 🚢 shipped to prod**, B3 🟪 PR-open. Remaining: live ⏳ runtime checks on A3/A4/B1/B2 (need real mic / camera / second monitor). *(Authoritative status: the CLAIMS BOARD below.)*
 **Deadline context:** Owner wants this stabilized to demo to *Dr. Omar* and publish shortly after.
 
 ---
@@ -126,17 +126,19 @@ Each item is a **self-contained work unit**: it states what exists in the code *
 
 ## Summary table
 
-| # | Item | Type | Priority | Effort | In code today? |
+> The last column tracks **current status** (the original pre-work baseline lives in each item's `### What exists today` section + git history). The **CLAIMS BOARD** above is authoritative.
+
+| # | Item | Type | Priority | Effort | Status (now) |
 |---|------|------|----------|--------|----------------|
-| A1 | Auto-suggest job titles from company industry | Feature | P1 | M | Partial — prefill from `jobRoles` works; industry→titles derivation **missing** |
-| A2 | Pre-test onboarding: rules, prohibitions & attempts | Feature | P1 | M | Partial — briefing exists, **no rules/prohibitions step** |
-| A3 | **Voice-answer recording is broken (empty capture)** | Bug | **P0** | M | Implemented via deprecated `ScriptProcessorNode`; user reports empty recordings |
-| A4 | Narration uses robotic fallback voice, not Puck | Bug | P1 | M | `Puck` is configured; bad voice = Web-Speech fallback |
-| A5 | Skip question (one-way, no return) | Feature | P1 | S | **Missing** — forward-only, no skip control |
-| A6 | Completion / exit flow polish | Polish | P2 | S | Partial — `attempt_done`/`all_done` exist; needs exit control + clearer retry messaging |
-| B1 | Extract shared `useProctor` hook + provider | Refactor | P1 | L | Duplicated inline across 3 portals |
-| B2 | Multi-monitor / extended-display detection | Feature | P1 | M | **Missing** — no `multiple_displays` signal |
-| B3 | Apply anti-cheat to all candidate-facing surfaces | Feature | P1 | L | Only on 3 assessment portals; surveys unguarded |
+| A1 | Auto-suggest job titles from company industry | Feature | P1 | M | 🚢 Shipped — sector→titles map + «Suggest» button (PR #31, prod) |
+| A2 | Pre-test onboarding: rules, prohibitions & attempts | Feature | P1 | M | 🚢 Shipped — rules/prohibitions step + ack gate (PR #32, prod) |
+| A3 | **Voice-answer recording is broken (empty capture)** | Bug | **P0** | M | 🚢 Shipped · ⏳ verify — recorder fix + VU meter (`709e02a`, prod); live mic check pending |
+| A4 | Narration uses robotic fallback voice, not Puck | Bug | P1 | M | 🚢 Shipped · ⏳ verify — Puck autoplay fix + non-interrupting alarm + fallback notice (PR #33, prod); by-ear pending |
+| A5 | Skip question (one-way, no return) | Feature | P1 | S | 🚢 Shipped — skip control (PR #30) + double-submit hotfix (PR #37), prod |
+| A6 | Completion / exit flow polish | Polish | P2 | S | 🚢 Shipped — exit control + retry/exhausted copy + session lock (PR #34, prod) |
+| B1 | Extract shared `useProctor` hook + provider | Refactor | P1 | L | 🚢 Shipped · ⏳ verify — useProctor hook, 3 portals migrated (PR #36, prod); proctor parity pending |
+| B2 | Multi-monitor / extended-display detection | Feature | P1 | M | 🚢 Shipped · ⏳ verify — `multiple_displays` signal + detection (PR #35, prod); 2-monitor check pending |
+| B3 | Apply anti-cheat to all candidate-facing surfaces | Feature | P1 | L | 🟪 PR-open — apply useProctor to all candidate-facing surfaces |
 
 ---
 
@@ -543,3 +545,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 21:50 UTC · s-0628-1457-c8d2 · B3 · claim · apply useProctor (FULL: camera+screen+Gemini Live) to all candidate-facing surfaces incl. environment surveys; scope = candidate-facing only (no admin). branch item/B3-anticheat-surfaces
 - 21:51 UTC · s-0628-1457-c8d2 · B3 · wip · built FULL proctoring on EmployeePortalScreen (?emp=) + PublicSurveyScreen (?s=); new shared components/ProctorOverlay.tsx; +proctorSummary on EmployeeResponse/PublicSurveyResponse. Skipped (verified): Paper (print tool, no save), PublicReview (doc reviewer), AssessmentScreen/standalone WorkplaceSurvey (internal admin Screen-flow; WorkplaceSurvey is the inner UI of the two portals). gate1 GREEN (tsc 0, 103 tests, build ok); branch pushed (commit 4846591); adversarial review in flight.
 - 20:17 UTC · s-0628-1453-525d · — · note · MILESTONE: backlog 100% shipped to prod (A1–A6, B1, B2); B3 in progress (c8d2). Integration QA of the merged flow + manual audit of B1 useProctor × A6 exit-lock teardown: HEALTHY — proctor (camera+screen+Live) released on attempt-finish & unmount, exit-lock can't leak it; 103 tests green. Remaining gate = LIVE verification (needs human): A3 mic VU, A4 Puck voice by ear, B2 dual-monitor warning.
+- 20:18 UTC · s-0628-1514-f086 · — · note · doc-sync: refreshed the top Status line and repurposed the Summary table's last column to CURRENT status (was the stale pre-work "In code today?" baseline; baseline preserved in per-item «What exists today» + git history). Reflects 8/9 shipped + B3 PR-open; no board-row/owned-block edits.
