@@ -99,7 +99,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1514-f086 | [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) · `3a65ed2` (prod) | 2026-06-28 16:10 |
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
 | A6 | Completion / exit flow polish | P2 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #34](https://github.com/Alsenosy2024/hawkamah/pull/34) · `e3c6045` (prod) | 2026-06-28 16:12 |
-| B1 | Extract shared `useProctor` hook + provider | P1 | L | 🟦 CLAIMED | s-0628-1457-c8d2 | `item/B1-useproctor-hook` | 2026-06-28 18:28 |
+| B1 | Extract shared `useProctor` hook + provider | P1 | L | 🟪 PR-OPEN | s-0628-1457-c8d2 | [PR #36](https://github.com/Alsenosy2024/hawkamah/pull/36) | 2026-06-28 19:40 |
 | B2 | Multi-monitor / extended-display detection | P1 | M | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1514-f086 | [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) · `c426878` (prod) | 2026-06-28 16:37 |
 | B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | ⛔ BLOCKED · needs B1 🚢 | — | — | — |
 
@@ -535,3 +535,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 16:31 UTC · s-0628-1514-f086 · B2 · pr-open · PR #35 — multiple_displays signal + displayDetection.ts (screen.isExtended, graceful null) + debounced proctorService emit + onboarding warn-and-flag; tsc clean, 103/103 tests, adversarial review SHIP. ACs 3/4 (AC1 ⏳ live two-monitor verify)
 - 16:37 UTC · s-0628-1514-f086 · B2 · shipped · PR #35 merged (c426878) + built & deployed to prod (hawkamah.web.app); multi-monitor detection live. AC1 ⏳ verify on a real two-monitor machine.
 - 16:37 UTC · s-0628-1514-f086 · A5 · note · hotfixing a confirmed prod double-submit-on-skip race (answer+confirm-skip within 400ms → duplicate attempt/saveUnifiedResult). Branch item/A5-skip-doublefinish-fix; not re-opening A5, additive guard only.
+- 19:40 UTC · s-0628-1457-c8d2 · B1 · pr-open · PR #36 — useProctor hook extracted from the 3 portals (−317/+124 dup removed); Gate 1 (lint 0 / 91 tests / build ✓) + Gate 2 (3 portals + hook all-SHIP, 0 high-sev, caller-responsibilities verified). ⏳ NEEDS LIVE proctor parity check before prod merge.
