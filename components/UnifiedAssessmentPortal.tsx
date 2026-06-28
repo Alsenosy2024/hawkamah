@@ -8,8 +8,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { getUnifiedToken, saveUnifiedResult, scoreAttempt } from '../services/unifiedAssessmentService';
 import { generatePaperQuestions } from '../services/paperAssessmentService';
-import { createLiveProctor, speakProctorAlarm, type LiveProctorHandle } from '../services/proctorService';
-import { type ProctorSummary } from '../services/proctorCore';
+import { useProctor } from '../hooks/useProctor';
 import { speak as ttsSpeak, cancelSpeech, prefetch as ttsPrefetch, unlockAudio, setVoiceFallbackHandler } from '../services/ttsService';
 import { isExtendedDisplayNow } from '../services/displayDetection';
 import { transcribeAudio } from '../services/geminiService';
@@ -126,11 +125,6 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [deviceMsg, setDeviceMsg]   = useState('');
   const [extendedDisplay, setExtendedDisplay] = useState(false);   // B2 — a second monitor is detected at the pre-test gate
 
-  // --- Live AI proctoring (Gemini Live: camera + screen → cheating signals) ---
-  const [proctorStatus, setProctorStatus]       = useState<'off' | 'connecting' | 'live' | 'unavailable' | 'closed'>('off');
-  const [proctorIntegrity, setProctorIntegrity] = useState(100);
-  const [proctorAlert, setProctorAlert]         = useState<{ type: string; severity: string; question: number | null } | null>(null);
-
   const videoRef    = useRef<HTMLVideoElement>(null);
   const streamRef   = useRef<MediaStream | null>(null);
   const micRef      = useRef<MicRecorder | null>(null);
@@ -139,13 +133,12 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const faceCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef    = useRef<AbortController | null>(null);
 
-  // --- Proctor refs (off-screen feeds + screen share + integrity summary) ---
-  const proctorRef        = useRef<LiveProctorHandle | null>(null);
-  const screenStreamRef   = useRef<MediaStream | null>(null);
+  // --- Live AI proctoring (Gemini Live: camera + screen → cheating signals) ---
+  // The shared hook owns the proctor lifecycle (refs, status/integrity/alert state,
+  // start/stop, gesture-safe screen request, integrity summary). The visible
+  // screen-share preview tile stays portal-owned.
+  const proctor = useProctor({ language: 'ar', getQuestion: () => examRef.current?.qIndex ?? 0, intervalMs: 4000 });
   const screenPreviewRef  = useRef<HTMLVideoElement>(null);   // VISIBLE screen-share preview tile
-  const proctorElsRef     = useRef<HTMLVideoElement[]>([]);   // hidden <video>s feeding the proctor
-  const proctorSummaryRef = useRef<ProctorSummary | null>(null);
-  const proctorStartedRef = useRef(false);                    // guard: start the proctor only once per attempt
   const finishingRef      = useRef(false);                    // guard: finalize an attempt only once (A5 double-submit fix)
   const advanceTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);  // pending answer→advance timeout, cancellable on skip
 
@@ -223,64 +216,12 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     }
   }, [startFaceCheck]);
 
-  // ─── Live AI proctor ──────────────────────────────────────────────────
-  // Spin up the Gemini Live proctor: hidden off-screen <video>s feed the
-  // candidate's camera + shared screen to the engine, which streams back scored
-  // cheating signals. Graceful: camera-only if screen denied; NEVER throws.
-  // Guarded so it only starts once per attempt.
-  const startProctor = useCallback(async (screenStream: MediaStream | null) => {
-    if (proctorStartedRef.current) return;
-    proctorStartedRef.current = true;
-    try {
-      const camStream = streamRef.current;
-      const mkHidden = (s: MediaStream) => {
-        const v = document.createElement('video');
-        v.muted = true; v.playsInline = true; v.srcObject = s;
-        v.style.cssText = 'position:fixed;left:-99999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
-        document.body.appendChild(v);
-        v.play().catch(() => { /* autoplay guard */ });
-        proctorElsRef.current.push(v);
-        return v;
-      };
-      const camEl = (camStream && camStream.getVideoTracks().length) ? mkHidden(camStream) : document.createElement('video');
-      const scrEl = screenStream ? mkHidden(screenStream) : null;
-      const handle = createLiveProctor({
-        cameraEl: camEl,
-        screenEl: scrEl,
-        intervalMs: 4000,                               // ~1 frame / 4s — cost-efficient
-        getQuestion: () => (examRef.current?.qIndex ?? 0),   // records WHICH question each alert happened on
-        onAlert: (a) => {
-          setProctorAlert({ type: a.type, severity: a.severity, question: a.questionIndex ?? null });
-          window.setTimeout(() => setProctorAlert(null), 6000);
-          speakProctorAlarm('ar', { severity: a.severity, questionIndex: a.questionIndex });
-        },
-        onState: (s) => setProctorIntegrity(s.integrity),
-        onStatus: (st) => setProctorStatus(st),
-      });
-      proctorRef.current = handle;
-      await handle.start();
-    } catch {
-      setProctorStatus('unavailable');
-    }
-  }, []);
-
-  // Stop the proctor, capture its integrity summary, release the screen stream
-  // and remove the hidden off-screen <video>s. Safe to call multiple times.
-  const stopProctor = useCallback(() => {
-    try { proctorSummaryRef.current = proctorRef.current?.stop() ?? proctorSummaryRef.current; } catch { /* noop */ }
-    proctorRef.current = null;
-    screenStreamRef.current?.getTracks().forEach(t => t.stop());
-    screenStreamRef.current = null;
-    proctorElsRef.current.forEach(v => { try { v.pause(); v.srcObject = null; v.remove(); } catch { /* noop */ } });
-    proctorElsRef.current = [];
-  }, []);
-
   const stopCamera = useCallback(() => {
     if (faceCheckRef.current) clearInterval(faceCheckRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
-    stopProctor();
-  }, [stopProctor]);
+    proctor.stopProctor();
+  }, [proctor.stopProctor]);
 
   // ─── Cancel attempt ───────────────────────────────────────────────────
   const handleCancelAttempt = useCallback(async (reason = '') => {
@@ -303,7 +244,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       jobTitle,
       startedAt: es.startedAt,
       finishedAt: new Date().toISOString(),
-      ...(proctorSummaryRef.current ? { proctorSummary: proctorSummaryRef.current } : {}),
+      ...(proctor.summaryRef.current ? { proctorSummary: proctor.summaryRef.current } : {}),
     };
     const newAttempts = [...attempts, attempt];
     setAttempts(newAttempts);
@@ -345,7 +286,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       jobTitle,
       startedAt: es.startedAt,
       finishedAt: new Date().toISOString(),
-      ...(proctorSummaryRef.current ? { proctorSummary: proctorSummaryRef.current } : {}),
+      ...(proctor.summaryRef.current ? { proctorSummary: proctor.summaryRef.current } : {}),
     };
     const newAttempts = [...attempts, attempt];
     setAttempts(newAttempts);
@@ -563,7 +504,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       setFullscreenBanner(false);
       setVoiceError('');
       startTimer();
-      if (tok.cameraProctoring) { await startCamera(); startProctor(screenStreamRef.current); }
+      if (tok.cameraProctoring) { await startCamera(); proctor.startProctor(streamRef.current, proctor.screenStreamRef.current); }
       if (final[0]?.isVoice) {
         setTimeout(() => speakQuestion(final[0].text), 600);
         if (final[1]?.isVoice) ttsPrefetch(final[1].text, { gender: 'male' });
@@ -574,28 +515,21 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       setGenError((err as Error)?.message ?? 'فشل توليد الأسئلة');
       setStage('generating'); // stay on generating screen to show error
     }
-  }, [tok, jobTitle, startTimer, startCamera, startProctor]);
+  }, [tok, jobTitle, startTimer, startCamera, proctor.startProctor]);
 
   // Request SCREEN SHARE inside a user gesture (getDisplayMedia REQUIRES one and
-  // it must be called BEFORE any await consumes the gesture). Resets the per-attempt
-  // proctor state, stores the stream in screenStreamRef and binds the preview tile.
-  // On denial/cancel → camera-only proctoring (the start path passes null screen).
+  // it must be called BEFORE any await consumes the gesture). proctor.requestScreen()
+  // resets the per-attempt proctor state, flips status to 'connecting', and stores the
+  // granted stream in proctor.screenStreamRef (never throwing); here we bind it to the
+  // visible preview tile. On denial/cancel → camera-only proctoring (start passes null).
   const requestScreenForProctor = useCallback(() => {
     if (!tok?.cameraProctoring) return;
-    proctorStartedRef.current = false;
-    proctorSummaryRef.current = null;
-    setProctorStatus('connecting');
-    try {
-      navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
-        .then(scr => {
-          screenStreamRef.current = scr;
-          if (screenPreviewRef.current) {
-            screenPreviewRef.current.srcObject = scr;
-            screenPreviewRef.current.play().catch(() => { /* autoplay guard */ });
-          }
-        })
-        .catch(() => { /* denied/cancelled → camera-only (start passes null screen) */ });
-    } catch { /* unsupported → camera-only */ }
+    proctor.requestScreen().then(scr => {
+      if (scr && screenPreviewRef.current) {
+        screenPreviewRef.current.srcObject = proctor.screenStreamRef.current;
+        screenPreviewRef.current.play().catch(() => { /* autoplay guard */ });
+      }
+    });
   }, [tok]);
 
   // ─── Briefing device checks ───────────────────────────────────────────
@@ -670,12 +604,12 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   useEffect(() => {
     if (stage !== 'exam') return;
     const sp = screenPreviewRef.current;
-    const ss = screenStreamRef.current;
+    const ss = proctor.screenStreamRef.current;
     if (sp && ss && sp.srcObject !== ss) {
       sp.srcObject = ss;
       sp.play().catch(() => { /* autoplay guard */ });
     }
-  }, [stage, proctorStatus]);
+  }, [stage, proctor.status]);
 
   // ─── Cleanup on unmount ───────────────────────────────────────────────
   useEffect(() => () => {
@@ -1121,7 +1055,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
         {tok?.cameraProctoring && (
           <div className="fixed bottom-4 left-4 z-50 flex items-end gap-2">
             {/* Visible preview of the shared screen (what the proctor is monitoring). */}
-            {screenStreamRef.current && (
+            {proctor.screenStreamRef.current && (
               <div className="relative w-40 h-24 rounded-lg overflow-hidden border border-amber-300 bg-slate-900 shadow-lg">
                 <video ref={screenPreviewRef} muted playsInline className="w-full h-full object-contain" />
                 <div className="absolute bottom-0.5 right-1 bg-black/70 px-1.5 py-0.5 rounded text-[8px] font-bold text-amber-200 tracking-widest">
@@ -1137,17 +1071,17 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
                 className="w-28 h-20 rounded-lg object-cover border border-slate-300 bg-slate-900 shadow-md"
               />
               {/* Live proctor status chip: status + integrity (green ≥85 / amber ≥70 / rose <70). */}
-              {proctorStatus !== 'off' && (
+              {proctor.status !== 'off' && (
                 <div className={`absolute bottom-1 left-1 right-1 flex items-center justify-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide ${
-                  proctorStatus === 'live'
-                    ? (proctorIntegrity >= 85 ? 'bg-green-600 text-white' : proctorIntegrity >= 70 ? 'bg-amber-500 text-slate-900' : 'bg-rose-600 text-white')
-                    : proctorStatus === 'unavailable' ? 'bg-slate-600 text-white' : 'bg-slate-700 text-slate-200'
+                  proctor.status === 'live'
+                    ? (proctor.integrity >= 85 ? 'bg-green-600 text-white' : proctor.integrity >= 70 ? 'bg-amber-500 text-slate-900' : 'bg-rose-600 text-white')
+                    : proctor.status === 'unavailable' ? 'bg-slate-600 text-white' : 'bg-slate-700 text-slate-200'
                 }`}>
-                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${proctorStatus === 'live' ? 'bg-white animate-pulse' : 'bg-slate-400'}`} />
-                  {proctorStatus === 'live'
-                    ? `مراقبة ${proctorIntegrity}`
-                    : proctorStatus === 'connecting' ? 'جارٍ التوصيل'
-                    : proctorStatus === 'unavailable' ? 'كاميرا فقط'
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${proctor.status === 'live' ? 'bg-white animate-pulse' : 'bg-slate-400'}`} />
+                  {proctor.status === 'live'
+                    ? `مراقبة ${proctor.integrity}`
+                    : proctor.status === 'connecting' ? 'جارٍ التوصيل'
+                    : proctor.status === 'unavailable' ? 'كاميرا فقط'
                     : 'انتهت'}
                 </div>
               )}
@@ -1157,16 +1091,16 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
         )}
 
         {/* Live cheating-alert banner — surfaces a real (non-'none') proctor violation. */}
-        {proctorAlert && (
+        {proctor.alert && (
           <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg border bg-rose-600 text-white border-rose-700">
             <span className="w-2 h-2 rounded-full bg-white animate-pulse flex-shrink-0" />
             <span className="text-xs font-bold">
-              {proctorAlert.question != null
-                ? `سلوك مُريب في السؤال ${proctorAlert.question + 1}`
+              {proctor.alert.question != null
+                ? `سلوك مُريب في السؤال ${proctor.alert.question + 1}`
                 : 'رُصد سلوك مُريب'}
             </span>
-            <span className="text-[11px] opacity-80">{proctorAlert.type} · {proctorAlert.severity}</span>
-            <button onClick={() => setProctorAlert(null)} className="ms-2 text-white/70 hover:text-white leading-none flex items-center justify-center">
+            <span className="text-[11px] opacity-80">{proctor.alert.type} · {proctor.alert.severity}</span>
+            <button onClick={() => proctor.setAlert(null)} className="ms-2 text-white/70 hover:text-white leading-none flex items-center justify-center">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
             </button>
           </div>
