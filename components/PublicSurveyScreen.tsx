@@ -292,6 +292,17 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
                 </div>
               )}
 
+              {/* B3 — proctoring disclosure: capture starts on «متابعة», so warn here first. */}
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
+                <svg className="w-4 h-4 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M23 7l-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+                </svg>
+                <span className="text-xs leading-relaxed">
+                  {t('تُراقَب هذه الجلسة آلياً عبر الكاميرا ومشاركة الشاشة لضمان نزاهة الاستبيان. بالمتابعة فإنك توافق على ذلك.',
+                     'This session is monitored automatically via your camera and screen-share to ensure survey integrity. By continuing, you consent to this.')}
+                </span>
+              </div>
+
               <button
                 type="button"
                 onClick={handleInfoSubmit}
