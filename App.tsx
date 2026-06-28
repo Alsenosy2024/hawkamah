@@ -14,12 +14,13 @@ import {
   AffectSignal,
   toKindArray
 } from './types';
+import type { ProctorSummary } from './services/proctorCore';
 import HomeScreen from './components/HomeScreen';
 import SetupScreen from './components/SetupScreen';
 import AssessmentScreen from './components/AssessmentScreen';
 import VerbalAssessmentScreen from './components/VerbalAssessmentScreen';
 import EmployeeOnboarding from './components/EmployeeOnboarding';
-import WorkplaceSurveyScreen from './components/WorkplaceSurveyScreen';
+import MonitoredSurveyScreen from './components/MonitoredSurveyScreen';
 import ResultsScreen from './components/ResultsScreen';
 import AdminPanel from './components/AdminPanel';
 import GovernanceCenter from './components/GovernanceCenter';
@@ -154,6 +155,8 @@ const App: React.FC = () => {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [responses, setResponses] = useState<UserResponse[]>([]);
   const [workplaceAnswers, setWorkplaceAnswers] = useState<WorkEnvironmentAnswers | undefined>(undefined);
+  // B3 — integrity summary from the in-app survey's live proctoring (persisted with the result).
+  const [proctorSummary, setProctorSummary] = useState<ProctorSummary | undefined>(undefined);
   const [verbalAffect, setVerbalAffect] = useState<AffectSignal | undefined>(undefined);  // voice/facial affect from verbal interview
   const [surveyScope, setSurveyScope] = useState<SurveyScope>('both');
   const [isDark, setIsDark] = useState<boolean>(() => document.documentElement.classList.contains('dark'));
@@ -537,8 +540,9 @@ const App: React.FC = () => {
   }, [surveyScope]);
 
   // Take survey answers, record them, and shift to results screen
-  const handleSurveySubmit = useCallback((answers: WorkEnvironmentAnswers) => {
+  const handleSurveySubmit = useCallback((answers: WorkEnvironmentAnswers, summary?: ProctorSummary) => {
     setWorkplaceAnswers(answers);
+    if (summary) setProctorSummary(summary);   // B3 — captured by the in-app survey proctor
     setCurrentScreen(Screen.RESULTS); // Generate report and display dual results
   }, []);
 
@@ -548,6 +552,7 @@ const App: React.FC = () => {
     setQuestions([]);
     setResponses([]);
     setWorkplaceAnswers(undefined);
+    setProctorSummary(undefined);
     setVerbalAffect(undefined);
     setSurveyScope('both');
     setError(null);
@@ -773,7 +778,10 @@ const App: React.FC = () => {
           timerInSeconds={assessmentConfig?.timerInSeconds} 
         />;
       case Screen.SURVEY:
-        return <WorkplaceSurveyScreen
+        // B3 — proctor the in-app survey too. MonitoredSurveyScreen adds the
+        // "begin monitored survey" gesture (screen-share needs one), runs the
+        // useProctor engine + overlay, and returns the ProctorSummary on submit.
+        return <MonitoredSurveyScreen
           onSubmit={handleSurveySubmit}
           language={language}
           wordLimits={activeProjectSurvey(settings).surveyWordLimits}
@@ -792,6 +800,7 @@ const App: React.FC = () => {
           workplaceAnswers={workplaceAnswers}
           surveyScope={surveyScope}
           affectSignal={verbalAffect}
+          proctorSummary={proctorSummary}
         />;
       default:
         return <HomeScreen onStart={handleStart} language={language} setLanguage={setLanguage} settings={settings} />;
