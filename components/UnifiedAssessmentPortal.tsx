@@ -146,6 +146,8 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const proctorElsRef     = useRef<HTMLVideoElement[]>([]);   // hidden <video>s feeding the proctor
   const proctorSummaryRef = useRef<ProctorSummary | null>(null);
   const proctorStartedRef = useRef(false);                    // guard: start the proctor only once per attempt
+  const finishingRef      = useRef(false);                    // guard: finalize an attempt only once (A5 double-submit fix)
+  const advanceTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);  // pending answer→advance timeout, cancellable on skip
 
   // ─── Load token ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -282,6 +284,9 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
 
   // ─── Cancel attempt ───────────────────────────────────────────────────
   const handleCancelAttempt = useCallback(async (reason = '') => {
+    if (finishingRef.current) return;   // A5 — unify finalize: cancel OR finish saves exactly once per attempt
+    finishingRef.current = true;
+    if (advanceTimerRef.current) { clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
     cancelSpeech();
     micRef.current?.abort(); micRef.current = null;
     stopCamera();
@@ -322,6 +327,8 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
 
   // ─── Finish attempt ───────────────────────────────────────────────────
   const handleFinishAttempt = useCallback(async (es: ExamState) => {
+    if (finishingRef.current) return;   // A5 — a 400ms answer↔skip race must not finalize/save the attempt twice
+    finishingRef.current = true;
     cancelSpeech();
     micRef.current?.abort(); micRef.current = null;
     stopCamera();
@@ -459,14 +466,18 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     const es = examRef.current;
     if (!es) return;
     stopTimer();
+    setSkipConfirm(false);   // A5 — close any open skip-confirm so it can't race this answer's advance
     const next = { ...es, answers: { ...es.answers, [es.qIndex]: opt } };
     examRef.current = next;
     setExamState(next);
-    if (next.qIndex < questions.length - 1) {
-      setTimeout(() => goNextQ(next), 400);
-    } else {
-      setTimeout(() => handleFinishAttempt(next), 400);
-    }
+    // A5 — capture the deferred advance so a skip (or a second answer) can cancel it;
+    // an uncancelled timeout was the double-advance / double-finish bug.
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    advanceTimerRef.current = setTimeout(() => {
+      advanceTimerRef.current = null;
+      if (next.qIndex < questions.length - 1) goNextQ(next);
+      else handleFinishAttempt(next);
+    }, 400);
   }, [stopTimer, goNextQ, handleFinishAttempt, questions]);
 
   // A5 — Skip the current question. One-way: records NO answer, so the question
@@ -479,6 +490,8 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const goSkipQ = useCallback(() => {
     const es = examRef.current;
     if (!es) return;
+    // A5 — cancel a pending answer→advance timeout so skip can't double-advance / double-finish.
+    if (advanceTimerRef.current) { clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
     stopTimer();
     if (micRef.current) { micRef.current.abort(); micRef.current = null; setMicLevel(0); }
     setVoiceError('');
@@ -490,6 +503,11 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   // across questions. This also neutralises an MCQ answer→skip double-tap: the
   // auto-advance changes qIndex, which closes the confirm before it can fire.
   useEffect(() => { setSkipConfirm(false); setVoiceFallback(false); }, [examState?.qIndex]);
+
+  // A5 — re-arm the finalize guard each time a fresh attempt's exam begins (a retry
+  // re-enters the 'exam' stage), and clear any pending answer-advance timer on unmount.
+  useEffect(() => { if (stage === 'exam') finishingRef.current = false; }, [stage]);
+  useEffect(() => () => { if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current); }, []);
 
   // B2 — while the candidate is on the pre-test onboarding gate, poll the display
   // layout so a second monitor is warned about before they start (and the warning
