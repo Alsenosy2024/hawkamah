@@ -112,6 +112,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [genError, setGenError]   = useState('');
   const [camError, setCamError]   = useState('');
   const [voiceError, setVoiceError] = useState('');
+  const [micLevel, setMicLevel]   = useState(0);   // live VU 0..1 — proves the mic is actually capturing
   const [fullscreenBanner, setFullscreenBanner] = useState(false);
 
   // --- Briefing device checks (mic + camera readiness before the exam) ---
@@ -368,8 +369,12 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   // ─── Voice recording (MicRecorder → Gemini transcription) ──────────────
   const startRecording = useCallback(async () => {
     setVoiceError('');
+    setMicLevel(0);
     try {
-      const rec = new MicRecorder();
+      // onLevel drives the live VU meter — it PROVES capture is happening, so a
+      // silent failure (mic open but engine not running) is visible immediately
+      // instead of only surfacing as an empty transcript after the user stops.
+      const rec = new MicRecorder((lvl) => setMicLevel(lvl));
       await rec.start();
       micRef.current = rec;
       setExamState(prev => {
@@ -379,8 +384,10 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
         return next;
       });
     } catch (e: unknown) {
-      setVoiceError(e instanceof MicRecordError
-        ? 'تعذّر الوصول للميكروفون — تأكد من السماح بالإذن.'
+      const reason = e instanceof MicRecordError ? e.reason : '';
+      setVoiceError(
+        reason === 'permission' ? 'تعذّر الوصول للميكروفون — تأكد من السماح بالإذن.'
+        : reason === 'unsupported' || reason === 'insecure' ? 'تعذّر تشغيل محرّك الصوت — أعد تحميل الصفحة وحاول مجدداً.'
         : 'تعذّر بدء التسجيل.');
       setExamState(prev => prev ? { ...prev, recording: false } : prev);
     }
@@ -390,6 +397,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     const rec = micRef.current;
     if (!rec) return;
     micRef.current = null;
+    setMicLevel(0);
     setExamState(prev => prev ? { ...prev, recording: false, transcribing: true } : prev);
     try {
       const seg = await rec.stop();
@@ -403,7 +411,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       if (!text) setVoiceError('لم نتمكن من فهم الصوت — حاول مرة أخرى.');
     } catch (e: unknown) {
       setVoiceError(e instanceof MicRecordError
-        ? 'لم يُلتقط صوت — حاول مرة أخرى.'
+        ? 'لم يُلتقط صوت — تأكد من ظهور مؤشّر الصوت أثناء التسجيل، ثم حاول مرة أخرى.'
         : 'تعذّر تحويل الصوت إلى نص — حاول مرة أخرى.');
       setExamState(prev => prev ? { ...prev, transcribing: false } : prev);
     }
@@ -1012,13 +1020,23 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
                     {examState.voiceAnswers[examState.qIndex] !== undefined ? 'إعادة التسجيل' : 'ابدأ التسجيل'}
                   </button>
                 ) : (
-                  <button
-                    className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium animate-pulse transition-colors duration-150"
-                    onClick={stopRecording}
-                  >
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
-                    إيقاف التسجيل
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium animate-pulse transition-colors duration-150 flex-shrink-0"
+                      onClick={stopRecording}
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+                      إيقاف التسجيل
+                    </button>
+                    {/* Live VU meter — proves the mic is actually capturing. If this
+                        stays flat while speaking, the audio engine didn't start. */}
+                    <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden" title="مستوى الصوت" aria-label="مستوى الصوت">
+                      <div
+                        className="h-full bg-emerald-500 rounded-full transition-[width] duration-75 ease-out"
+                        style={{ width: `${Math.min(100, Math.round(micLevel * 100))}%` }}
+                      />
+                    </div>
+                  </div>
                 )}
                 {voiceError && (
                   <p className="text-rose-600 text-xs leading-relaxed">{voiceError}</p>

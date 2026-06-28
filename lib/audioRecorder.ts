@@ -77,6 +77,7 @@ export class MicRecorder {
   private chunks: Float32Array[] = [];
   private onLevel?: (level: number) => void;
   private rate = SAMPLE_RATE;
+  private frames = 0;   // onaudioprocess fire-count — 0 on stop ⇒ the engine never ran
 
   constructor(onLevel?: (level: number) => void) {
     this.onLevel = onLevel;
@@ -108,15 +109,36 @@ export class MicRecorder {
       throw new MicRecordError('unknown', e?.message || 'Could not open microphone.');
     }
 
-    this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: SAMPLE_RATE });
-    await this.ctx.resume();
+    // Bring up the audio engine and PROVE it's running before we trust it.
+    // Forcing a non-native rate (16 kHz) keeps WAVs small, but under heavy
+    // concurrent media load — live proctoring holds camera + screen-share +
+    // a Gemini Live audio session — a forced-rate context can come up
+    // 'suspended' and never fire onaudioprocess, producing a silent EMPTY
+    // recording (owner report: voice answers "ما بيسجلش / الصوت يفرّغ" in the
+    // proctored unified exam). So: try 16 kHz, and if it won't actually run,
+    // fall back to a native-rate context (starts reliably under load), and
+    // fail loudly rather than capturing nothing.
+    const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
+    this.ctx = new Ctx({ sampleRate: SAMPLE_RATE });
+    await this.ctx.resume().catch(() => { /* assert below */ });
+    if (this.ctx.state !== 'running') {
+      try { await this.ctx.close(); } catch { /* noop */ }
+      this.ctx = new Ctx();                       // native rate — most robust under load
+      await this.ctx.resume().catch(() => { /* assert below */ });
+    }
+    if (this.ctx.state !== 'running') {
+      this.stream.getTracks().forEach(t => t.stop());
+      throw new MicRecordError('unsupported', 'Audio engine did not start (context suspended).');
+    }
     this.rate = this.ctx.sampleRate || SAMPLE_RATE;
     this.source = this.ctx.createMediaStreamSource(this.stream);
     this.processor = this.ctx.createScriptProcessor(4096, 1, 1);
     this.chunks = [];
+    this.frames = 0;
 
     this.processor.onaudioprocess = (e) => {
       const input = e.inputBuffer.getChannelData(0);
+      this.frames++;
       this.chunks.push(new Float32Array(input));
       if (this.onLevel) {
         let sum = 0;
@@ -158,7 +180,7 @@ export class MicRecorder {
     this.ctx = null; this.stream = null; this.processor = null; this.source = null;
 
     const total = this.chunks.reduce((n, c) => n + c.length, 0);
-    if (total === 0) throw new MicRecordError('empty', 'No audio captured.');
+    if (total === 0) throw new MicRecordError('empty', `No audio captured (frames=${this.frames}).`);
     const merged = new Float32Array(total);
     let off = 0;
     for (const c of this.chunks) { merged.set(c, off); off += c.length; }
