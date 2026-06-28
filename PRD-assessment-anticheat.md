@@ -98,7 +98,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
 | A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🟪 PR-OPEN | s-0628-1514-f086 | [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) | 2026-06-28 15:48 |
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
-| A6 | Completion / exit flow polish | P2 | S | ⬜ TODO | — | — | — |
+| A6 | Completion / exit flow polish | P2 | S | 🟦 CLAIMED | s-0628-1453-525d | item/A6-exit-flow | 2026-06-28 16:04 |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | ⬜ TODO | — | — | — |
 | B2 | Multi-monitor / extended-display detection | P1 | M | ⬜ TODO | — | — | — |
 | B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | ⛔ BLOCKED · needs B1 🚢 | — | — | — |
@@ -344,7 +344,11 @@ A visible **"تجاوز السؤال" (Skip)** control that advances past the cu
 ---
 
 ## A6 — Completion / exit flow polish
-**Track:** ⬜ TODO · **Owner:** — · **Branch·PR:** `item/A6-exit-flow` · **Updated:** — · **ACs:** 0/3  ·  *(tick this item's `### Acceptance criteria` boxes in place as they land; owner adds subtasks here on claim)*
+**Track:** 🟦 CLAIMED · **Owner:** s-0628-1453-525d · **Branch·PR:** `item/A6-exit-flow` · **Updated:** 2026-06-28 16:04 · **ACs:** 0/3
+**Subtasks (owner):**
+- [ ] `attempt_done`: distinct retry-remaining vs retry-exhausted copy
+- [ ] `all_done`: explicit «إنهاء/خروج» control that locks re-entry to the question flow
+- [ ] Deliberate transitions (not an abrupt all-at-once dump)
 
 **Type:** Polish · **Priority:** P2 · **Effort:** S
 **Recording:** *"There's nothing for me to exit, no 'exit', no 'thank you', no 'you can't retake the attempt' — it just throws them all at me at once, done."* (~2:08–2:25)
@@ -515,4 +519,5 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 15:15 UTC · s-0628-1514-f086 · A4 · claim · Puck-voice reliability — make Puck path reliable, demote/gate Web-Speech fallback, audit proctor-alarm voice; branch item/A4-puck-voice
 - 15:28 UTC · s-0628-1453-525d · A2 · pr-open · PR #32 — onboarding stage (rules/prohibitions/attempts + ack gate); tsc/build clean; ACs 4/5 (5th N/A)
 - 15:44 UTC · s-0628-1453-525d · A2 · shipped · PR #32 merged (36ab0a9) + deployed to prod (full tree); onboarding/rules step live
+- 16:04 UTC · s-0628-1453-525d · A6 · claim · completion/exit-flow polish; branch item/A6-exit-flow
 - 15:48 UTC · s-0628-1514-f086 · A4 · pr-open · PR #33 — unlockAudio on start gesture (Puck autoplay-block fix) + proctor-alarm defers through narration incl. gen window + labelled voice-fallback notice; tsc clean, 77/77 tests, adversarial review (2 real bugs caught+fixed); ACs 2/3 (AC1 = by-ear verify)
