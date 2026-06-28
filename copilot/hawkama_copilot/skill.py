@@ -47,9 +47,16 @@ GROUNDING_RULE = (
 
 # Output formatting: diagrams MUST be valid Mermaid code blocks (rendered as real
 # diagrams by the app), never ASCII art; tabular data as Markdown tables.
+# IMPORTANT: the model used to invent unsupported types (e.g. `radar-chart`),
+# which Mermaid can't render — so we now enumerate the supported types and
+# explicitly forbid invented ones.
 FORMATTING_RULE = (
     "التنسيق: عند الحاجة إلى رسمٍ بياني أو هيكل تنظيمي أو مخطط تدفّق أو خريطة علاقات، "
-    "أخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (مثل graph TD أو flowchart LR). "
+    "أخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة. "
+    "استخدم فقط الأنواع المدعومة: graph/flowchart، sequenceDiagram، classDiagram، "
+    "stateDiagram-v2، erDiagram، gantt، pie، mindmap، timeline، journey، gitGraph، quadrantChart. "
+    "لا تخترع أنواعاً غير مدعومة (مثل radar-chart أو أي صيغة غير قياسية) فهي لا تُرسَم؛ "
+    "لإظهار تقييمٍ متعدّد المحاور استخدم graph/flowchart أو جدول Markdown. "
     "لا ترسم المخططات بالحروف أو ASCII أبداً. قدّم البيانات الجدولية كجداول Markdown."
 )
 
