@@ -96,7 +96,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A1 | Auto-suggest job titles from company industry | P1 | M | ⬜ TODO | — | — | — |
 | A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | 🚢 SHIPPED | s-0628-1453-525d | [PR #32](https://github.com/Alsenosy2024/hawkamah/pull/32) · `36ab0a9` (prod) | 2026-06-28 15:44 |
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
-| A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🟦 CLAIMED | s-0628-1514-f086 | item/A4-puck-voice | 2026-06-28 15:15 |
+| A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🟪 PR-OPEN | s-0628-1514-f086 | [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) | 2026-06-28 15:48 |
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
 | A6 | Completion / exit flow polish | P2 | S | ⬜ TODO | — | — | — |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | ⬜ TODO | — | — | — |
@@ -269,12 +269,12 @@ Voice answers record reliably **during a live proctored exam**, with the capture
 ---
 
 ## A4 — Narration uses the robotic fallback voice instead of Puck
-**Track:** 🟦 CLAIMED · **Owner:** s-0628-1514-f086 · **Branch·PR:** `item/A4-puck-voice` · **Updated:** 2026-06-28 15:15 · **ACs:** 0/3
+**Track:** 🟪 PR-OPEN · **Owner:** s-0628-1514-f086 · **Branch·PR:** [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) · **Updated:** 2026-06-28 15:48 · **ACs:** 2/3
 **Subtasks (owner):**
-- [ ] Diagnose why the Puck path (dedicated TTS `3.1-flash-tts` → LIVE native-audio) falls through to Web-Speech (timeouts too tight? auth/cold-start?)
-- [ ] Make the Puck path reliable + extend `ttsPrefetch` caching of upcoming question audio
-- [ ] Demote/gate the Web-Speech fallback behind a visible "voice unavailable" notice (no silent jarring swap)
-- [ ] Audit `speakProctorAlarm()` voice + 12 s throttle so the alarm never clashes with question narration
+- [x] Diagnose why the Puck path falls through to Web-Speech — root cause: portal never called `unlockAudio()`, so the neural blob (played ~5–8 s post-gesture) was autoplay-blocked; plus the proctor alarm's `cancelSpeech()` cut narration off
+- [x] Make the Puck path reliable — `unlockAudio()` now primed on the start/retry gestures (the real fix; existing `ttsPrefetch` retained)
+- [x] Demote/gate the Web-Speech fallback behind a visible "voice unavailable" notice (no silent jarring swap)
+- [x] Audit `speakProctorAlarm()` voice (Puck ✓) + throttle — alarm now DEFERS through narration (incl. the generation window) so it never clashes
 
 **Type:** Bug · **Priority:** P1 · **Effort:** M
 **Recording:** *"When it runs, there's 'Obeid' the dumb voice — stupid, interrupting… For onboarding there's 'Puck' — Puck in Gemini sounds nice and good, this is very important — the voice that comes out."* (~1:33–1:52)
@@ -296,9 +296,9 @@ The candidate consistently hears the **Puck** voice for question narration and o
 - Audit `speakProctorAlarm()` voice + its 12 s throttle so the alarm never "interrupts" mid-question narration (coordinate with `cancelSpeech()`).
 
 ### Acceptance criteria
-- [ ] In a normal session, question + onboarding narration plays in the Puck voice (verified by ear).
-- [ ] Web-Speech fallback only engages on genuine TTS outage, and is clearly distinguishable/labelled (or removed).
-- [ ] Proctor alarm uses an acceptable voice and does not clash with question narration.
+- [ ] In a normal session, question + onboarding narration plays in the Puck voice (verified by ear). *(PR #33 fixes the root cause — `unlockAudio()` on the start gesture; still needs a live by-ear check, like A3's ⏳)*
+- [x] Web-Speech fallback only engages on genuine TTS outage, and is clearly distinguishable/labelled (or removed). *(labelled amber notice; alarm opts out of the notice)*
+- [x] Proctor alarm uses an acceptable voice and does not clash with question narration. *(Puck voice; alarm defers through narration incl. the generation window, without burning its throttle)*
 
 ### Files
 - `services/ttsService.ts` (`25–29`, `310–323`)
@@ -515,3 +515,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 15:15 UTC · s-0628-1514-f086 · A4 · claim · Puck-voice reliability — make Puck path reliable, demote/gate Web-Speech fallback, audit proctor-alarm voice; branch item/A4-puck-voice
 - 15:28 UTC · s-0628-1453-525d · A2 · pr-open · PR #32 — onboarding stage (rules/prohibitions/attempts + ack gate); tsc/build clean; ACs 4/5 (5th N/A)
 - 15:44 UTC · s-0628-1453-525d · A2 · shipped · PR #32 merged (36ab0a9) + deployed to prod (full tree); onboarding/rules step live
+- 15:48 UTC · s-0628-1514-f086 · A4 · pr-open · PR #33 — unlockAudio on start gesture (Puck autoplay-block fix) + proctor-alarm defers through narration incl. gen window + labelled voice-fallback notice; tsc clean, 77/77 tests, adversarial review (2 real bugs caught+fixed); ACs 2/3 (AC1 = by-ear verify)
