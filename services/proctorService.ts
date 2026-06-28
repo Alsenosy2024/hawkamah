@@ -11,7 +11,7 @@
 
 import { GoogleGenAI, Modality } from '@google/genai';
 import { MODELS } from '../constants/models';
-import { speak as ttsSpeak } from './ttsService';
+import { speak as ttsSpeak, isSpeaking } from './ttsService';
 import {
   initProctorState,
   buildProctorSystemInstruction,
@@ -345,8 +345,9 @@ export function createLiveProctor(opts: LiveProctorOptions): LiveProctorHandle {
 // ─── Spoken alarm ───────────────────────────────────────────────────────────────
 // Speak a short out-loud warning when a suspicious action is detected. Throttled so
 // the recurring per-frame alerts (one every ~4s while a violation persists) don't
-// spam the candidate, and gated to medium+ severity. Uses the browser's
-// SpeechSynthesis (independent of the neural interviewer TTS), never throws.
+// spam the candidate, and gated to medium+ severity. Speaks in the SAME male neural
+// voice (Puck) as the interviewer via ttsService, and DEFERS while a question is
+// being narrated so it never cuts the interviewer off (A4). Never throws.
 let _lastAlarmMs = 0;
 const ALARM_MIN_GAP_MS = 12_000;   // at most one spoken alarm per 12s
 
@@ -358,6 +359,11 @@ export function speakProctorAlarm(
     if (typeof window === 'undefined') return;
     const sev = opts?.severity;
     if (sev === 'low' || sev === 'none') return;            // only alarm on medium/high/critical
+    // Never talk over the interviewer: speak() begins with cancelSpeech(), so
+    // firing now would CUT OFF in-progress question narration. Defer instead —
+    // WITHOUT consuming the throttle, so the alarm re-fires the moment narration
+    // ends (alerts retry every ~4s while a violation persists). (A4)
+    if (isSpeaking()) return;
     const now = Date.now();
     if (now - _lastAlarmMs < ALARM_MIN_GAP_MS) return;      // throttle
     _lastAlarmMs = now;
@@ -375,6 +381,7 @@ export function speakProctorAlarm(
       gender: 'male',
       lang: language === 'ar' ? 'ar-SA' : 'en-US',
       instant: false,
+      notify: false,   // the alarm must NOT drive the candidate's question-voice "unavailable" notice (A4)
     }).catch(() => { /* never throw out of an alarm */ });
   } catch { /* never throw out of an alarm */ }
 }
