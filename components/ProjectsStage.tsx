@@ -11,6 +11,7 @@ import { createSurveyToken } from '../services/surveyTokenService';
 import { createEmployeeToken } from '../services/employeePortalService';
 import { createUnifiedToken } from '../services/unifiedAssessmentService';
 import { extractProjectFromFiles, draftToProject, type ProjectDraft } from '../services/projectExtraction';
+import { suggestJobTitles, suggestJobTitleLines } from '../services/jobTitleSuggestions';
 import { UI, badge } from '../services/designTokens';
 import { useToast } from './ToastProvider';
 import ResponsesPanel from './ResponsesPanel';
@@ -103,6 +104,12 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
 
   const launchUnifiedAssessment = (p: GovProject) => {
     const jobTitles = (p.jobRoles ?? []).map(r => (language === 'ar' ? r.title_ar : r.title_en)).filter(Boolean);
+    // A1: when the company has no explicit jobRoles, seed industry-appropriate
+    // suggestions from the (free-text) sector. An unknown/blank sector yields []
+    // → the textarea stays empty with its placeholder, exactly as before.
+    const seededTitles = jobTitles.length
+      ? jobTitles
+      : suggestJobTitleLines(p.industry, p.specialization, ar ? 'ar' : 'en');
     setUnifiedCfg({
       project: p,
       questionCount: 20,
@@ -116,7 +123,7 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
       // as the online proctored exam). Admin can still toggle it off per link.
       cameraProctoring: true,
       theories: { birkman: false, holland: true, psychTech: false, bloom: false },
-      allowedJobTitles: jobTitles.join('\n'),
+      allowedJobTitles: seededTitles.join('\n'),
       accessCode: '',
       expiresAt: '',
     });
@@ -158,6 +165,26 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
       setLaunching(null);
     }
   };
+
+  // A1: "اقترِح مسميات" — non-destructively append any industry-appropriate
+  // titles the user doesn't already have (case-insensitive de-dup), so it both
+  // refills a cleared textarea and tops up a partial one without wiping edits.
+  const addSuggestedTitles = () => {
+    if (!unifiedCfg) return;
+    const sugg = suggestJobTitleLines(unifiedCfg.project.industry, unifiedCfg.project.specialization, ar ? 'ar' : 'en');
+    if (!sugg.length) return;
+    const existing = unifiedCfg.allowedJobTitles.split('\n').map(s => s.trim()).filter(Boolean);
+    const have = new Set(existing.map(s => s.toLowerCase()));
+    const additions = sugg.filter(s => !have.has(s.toLowerCase()));
+    if (!additions.length) {
+      toast.info(t('كل المسميات المقترحة لهذا القطاع مُضافة بالفعل.', 'All suggested titles for this sector are already added.'));
+      return;
+    }
+    setUnifiedCfg({ ...unifiedCfg, allowedJobTitles: [...existing, ...additions].join('\n') });
+  };
+  // Show the affordance only when the company's sector actually has suggestions.
+  const hasTitleSuggestions = !!unifiedCfg
+    && suggestJobTitles(unifiedCfg.project.industry, unifiedCfg.project.specialization).length > 0;
 
   // Explicit "set active" (no navigation).
   const selectProject = (id: string) => {
@@ -639,13 +666,21 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
 
             {/* Row 5 — Job titles */}
             <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
-                {t('المسميات الوظيفية (سطر لكل مسمى)', 'Job titles (one per line)')}
-              </label>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  {t('المسميات الوظيفية (سطر لكل مسمى)', 'Job titles (one per line)')}
+                </label>
+                {hasTitleSuggestions && (
+                  <button type="button" onClick={addSuggestedTitles}
+                    className="text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300 hover:underline shrink-0">
+                    ✨ {t('اقترِح مسميات', 'Suggest titles')}
+                  </button>
+                )}
+              </div>
               <textarea
                 className={`${UI.input} text-sm font-mono min-h-[80px]`}
                 rows={4}
-                dir="rtl"
+                dir="auto"
                 placeholder={t('مدير مشاريع\nمحاسب\nمهندس برمجيات', 'Project Manager\nAccountant\nSoftware Engineer')}
                 value={unifiedCfg.allowedJobTitles}
                 onChange={e => setUnifiedCfg({ ...unifiedCfg, allowedJobTitles: e.target.value })}
