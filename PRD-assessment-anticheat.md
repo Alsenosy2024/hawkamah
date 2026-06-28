@@ -100,7 +100,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
 | A6 | Completion / exit flow polish | P2 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #34](https://github.com/Alsenosy2024/hawkamah/pull/34) · `e3c6045` (prod) | 2026-06-28 16:12 |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | 🟦 CLAIMED | s-0628-1457-c8d2 | `item/B1-useproctor-hook` | 2026-06-28 18:28 |
-| B2 | Multi-monitor / extended-display detection | P1 | M | 🟪 PR-OPEN | s-0628-1514-f086 | [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) | 2026-06-28 16:31 |
+| B2 | Multi-monitor / extended-display detection | P1 | M | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1514-f086 | [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) · `c426878` (prod) | 2026-06-28 16:37 |
 | B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | ⛔ BLOCKED · needs B1 🚢 | — | — | — |
 
 **Polite build order (not enforced):** A3 → A4 → A5 → A2 → A1 → B1 → B2 → B3 → A6.
@@ -412,7 +412,7 @@ One reusable **`useProctor()` hook** (and optional `<ProctorProvider>` / `<Proct
 ---
 
 ## B2 — Multi-monitor / extended-display detection
-**Track:** 🟪 PR-OPEN · **Owner:** s-0628-1514-f086 · **Branch·PR:** [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) · **Updated:** 2026-06-28 16:31 · **ACs:** 3/4
+**Track:** 🚢 SHIPPED · ⏳ VERIFY · **Owner:** s-0628-1514-f086 · **Branch·PR:** [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) · `c426878` (prod) · **Updated:** 2026-06-28 16:37 · **ACs:** 3/4 · *(AC1 — confirm on a real two-monitor machine at hawkamah.web.app)*
 **Subtasks (owner):**
 - [x] Add `multiple_displays` signal to `proctorCore` (ProctorSignalType + DEFAULT_SEVERITY high + eventAlert) — TDD, flows into integrity + ProctorSummary
 - [x] Detection helper `services/displayDetection.ts`: `screen.isExtended` (+ best-effort `getScreenDetails()` count) with graceful degradation (null) on unsupported browsers
@@ -533,3 +533,5 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 16:10 UTC · s-0628-1514-f086 · A4 · shipped · PR #33 merged (3a65ed2) + built & deployed to prod (hawkamah.web.app, 72 files); Puck autoplay-block fix + non-interrupting alarm + fallback notice live. AC1 (Puck by ear) ⏳ verify in prod.
 - 16:15 UTC · s-0628-1514-f086 · B2 · claim · multi-monitor/extended-display detection — new multiple_displays signal in proctorCore + emit via proctorService + pre-test gate; branch item/B2-multimonitor (core layer, independent of in-flight B1)
 - 16:31 UTC · s-0628-1514-f086 · B2 · pr-open · PR #35 — multiple_displays signal + displayDetection.ts (screen.isExtended, graceful null) + debounced proctorService emit + onboarding warn-and-flag; tsc clean, 103/103 tests, adversarial review SHIP. ACs 3/4 (AC1 ⏳ live two-monitor verify)
+- 16:37 UTC · s-0628-1514-f086 · B2 · shipped · PR #35 merged (c426878) + built & deployed to prod (hawkamah.web.app); multi-monitor detection live. AC1 ⏳ verify on a real two-monitor machine.
+- 16:37 UTC · s-0628-1514-f086 · A5 · note · hotfixing a confirmed prod double-submit-on-skip race (answer+confirm-skip within 400ms → duplicate attempt/saveUnifiedResult). Branch item/A5-skip-doublefinish-fix; not re-opening A5, additive guard only.
