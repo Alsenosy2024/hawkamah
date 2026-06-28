@@ -97,7 +97,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | ⬜ TODO | — | — | — |
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
 | A4 | Narration uses robotic fallback voice, not Puck | P1 | M | ⬜ TODO | — | — | — |
-| A5 | Skip question (one-way, no return) | P1 | S | 🟦 CLAIMED | s-0628-1453-525d | item/A5-skip-question | 2026-06-28 14:53 |
+| A5 | Skip question (one-way, no return) | P1 | S | 🟪 PR-OPEN | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) | 2026-06-28 15:04 |
 | A6 | Completion / exit flow polish | P2 | S | ⬜ TODO | — | — | — |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | ⬜ TODO | — | — | — |
 | B2 | Multi-monitor / extended-display detection | P1 | M | ⬜ TODO | — | — | — |
@@ -298,12 +298,12 @@ The candidate consistently hears the **Puck** voice for question narration and o
 ---
 
 ## A5 — Skip question (one-way, no return)
-**Track:** 🟦 CLAIMED · **Owner:** s-0628-1453-525d · **Branch·PR:** `item/A5-skip-question` · **Updated:** 2026-06-28 14:53 · **ACs:** 0/4
+**Track:** 🟪 PR-OPEN · **Owner:** s-0628-1453-525d · **Branch·PR:** [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · **Updated:** 2026-06-28 15:04 · **ACs:** 4/4
 **Subtasks (owner):**
-- [ ] Add `goSkipQ()` path (record current Q as unanswered, advance via `goNextQ`, never revisit)
-- [ ] Skip button on MCQ render + voice render
-- [ ] Converge timer-expiry / skip / answer on one advance path (no double-advance)
-- [ ] Confirm scoring treats skipped as unanswered/incorrect (unit test)
+- [x] Add `goSkipQ()` path (record current Q as unanswered, advance via `goNextQ`, never revisit)
+- [x] Skip button on MCQ render + voice render (shared control at card footer)
+- [x] Converge timer-expiry / skip / answer on one advance path (no double-advance)
+- [x] Confirm scoring treats skipped as unanswered/incorrect (unit test — 13/13 pass)
 
 **Type:** Feature · **Priority:** P1 · **Effort:** S
 **Recording:** *"The question I can't answer — it's right in front of me — 'skip the question', done. It doesn't come back — of course, once skipped."* (~1:55–2:08)
@@ -322,10 +322,10 @@ A visible **"تجاوز السؤال" (Skip)** control that advances past the cu
 - Optional: a small confirm ("تخطّي بدون إجابة؟") to prevent accidental skips.
 
 ### Acceptance criteria
-- [ ] Skip control visible and works on MCQ and voice questions.
-- [ ] Skipped question never reappears in the same attempt.
-- [ ] Scoring treats skipped as unanswered/incorrect; totals stay consistent.
-- [ ] Timer-expiry path and skip path converge on the same `goNextQ` behavior (no double-advance).
+- [x] Skip control visible and works on MCQ and voice questions. *(shared footer control; PR #30)*
+- [x] Skipped question never reappears in the same attempt. *(forward-only `goNextQ`)*
+- [x] Scoring treats skipped as unanswered/incorrect; totals stay consistent. *(unit-tested in `unifiedAssessmentService.test.ts`)*
+- [x] Timer-expiry path and skip path converge on the same `goNextQ` behavior (no double-advance). *(skip stops the timer, then calls `goNextQ`)*
 
 ### Files
 - `components/UnifiedAssessmentPortal.tsx` (`427–442`, question render `~1040–1070`)
@@ -499,3 +499,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 06:06 UTC · s-0628-0558-main · A3 · verify · released for live VU-meter check in a real proctored exam (camera + screen-share); anyone may claim the verification
 - 16:50 UTC · s-0628-0558-main · — · note · tracking system added to this PRD (coordination header, claims board, per-item Track lines, this log)
 - 14:53 UTC · s-0628-1453-525d · A5 · claim · skip-question control (MCQ + voice), one-way no-return; branch item/A5-skip-question
+- 15:04 UTC · s-0628-1453-525d · A5 · pr-open · PR #30 — goSkipQ + two-step confirm; tsc/build clean, 13/13 tests; ACs 4/4 (awaiting maintainer merge)
