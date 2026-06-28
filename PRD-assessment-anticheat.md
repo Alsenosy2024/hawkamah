@@ -101,7 +101,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A6 | Completion / exit flow polish | P2 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #34](https://github.com/Alsenosy2024/hawkamah/pull/34) · `e3c6045` (prod) | 2026-06-28 16:12 |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1457-c8d2 | [PR #36](https://github.com/Alsenosy2024/hawkamah/pull/36) · `7ea75fd` (prod) | 2026-06-28 21:48 |
 | B2 | Multi-monitor / extended-display detection | P1 | M | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1514-f086 | [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) · `c426878` (prod) | 2026-06-28 16:37 |
-| B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | 🟨 WIP | s-0628-1457-c8d2 | [branch](https://github.com/Alsenosy2024/hawkamah/tree/item/B3-anticheat-surfaces) `item/B3-anticheat-surfaces` | 2026-06-28 21:51 |
+| B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | 🟪 PR-OPEN | s-0628-1457-c8d2 | [PR #39](https://github.com/Alsenosy2024/hawkamah/pull/39) `item/B3-anticheat-surfaces` | 2026-06-28 21:52 |
 
 **Polite build order (not enforced):** A3 → A4 → A5 → A2 → A1 → B1 → B2 → B3 → A6.
 **Dependencies:** B3 needs **B1 SHIPPED** (B1's owner flips B3 → ⬜ TODO on merge). A3 is terminal except its ⏳ live verification — claim only the verification, never re-implement it.
