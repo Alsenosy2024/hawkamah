@@ -408,14 +408,14 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                     className={`${UI.btnGhost} !px-2.5 !py-1 text-xs`}
                     disabled={launching === `unified_${p.id}`}
                     onClick={() => launchUnifiedAssessment(p)}
-                    title={t('اختبار/تقييم موحد — رابط واحد لجميع الموظفين', 'Unified exam — one link for all employees')}
+                    title={t('تقييم الموظف وبيئة العمل معاً — رابط واحد لجميع الموظفين', 'Person + work-environment together — one link for all employees')}
                   >
-                    {launching === `unified_${p.id}` ? '…' : t('اختبار موحّد', 'Unified Exam')}
+                    {launching === `unified_${p.id}` ? '…' : t('الاثنين معاً', 'Both')}
                   </button>
                   <button
                     className={`${UI.btnGhost} !px-2.5 !py-1 text-xs`}
                     onClick={() => setResponseProjectId(responseProjectId === p.id ? null : p.id)}
-                    title={t('عرض ردود الموظفين على الاختبار الموحد', 'View employee responses')}
+                    title={t('عرض ردود الموظفين على التقييم', 'View employee responses')}
                   >
                     {t('الردود', 'Responses')}
                   </button>
@@ -497,7 +497,7 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
           <div className={`${UI.card} rounded-xl p-6 max-w-lg w-full space-y-5 shadow-lg my-4`}>
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-slate-800 dark:text-slate-100">
-                {t('إعداد الاختبار الموحد', 'Unified Assessment Setup')}
+                {t('إعداد تقييم الموظف والبيئة معاً', 'Person + Environment Setup')}
               </h4>
               <button className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors leading-none" onClick={() => setUnifiedCfg(null)}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -740,7 +740,7 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                 {launchModal.type === 'employee'
                   ? t('رابط بوابة تقييم الموظفين', 'Employee Assessment Portal Link')
                   : launchModal.type === 'unified'
-                  ? t('رابط الاختبار الموحد', 'Unified Assessment Link')
+                  ? t('رابط تقييم الموظف والبيئة معاً', 'Person + Environment Link')
                   : t('رابط استبيان البيئة', 'Environment Survey Link')}
               </h4>
               <button className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors leading-none" onClick={() => setLaunchModal(null)}>
