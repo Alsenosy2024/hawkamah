@@ -80,7 +80,7 @@ function useTimer(seconds: number, onExpire: () => void) {
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────
-type Stage = 'loading' | 'identify' | 'job_pick' | 'briefing' | 'generating' | 'exam' | 'attempt_done' | 'all_done' | 'error';
+type Stage = 'loading' | 'identify' | 'job_pick' | 'briefing' | 'onboarding' | 'generating' | 'exam' | 'attempt_done' | 'all_done' | 'error';
 
 interface ExamState {
   qIndex: number;
@@ -114,6 +114,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [voiceError, setVoiceError] = useState('');
   const [micLevel, setMicLevel]   = useState(0);   // live VU 0..1 — proves the mic is actually capturing
   const [skipConfirm, setSkipConfirm] = useState(false); // A5 — inline two-step guard for the one-way skip
+  const [onboardAck, setOnboardAck] = useState(false);   // A2 — explicit «I read & agree» gate before entry
   const [fullscreenBanner, setFullscreenBanner] = useState(false);
 
   // --- Briefing device checks (mic + camera readiness before the exam) ---
@@ -587,7 +588,21 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     setStage('briefing');
   }, [jobTitle]);
 
-  // ─── Proceed to generation (from briefing) ────────────────────────────
+  // ─── A2: move to the onboarding/rules step (from briefing) ────────────
+  // Validate the access code HERE — on the briefing screen, where the input
+  // lives — so a wrong code surfaces its error in context instead of failing
+  // silently two screens later. The onboarding gate then calls
+  // proceedToGenerate, whose own access-code check is a harmless re-validation.
+  const proceedToOnboarding = useCallback(() => {
+    if (!tok) return;
+    if (tok.accessCode && accessCode.trim() !== tok.accessCode.trim()) {
+      setAccessError('رمز الوصول غير صحيح.'); return;
+    }
+    setOnboardAck(false);
+    setStage('onboarding');
+  }, [tok, accessCode]);
+
+  // ─── Proceed to generation (from onboarding, after «أوافق وأبدأ») ──────
   const proceedToGenerate = useCallback(() => {
     if (!tok) return;
     if (tok.accessCode && accessCode.trim() !== tok.accessCode.trim()) {
@@ -874,11 +889,115 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
             <button
               className={`${NAVY.btn} hw-btn-w`}
               disabled={!ready}
-              onClick={proceedToGenerate}
+              onClick={proceedToOnboarding}
             >
-              ابدأ الاختبار
+              التالي: التعليمات
             </button>
             <button className="text-slate-400 text-xs w-full text-center hover:text-slate-600 transition-colors duration-150" onClick={() => setStage('job_pick')}>
+              رجوع
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── STAGE: onboarding (A2: rules, prohibitions & attempts) ───────────
+  if (stage === 'onboarding') {
+    const total  = tok?.questionCount ?? 0;
+    const voiceN = tok?.voiceQuestionCount ?? 0;
+    const secs   = tok?.secondsPerQuestion ?? 90;
+    const camOn  = !!tok?.cameraProctoring;
+    const maxA   = tok?.maxAttempts ?? 1;
+    const attemptsLabel = maxA === 1 ? 'محاولة واحدة فقط'
+      : maxA === 2 ? 'محاولتان فقط'
+      : `${maxA} محاولات فقط`;
+
+    // Prohibitions are kept in lock-step with the signals the proctor actually
+    // detects (services/proctorCore.ts → ProctorSignalType). DOM-enforced rules
+    // run in EVERY exam (tab_switch / window_blur / fullscreen_exit / copy);
+    // the vision+audio rules only apply when camera proctoring is on, so we only
+    // disclose them then — keeping disclosure and enforcement exactly aligned.
+    const domRules = [
+      'لا تفتح تبويبات أو نوافذ أخرى أثناء الاختبار.',            // tab_switch
+      'لا تغادر نافذة الاختبار أو تنتقل إلى تطبيق آخر.',          // window_blur
+      'ابقَ في وضع ملء الشاشة حتى نهاية الاختبار.',               // fullscreen_exit
+      'النسخ واللصق والنقر بالزر الأيمن مُعطَّلة.',                // copy_paste / contextmenu
+    ];
+    const visionRules = [
+      'ابقَ وحدك أمام الكاميرا ووجهك ظاهر طوال الوقت.',           // no_face / multiple_faces
+      'لا تستخدم الهاتف المحمول.',                               // phone_detected
+      'حافظ على النظر إلى الشاشة؛ النظر المتكرّر للخارج يُسجَّل.',  // eye_gaze_off
+      'ممنوع فتح أدوات الذكاء الاصطناعي (مثل ChatGPT أو Gemini).', // ai_tool_visible
+      'لا تفتح أي تطبيق أو مستند آخر على الشاشة المُشارَكة.',      // screen_other_content
+      'تجنّب الضوضاء أو وجود أصوات أخرى في الخلفية.',             // audio_noise
+      'أجب بتروٍّ — الإجابات السريعة جداً أو التوقّف الطويل يُسجَّل.', // rapid_answers / idle_too_long
+    ];
+    const prohibitions = [...domRules, ...(camOn ? visionRules : [])];
+
+    return (
+      <div className={`${NAVY.bg} flex items-center justify-center p-6`} dir="rtl">
+        <div className={`${NAVY.card} p-8 max-w-md w-full space-y-5`}>
+          <Header title="تعليمات الاختبار" sub={`اختبار ${jobTitle}`} />
+
+          {/* How it works */}
+          <section className="space-y-2">
+            <h3 className="text-sm font-bold text-slate-700">كيف يعمل الاختبار</h3>
+            <ul className="space-y-1.5 text-sm text-slate-600 leading-relaxed list-disc ps-5">
+              <li>عدد الأسئلة: <span className="font-semibold text-slate-800">{total}</span>{voiceN > 0 ? <>، منها <span className="font-semibold text-slate-800">{voiceN}</span> صوتية</> : null}.</li>
+              <li>لكل سؤال وقت محدّد: <span className="font-semibold text-slate-800">{secs} ثانية</span>، وعند انتهائه ينتقل تلقائياً.</li>
+              <li>الأسئلة <span className="font-semibold text-slate-800">للأمام فقط</span> — لا يمكن الرجوع لسؤال سابق.</li>
+              <li>يمكنك تجاوز أي سؤال، لكنه يُحتسب بدون إجابة.</li>
+            </ul>
+          </section>
+
+          {/* Attempts */}
+          <div className="bg-[#EEF3F5] border border-slate-200 rounded-lg p-3.5 flex items-center gap-2.5">
+            <svg className="w-5 h-5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <p className="text-sm text-slate-700">لديك <span className="font-bold text-slate-900">{attemptsLabel}</span> لإكمال هذا الاختبار.</p>
+          </div>
+
+          {/* Prohibitions — mirror the enforced proctor signals */}
+          <section className="space-y-2">
+            <h3 className="text-sm font-bold text-rose-700">الممنوعات</h3>
+            <ul className="space-y-1.5 text-sm text-slate-700 leading-relaxed">
+              {prohibitions.map(r => (
+                <li key={r} className="flex items-start gap-2">
+                  <svg className="w-4 h-4 text-rose-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636L5.636 18.364M5.636 5.636l12.728 12.728" /></svg>
+                  <span>{r}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {/* Monitoring notice (only when camera proctoring is active) */}
+          {camOn && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5 flex items-start gap-2.5">
+              <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+              <p className="text-xs text-amber-800 leading-relaxed">هذا الاختبار مُراقَب بالذكاء الاصطناعي عبر الكاميرا ومشاركة الشاشة. أي مخالفة تُسجَّل وتؤثّر في درجة النزاهة.</p>
+            </div>
+          )}
+
+          {/* Explicit acknowledgement gate */}
+          <label className="flex items-start gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={onboardAck}
+              onChange={e => setOnboardAck(e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-emerald-600 flex-shrink-0"
+            />
+            <span className="text-sm text-slate-700 leading-relaxed">قرأتُ التعليمات والممنوعات أعلاه وأوافق على الالتزام بها.</span>
+          </label>
+
+          <div className="pt-1 space-y-3">
+            <button
+              className={`${NAVY.btn} hw-btn-w`}
+              disabled={!onboardAck}
+              onClick={proceedToGenerate}
+            >
+              أوافق وأبدأ
+            </button>
+            <button className="text-slate-400 text-xs w-full text-center hover:text-slate-600 transition-colors duration-150" onClick={() => setStage('briefing')}>
               رجوع
             </button>
           </div>
