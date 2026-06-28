@@ -9,7 +9,7 @@
 // notice, the validation error, and the continue button.
 import React from 'react';
 import MonitoringConsentNotice from './MonitoringConsentNotice';
-import type { Language } from '../types';
+import type { Language, JobRole } from '../types';
 
 export interface ParticipantValues {
   name: string;
@@ -17,11 +17,8 @@ export interface ParticipantValues {
   jobTitle: string;
   department: string;
 }
-export interface ParticipantJobRole {
-  id: string;
-  title_ar: string;
-  title_en: string;
-}
+// The job-role shape is the canonical JobRole from types.ts (id is a number).
+export type ParticipantJobRole = JobRole;
 
 interface Props {
   values: ParticipantValues;

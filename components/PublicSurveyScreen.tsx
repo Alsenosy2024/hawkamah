@@ -142,7 +142,6 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
   };
 
   return (
-    <>
       <PortalShell
         language={tokenData?.language}
         companyName={tokenData?.companyName}
@@ -197,19 +196,19 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
             />
           </div>
         )}
-      </PortalShell>
 
-      {/* B3 — live proctoring furniture (camera tile + screen preview + status chip + alert banner) */}
-      {(state === 'survey' || state === 'submitting') && (
-        <ProctorOverlay
-          proctor={proctor}
-          videoRef={videoRef}
-          screenPreviewRef={screenPreviewRef}
-          camError={camError}
-          language={ar ? 'ar' : 'en'}
-        />
-      )}
-    </>
+        {/* B3 — live proctoring furniture (camera tile + screen preview + status chip + alert banner).
+            Rendered inside PortalShell so it inherits the RTL/LTR direction (matches EmployeePortalScreen). */}
+        {(state === 'survey' || state === 'submitting') && (
+          <ProctorOverlay
+            proctor={proctor}
+            videoRef={videoRef}
+            screenPreviewRef={screenPreviewRef}
+            camError={camError}
+            language={ar ? 'ar' : 'en'}
+          />
+        )}
+      </PortalShell>
   );
 };
 

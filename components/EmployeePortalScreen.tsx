@@ -541,7 +541,7 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
           `تم تسجيل إجاباتك بنجاح يا ${empName}. سيتم مراجعة نتائج التقييم من قِبل الفريق المختص وإعداد تقرير شامل.`,
           `Your responses have been recorded successfully, ${empName}. The assessment results will be reviewed by the relevant team and a comprehensive report will be prepared.`,
         )}
-        footnote={`${companyName} · ${new Date().toLocaleDateString(ar ? 'ar-SA' : 'en-US')}`}
+        footnote={t('التقييم مكتمل — يمكنك إغلاق هذه الصفحة.', 'Assessment complete — you may close this page.')}
         language={language}
       />
     </PortalShell>
