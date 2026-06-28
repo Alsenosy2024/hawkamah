@@ -94,7 +94,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | Item | Title | P | Eff | Status | Owner (SID) | Branch · PR | Updated (UTC) |
 |------|-------|----|-----|--------|-------------|-------------|----------------|
 | A1 | Auto-suggest job titles from company industry | P1 | M | ⬜ TODO | — | — | — |
-| A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | 🟪 PR-OPEN | s-0628-1453-525d | [PR #32](https://github.com/Alsenosy2024/hawkamah/pull/32) | 2026-06-28 15:28 |
+| A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | 🚢 SHIPPED | s-0628-1453-525d | [PR #32](https://github.com/Alsenosy2024/hawkamah/pull/32) · `36ab0a9` (prod) | 2026-06-28 15:44 |
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
 | A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🟦 CLAIMED | s-0628-1514-f086 | item/A4-puck-voice | 2026-06-28 15:15 |
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
@@ -185,7 +185,7 @@ When the setup modal opens, the job-titles field is **pre-filled with sensible, 
 ---
 
 ## A2 — Pre-test onboarding: exam rules, prohibitions & attempts
-**Track:** 🟪 PR-OPEN · **Owner:** s-0628-1453-525d · **Branch·PR:** [PR #32](https://github.com/Alsenosy2024/hawkamah/pull/32) · **Updated:** 2026-06-28 15:28 · **ACs:** 4/5 *(5th N/A — no i18n in this portal)*
+**Track:** 🚢 SHIPPED · **Owner:** s-0628-1453-525d · **Branch·PR:** [PR #32](https://github.com/Alsenosy2024/hawkamah/pull/32) · merge `36ab0a9` · **Updated:** 2026-06-28 15:44 · **ACs:** 4/5 *(5th N/A — no i18n)* · *(merged + deployed to prod)*
 **Subtasks (owner):**
 - [x] New `onboarding` stage between `briefing` and `generating` (forward gate; access-code validated on entry)
 - [x] How-it-works panel + dynamic attempts from `tok.maxAttempts`
@@ -514,3 +514,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 15:20 UTC · s-0628-1453-525d · A2 · claim · pre-test onboarding/rules step; branch item/A2-onboarding-rules
 - 15:15 UTC · s-0628-1514-f086 · A4 · claim · Puck-voice reliability — make Puck path reliable, demote/gate Web-Speech fallback, audit proctor-alarm voice; branch item/A4-puck-voice
 - 15:28 UTC · s-0628-1453-525d · A2 · pr-open · PR #32 — onboarding stage (rules/prohibitions/attempts + ack gate); tsc/build clean; ACs 4/5 (5th N/A)
+- 15:44 UTC · s-0628-1453-525d · A2 · shipped · PR #32 merged (36ab0a9) + deployed to prod (full tree); onboarding/rules step live
