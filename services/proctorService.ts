@@ -12,6 +12,7 @@
 import { GoogleGenAI, Modality } from '@google/genai';
 import { MODELS } from '../constants/models';
 import { speak as ttsSpeak, isSpeaking } from './ttsService';
+import { isExtendedDisplayNow, multiDisplayTransition } from './displayDetection';
 import {
   initProctorState,
   buildProctorSystemInstruction,
@@ -203,6 +204,9 @@ export function createLiveProctor(opts: LiveProctorOptions): LiveProctorHandle {
   let pumpTimer: ReturnType<typeof setInterval> | null = null;
   let stopped = false;
   let transcriptBuf = '';         // accumulates the model's spoken-verdict transcript per turn
+  let displayTimer: ReturnType<typeof setInterval> | null = null;   // B2 — multi-monitor poll
+  let multiDisplayActive = false; // B2 — debounce flag: a second display is currently flagged
+  const DISPLAY_CHECK_MS = 5000;  // B2 — re-check the display layout (cheap, no permission)
 
   // ── Internal helpers ────────────────────────────────────────────────────────
 
@@ -244,10 +248,35 @@ export function createLiveProctor(opts: LiveProctorOptions): LiveProctorHandle {
     }
   }
 
+  // ── B2: multi-monitor watch ──────────────────────────────────────────────────
+  // Client-side (screen.isExtended) so it works even when the Live WS is
+  // unavailable. Debounced via multiDisplayTransition: emits the multiple_displays
+  // alert once per "extended desktop" episode, re-arms when the second screen is
+  // unplugged. Unsupported browsers report null → no emit (no false positive).
+  function checkDisplays(): void {
+    const { active, emit } = multiDisplayTransition(multiDisplayActive, isExtendedDisplayNow());
+    multiDisplayActive = active;
+    if (emit) pushEvent('multiple_displays', 'تم رصد شاشة عرض ثانية (سطح مكتب ممتد). يُرجى فصل الشاشة الثانية.');
+  }
+
+  function startDisplayMonitor(): void {
+    if (displayTimer !== null) return;
+    checkDisplays();   // immediate check at start
+    displayTimer = setInterval(() => { if (!stopped) checkDisplays(); }, DISPLAY_CHECK_MS);
+  }
+
+  function stopDisplayMonitor(): void {
+    if (displayTimer !== null) {
+      clearInterval(displayTimer);
+      displayTimer = null;
+    }
+  }
+
   // ── Public handle ────────────────────────────────────────────────────────────
 
   async function start(): Promise<void> {
     if (stopped) return;
+    startDisplayMonitor();   // B2 — watch for a second display (independent of the Live WS)
     try {
       opts.onStatus('connecting');
 
@@ -334,6 +363,7 @@ export function createLiveProctor(opts: LiveProctorOptions): LiveProctorHandle {
   function stop(): ProctorSummary {
     stopped = true;
     stopPump();
+    stopDisplayMonitor();
     try { if (session) { session.close(); session = null; } } catch { /* noop */ }
     opts.onStatus('closed');
     return summarizeProctor(state);
