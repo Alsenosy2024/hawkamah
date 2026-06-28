@@ -11,6 +11,7 @@ import { generatePaperQuestions } from '../services/paperAssessmentService';
 import { createLiveProctor, speakProctorAlarm, type LiveProctorHandle } from '../services/proctorService';
 import { type ProctorSummary } from '../services/proctorCore';
 import { speak as ttsSpeak, cancelSpeech, prefetch as ttsPrefetch, unlockAudio, setVoiceFallbackHandler } from '../services/ttsService';
+import { isExtendedDisplayNow } from '../services/displayDetection';
 import { transcribeAudio } from '../services/geminiService';
 import { MicRecorder, MicRecordError } from '../lib/audioRecorder';
 import type { UnifiedAssessmentToken, UnifiedAssessmentResult, UnifiedAttempt, PaperQuestion } from '../types';
@@ -123,6 +124,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [micChecked, setMicChecked] = useState(false);
   const [camChecked, setCamChecked] = useState(false);
   const [deviceMsg, setDeviceMsg]   = useState('');
+  const [extendedDisplay, setExtendedDisplay] = useState(false);   // B2 — a second monitor is detected at the pre-test gate
 
   // --- Live AI proctoring (Gemini Live: camera + screen → cheating signals) ---
   const [proctorStatus, setProctorStatus]       = useState<'off' | 'connecting' | 'live' | 'unavailable' | 'closed'>('off');
@@ -488,6 +490,18 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   // across questions. This also neutralises an MCQ answer→skip double-tap: the
   // auto-advance changes qIndex, which closes the confirm before it can fire.
   useEffect(() => { setSkipConfirm(false); setVoiceFallback(false); }, [examState?.qIndex]);
+
+  // B2 — while the candidate is on the pre-test onboarding gate, poll the display
+  // layout so a second monitor is warned about before they start (and the warning
+  // clears live if they disconnect it). Graceful: isExtendedDisplayNow() returns
+  // null on unsupported browsers → never a false positive.
+  useEffect(() => {
+    if (stage !== 'onboarding') return;
+    const check = () => setExtendedDisplay(isExtendedDisplayNow() === true);
+    check();
+    const id = window.setInterval(check, 3000);
+    return () => window.clearInterval(id);
+  }, [stage]);
 
   // A4 — show a visible notice when narration falls back to the robotic browser
   // voice (neural Puck unavailable) instead of silently swapping it in. The handler
@@ -1004,6 +1018,15 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5 flex items-start gap-2.5">
               <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
               <p className="text-xs text-amber-800 leading-relaxed">هذا الاختبار مُراقَب بالذكاء الاصطناعي عبر الكاميرا ومشاركة الشاشة. أي مخالفة تُسجَّل وتؤثّر في درجة النزاهة.</p>
+            </div>
+          )}
+
+          {/* B2 — pre-test multi-monitor warning. Warn + flag (not a hard block):
+              if they proceed, the proctor records a `multiple_displays` violation. */}
+          {extendedDisplay && (
+            <div className="flex items-start gap-2 text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2.5 text-xs leading-relaxed" role="alert">
+              <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+              <span>تم رصد شاشة عرض ثانية (سطح مكتب ممتد). يُرجى فصل الشاشة الثانية قبل البدء — وإلا سيُسجَّل ذلك كمخالفة أثناء الاختبار.</span>
             </div>
           )}
 

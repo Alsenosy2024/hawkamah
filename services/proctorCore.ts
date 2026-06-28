@@ -24,7 +24,8 @@ export type ProctorSignalType =
   | 'rapid_answers'
   | 'idle_too_long'
   | 'ai_tool_visible'        // ChatGPT/Gemini/Claude/Copilot or any AI chat open on the shared screen
-  | 'screen_other_content';  // any other app/tab/doc unrelated to the interview on the shared screen
+  | 'screen_other_content'   // any other app/tab/doc unrelated to the interview on the shared screen
+  | 'multiple_displays';     // extended/multi-monitor desktop (client-detected via screen.isExtended) — B2
 
 /** All valid signal types as a runtime set for validation. */
 const VALID_SIGNAL_TYPES = new Set<ProctorSignalType>([
@@ -41,6 +42,7 @@ const VALID_SIGNAL_TYPES = new Set<ProctorSignalType>([
   'idle_too_long',
   'ai_tool_visible',
   'screen_other_content',
+  'multiple_displays',
 ]);
 
 /** All valid severity values as a runtime set for validation. */
@@ -122,6 +124,7 @@ export const DEFAULT_SEVERITY: Record<ProctorSignalType, ProctorSeverity> = {
   idle_too_long:   'low',
   ai_tool_visible:      'critical',  // an AI assistant open on screen = serious cheating
   screen_other_content: 'high',
+  multiple_displays:    'high',      // a second monitor is an easy place to hide notes/help — B2
 };
 
 // ─── Functions ────────────────────────────────────────────────────────────────
