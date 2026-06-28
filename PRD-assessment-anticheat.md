@@ -100,7 +100,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
 | A6 | Completion / exit flow polish | P2 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #34](https://github.com/Alsenosy2024/hawkamah/pull/34) · `e3c6045` (prod) | 2026-06-28 16:12 |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | 🟦 CLAIMED | s-0628-1457-c8d2 | `item/B1-useproctor-hook` | 2026-06-28 18:28 |
-| B2 | Multi-monitor / extended-display detection | P1 | M | 🟦 CLAIMED | s-0628-1514-f086 | item/B2-multimonitor | 2026-06-28 16:15 |
+| B2 | Multi-monitor / extended-display detection | P1 | M | 🟪 PR-OPEN | s-0628-1514-f086 | [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) | 2026-06-28 16:31 |
 | B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | ⛔ BLOCKED · needs B1 🚢 | — | — | — |
 
 **Polite build order (not enforced):** A3 → A4 → A5 → A2 → A1 → B1 → B2 → B3 → A6.
@@ -412,12 +412,12 @@ One reusable **`useProctor()` hook** (and optional `<ProctorProvider>` / `<Proct
 ---
 
 ## B2 — Multi-monitor / extended-display detection
-**Track:** 🟦 CLAIMED · **Owner:** s-0628-1514-f086 · **Branch·PR:** `item/B2-multimonitor` · **Updated:** 2026-06-28 16:15 · **ACs:** 0/4
+**Track:** 🟪 PR-OPEN · **Owner:** s-0628-1514-f086 · **Branch·PR:** [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) · **Updated:** 2026-06-28 16:31 · **ACs:** 3/4
 **Subtasks (owner):**
-- [ ] Add `multiple_displays` signal to `proctorCore` (ProctorSignalType + SEVERITY_WEIGHT high + eventAlert) — TDD against the existing proctorCore suite
-- [ ] Detection helper: `screen.isExtended` (+ `getScreenDetails()` count) with graceful degradation on unsupported browsers
-- [ ] Emit `multiple_displays` from the proctor start path + a periodic re-check (in `proctorService` — the core layer B1 leaves unchanged, so no collision with the in-flight B1 hook refactor)
-- [ ] Pre-test gate: warn "افصل الشاشة الثانية قبل البدء" before starting, re-check, and record the alert if they proceed
+- [x] Add `multiple_displays` signal to `proctorCore` (ProctorSignalType + DEFAULT_SEVERITY high + eventAlert) — TDD, flows into integrity + ProctorSummary
+- [x] Detection helper `services/displayDetection.ts`: `screen.isExtended` (+ best-effort `getScreenDetails()` count) with graceful degradation (null) on unsupported browsers
+- [x] Emit `multiple_displays` from `proctorService.createLiveProctor` (start + 5 s poll, debounced once-per-episode) — core layer, no collision with in-flight B1
+- [x] Pre-test gate: onboarding warning when an extended desktop is detected — warn + flag (Q5), records the alert if they proceed
 
 **Type:** Feature · **Priority:** P1 · **Effort:** M
 **Recording:** *"I have two screens — naturally I'd be glancing around — there must be a solution for the two-screen case."* (~1:00–1:08 & 1:52–1:58)
@@ -435,10 +435,10 @@ Detect when the candidate is on an **extended/multi-monitor** setup and treat it
 - Graceful degradation where the API is unsupported (don't hard-block; the Gemini Live vision pass may still catch duplicated content visually).
 
 ### Acceptance criteria
-- [ ] On an extended-display machine, the candidate is warned before starting and a `multiple_displays` alert is recorded if they proceed.
-- [ ] Single-display machines see no false positive.
-- [ ] Unsupported browsers degrade gracefully (no crash, no hard lock).
-- [ ] New signal flows into the integrity score + `ProctorSummary` like other signals.
+- [ ] On an extended-display machine, the candidate is warned before starting and a `multiple_displays` alert is recorded if they proceed. *(logic implemented + unit-tested; ⏳ wants a live two-monitor runtime check, like A3/A4)*
+- [x] Single-display machines see no false positive. *(`false` → no emit / no warning; tested)*
+- [x] Unsupported browsers degrade gracefully (no crash, no hard lock). *(`null` → inert; tested)*
+- [x] New signal flows into the integrity score + `ProctorSummary` like other signals. *(eventAlert→applyAlert→summary; tested)*
 
 ### Files
 - `services/proctorCore.ts` (signal type, weight, alert)
@@ -532,3 +532,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 18:28 UTC · s-0628-1457-c8d2 · B1 · claim · extract shared useProctor hook from the 3 portals (Unified/Online/Verbal); branch item/B1-useproctor-hook (isolated worktree). Unblocks B3 on merge.
 - 16:10 UTC · s-0628-1514-f086 · A4 · shipped · PR #33 merged (3a65ed2) + built & deployed to prod (hawkamah.web.app, 72 files); Puck autoplay-block fix + non-interrupting alarm + fallback notice live. AC1 (Puck by ear) ⏳ verify in prod.
 - 16:15 UTC · s-0628-1514-f086 · B2 · claim · multi-monitor/extended-display detection — new multiple_displays signal in proctorCore + emit via proctorService + pre-test gate; branch item/B2-multimonitor (core layer, independent of in-flight B1)
+- 16:31 UTC · s-0628-1514-f086 · B2 · pr-open · PR #35 — multiple_displays signal + displayDetection.ts (screen.isExtended, graceful null) + debounced proctorService emit + onboarding warn-and-flag; tsc clean, 103/103 tests, adversarial review SHIP. ACs 3/4 (AC1 ⏳ live two-monitor verify)
