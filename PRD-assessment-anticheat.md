@@ -96,7 +96,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A1 | Auto-suggest job titles from company industry | P1 | M | ⬜ TODO | — | — | — |
 | A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | ⬜ TODO | — | — | — |
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
-| A4 | Narration uses robotic fallback voice, not Puck | P1 | M | ⬜ TODO | — | — | — |
+| A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🟦 CLAIMED | s-0628-1514-f086 | item/A4-puck-voice | 2026-06-28 15:15 |
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
 | A6 | Completion / exit flow polish | P2 | S | ⬜ TODO | — | — | — |
 | B1 | Extract shared `useProctor` hook + provider | P1 | L | ⬜ TODO | — | — | — |
@@ -264,7 +264,12 @@ Voice answers record reliably **during a live proctored exam**, with the capture
 ---
 
 ## A4 — Narration uses the robotic fallback voice instead of Puck
-**Track:** ⬜ TODO · **Owner:** — · **Branch·PR:** `item/A4-puck-voice` · **Updated:** — · **ACs:** 0/3  ·  *(tick this item's `### Acceptance criteria` boxes in place as they land; owner adds subtasks here on claim)*
+**Track:** 🟦 CLAIMED · **Owner:** s-0628-1514-f086 · **Branch·PR:** `item/A4-puck-voice` · **Updated:** 2026-06-28 15:15 · **ACs:** 0/3
+**Subtasks (owner):**
+- [ ] Diagnose why the Puck path (dedicated TTS `3.1-flash-tts` → LIVE native-audio) falls through to Web-Speech (timeouts too tight? auth/cold-start?)
+- [ ] Make the Puck path reliable + extend `ttsPrefetch` caching of upcoming question audio
+- [ ] Demote/gate the Web-Speech fallback behind a visible "voice unavailable" notice (no silent jarring swap)
+- [ ] Audit `speakProctorAlarm()` voice + 12 s throttle so the alarm never clashes with question narration
 
 **Type:** Bug · **Priority:** P1 · **Effort:** M
 **Recording:** *"When it runs, there's 'Obeid' the dumb voice — stupid, interrupting… For onboarding there's 'Puck' — Puck in Gemini sounds nice and good, this is very important — the voice that comes out."* (~1:33–1:52)
@@ -501,3 +506,4 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 14:53 UTC · s-0628-1453-525d · A5 · claim · skip-question control (MCQ + voice), one-way no-return; branch item/A5-skip-question
 - 15:04 UTC · s-0628-1453-525d · A5 · pr-open · PR #30 — goSkipQ + two-step confirm; tsc/build clean, 13/13 tests; ACs 4/4 (awaiting maintainer merge)
 - 15:09 UTC · s-0628-1453-525d · A5 · shipped · PR #30 merged (3c7e580) + deployed to prod (hawkamah.web.app); skip control live
+- 15:15 UTC · s-0628-1514-f086 · A4 · claim · Puck-voice reliability — make Puck path reliable, demote/gate Web-Speech fallback, audit proctor-alarm voice; branch item/A4-puck-voice
