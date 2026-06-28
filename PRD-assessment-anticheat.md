@@ -94,7 +94,7 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | Item | Title | P | Eff | Status | Owner (SID) | Branch · PR | Updated (UTC) |
 |------|-------|----|-----|--------|-------------|-------------|----------------|
 | A1 | Auto-suggest job titles from company industry | P1 | M | ⬜ TODO | — | — | — |
-| A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | ⬜ TODO | — | — | — |
+| A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | 🟦 CLAIMED | s-0628-1453-525d | item/A2-onboarding-rules | 2026-06-28 15:20 |
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
 | A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🟦 CLAIMED | s-0628-1514-f086 | item/A4-puck-voice | 2026-06-28 15:15 |
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
@@ -185,7 +185,12 @@ When the setup modal opens, the job-titles field is **pre-filled with sensible, 
 ---
 
 ## A2 — Pre-test onboarding: exam rules, prohibitions & attempts
-**Track:** ⬜ TODO · **Owner:** — · **Branch·PR:** `item/A2-onboarding-rules` · **Updated:** — · **ACs:** 0/5  ·  *(tick this item's `### Acceptance criteria` boxes in place as they land; owner adds subtasks here on claim)*
+**Track:** 🟦 CLAIMED · **Owner:** s-0628-1453-525d · **Branch·PR:** `item/A2-onboarding-rules` · **Updated:** 2026-06-28 15:20 · **ACs:** 0/5
+**Subtasks (owner):**
+- [ ] New `onboarding` stage between `briefing` and `generating` (forward gate; access-code validated on entry)
+- [ ] How-it-works panel + dynamic attempts from `tok.maxAttempts`
+- [ ] Prohibitions: always-on DOM group (tab/blur/fullscreen/copy) + camera-gated vision group — mirror `proctorCore` signals
+- [ ] Monitoring notice + explicit acknowledgement checkbox gating «أوافق وأبدأ»
 
 **Type:** Feature · **Priority:** P1 · **Effort:** M
 **Recording:** *"It should tell him: these are the instructions — the exam works like this, you have only two attempts. Then: do this, you'll take that, note — forbidden X, forbidden Y, forbidden Z — so onboarding starts."* (~1:10–1:32)
@@ -506,4 +511,5 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 14:53 UTC · s-0628-1453-525d · A5 · claim · skip-question control (MCQ + voice), one-way no-return; branch item/A5-skip-question
 - 15:04 UTC · s-0628-1453-525d · A5 · pr-open · PR #30 — goSkipQ + two-step confirm; tsc/build clean, 13/13 tests; ACs 4/4 (awaiting maintainer merge)
 - 15:09 UTC · s-0628-1453-525d · A5 · shipped · PR #30 merged (3c7e580) + deployed to prod (hawkamah.web.app); skip control live
+- 15:20 UTC · s-0628-1453-525d · A2 · claim · pre-test onboarding/rules step; branch item/A2-onboarding-rules
 - 15:15 UTC · s-0628-1514-f086 · A4 · claim · Puck-voice reliability — make Puck path reliable, demote/gate Web-Speech fallback, audit proctor-alarm voice; branch item/A4-puck-voice
