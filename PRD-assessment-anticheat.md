@@ -93,13 +93,13 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 
 | Item | Title | P | Eff | Status | Owner (SID) | Branch · PR | Updated (UTC) |
 |------|-------|----|-----|--------|-------------|-------------|----------------|
-| A1 | Auto-suggest job titles from company industry | P1 | M | ⬜ TODO | — | — | — |
+| A1 | Auto-suggest job titles from company industry | P1 | M | 🚢 SHIPPED | s-0628-1457-c8d2 | [PR #31](https://github.com/Alsenosy2024/hawkamah/pull/31) · `6ef8c27` (prod) | 2026-06-28 18:28 |
 | A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | 🚢 SHIPPED | s-0628-1453-525d | [PR #32](https://github.com/Alsenosy2024/hawkamah/pull/32) · `36ab0a9` (prod) | 2026-06-28 15:44 |
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
 | A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🟪 PR-OPEN | s-0628-1514-f086 | [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) | 2026-06-28 15:48 |
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
 | A6 | Completion / exit flow polish | P2 | S | 🟦 CLAIMED | s-0628-1453-525d | item/A6-exit-flow | 2026-06-28 16:04 |
-| B1 | Extract shared `useProctor` hook + provider | P1 | L | ⬜ TODO | — | — | — |
+| B1 | Extract shared `useProctor` hook + provider | P1 | L | 🟦 CLAIMED | s-0628-1457-c8d2 | `item/B1-useproctor-hook` | 2026-06-28 18:28 |
 | B2 | Multi-monitor / extended-display detection | P1 | M | ⬜ TODO | — | — | — |
 | B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | ⛔ BLOCKED · needs B1 🚢 | — | — | — |
 
@@ -521,3 +521,5 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 15:44 UTC · s-0628-1453-525d · A2 · shipped · PR #32 merged (36ab0a9) + deployed to prod (full tree); onboarding/rules step live
 - 16:04 UTC · s-0628-1453-525d · A6 · claim · completion/exit-flow polish; branch item/A6-exit-flow
 - 15:48 UTC · s-0628-1514-f086 · A4 · pr-open · PR #33 — unlockAudio on start gesture (Puck autoplay-block fix) + proctor-alarm defers through narration incl. gen window + labelled voice-fallback notice; tsc clean, 77/77 tests, adversarial review (2 real bugs caught+fixed); ACs 2/3 (AC1 = by-ear verify)
+- 18:28 UTC · s-0628-1457-c8d2 · A1 · shipped · PR #31 merged to main (6ef8c27); final reviewed version already live in prod (verified via live bundle: fixed titles present, 0 originals). Gate 1 (lint 0 / 83 tests / build ✓) + Gate 2 (3 reviewers all-SHIP).
+- 18:28 UTC · s-0628-1457-c8d2 · B1 · claim · extract shared useProctor hook from the 3 portals (Unified/Online/Verbal); branch item/B1-useproctor-hook (isolated worktree). Unblocks B3 on merge.
