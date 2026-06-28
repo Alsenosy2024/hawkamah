@@ -273,10 +273,22 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Candidate-facing token portals (?emp / ?s / ?assess / ?paper / ?online / ?r) only
+  // need their OWN single token document — they must never bulk-read the governance
+  // `documents` / `settings` / `assessments` collections on load. That read, amplified
+  // across every candidate who opens a link, is a primary Firestore daily-read-quota
+  // drain (and once the project-wide free quota is exhausted, even the candidate's own
+  // 1-doc token lookup fails → "فشل التحقق من الرابط"). Gate central loading off these views.
+  const isPublicTokenView = useMemo(() => {
+    const p = new URLSearchParams(window.location.search);
+    return ['emp', 's', 'assess', 'paper', 'online', 'r'].some(k => !!p.get(k));
+  }, []);
+
   // Trigger loading centrally immediately on boot
   useEffect(() => {
+    if (isPublicTokenView) return;   // candidate token portals don't need central data
     loadCentralData();
-  }, [loadCentralData]);
+  }, [loadCentralData, isPublicTokenView]);
 
   // Monitor Authentication and Sync centrally on change
   useEffect(() => {
@@ -290,9 +302,10 @@ const App: React.FC = () => {
         };
         if (alive) setUser(u);
         // These awaits can resolve after unmount/logout; gate the chain so we don't
-        // setState late on a torn-down tree.
-        if (alive) await loadCentralData();
-        if (alive) await loadAllAssessments();
+        // setState late on a torn-down tree. Also skip the bulk central reads entirely
+        // when viewing a candidate token portal (no central data is used there).
+        if (alive && !isPublicTokenView) await loadCentralData();
+        if (alive && !isPublicTokenView) await loadAllAssessments();
       } else {
         if (alive) setUser(null);
         // Do NOT overwrite dynamic branding settings with static arrays on signout!
@@ -300,7 +313,7 @@ const App: React.FC = () => {
       }
     });
     return () => { alive = false; unsubscribe(); };
-  }, [loadCentralData, loadAllAssessments]);
+  }, [loadCentralData, loadAllAssessments, isPublicTokenView]);
 
   // Load Assessments automatically whenever we toggle Admin panel
   useEffect(() => {
