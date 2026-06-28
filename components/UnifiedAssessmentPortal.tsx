@@ -10,6 +10,7 @@ import { getUnifiedToken, saveUnifiedResult, scoreAttempt } from '../services/un
 import { generatePaperQuestions } from '../services/paperAssessmentService';
 import { useProctor } from '../hooks/useProctor';
 import { speak as ttsSpeak, cancelSpeech, prefetch as ttsPrefetch, unlockAudio, setVoiceFallbackHandler } from '../services/ttsService';
+import { isExtendedDisplayNow } from '../services/displayDetection';
 import { transcribeAudio } from '../services/geminiService';
 import { MicRecorder, MicRecordError } from '../lib/audioRecorder';
 import type { UnifiedAssessmentToken, UnifiedAssessmentResult, UnifiedAttempt, PaperQuestion } from '../types';
@@ -122,6 +123,7 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [micChecked, setMicChecked] = useState(false);
   const [camChecked, setCamChecked] = useState(false);
   const [deviceMsg, setDeviceMsg]   = useState('');
+  const [extendedDisplay, setExtendedDisplay] = useState(false);   // B2 — a second monitor is detected at the pre-test gate
 
   const videoRef    = useRef<HTMLVideoElement>(null);
   const streamRef   = useRef<MediaStream | null>(null);
@@ -137,6 +139,8 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   // screen-share preview tile stays portal-owned.
   const proctor = useProctor({ language: 'ar', getQuestion: () => examRef.current?.qIndex ?? 0, intervalMs: 4000 });
   const screenPreviewRef  = useRef<HTMLVideoElement>(null);   // VISIBLE screen-share preview tile
+  const finishingRef      = useRef(false);                    // guard: finalize an attempt only once (A5 double-submit fix)
+  const advanceTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);  // pending answer→advance timeout, cancellable on skip
 
   // ─── Load token ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -221,6 +225,9 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
 
   // ─── Cancel attempt ───────────────────────────────────────────────────
   const handleCancelAttempt = useCallback(async (reason = '') => {
+    if (finishingRef.current) return;   // A5 — unify finalize: cancel OR finish saves exactly once per attempt
+    finishingRef.current = true;
+    if (advanceTimerRef.current) { clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
     cancelSpeech();
     micRef.current?.abort(); micRef.current = null;
     stopCamera();
@@ -261,6 +268,8 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
 
   // ─── Finish attempt ───────────────────────────────────────────────────
   const handleFinishAttempt = useCallback(async (es: ExamState) => {
+    if (finishingRef.current) return;   // A5 — a 400ms answer↔skip race must not finalize/save the attempt twice
+    finishingRef.current = true;
     cancelSpeech();
     micRef.current?.abort(); micRef.current = null;
     stopCamera();
@@ -398,14 +407,18 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     const es = examRef.current;
     if (!es) return;
     stopTimer();
+    setSkipConfirm(false);   // A5 — close any open skip-confirm so it can't race this answer's advance
     const next = { ...es, answers: { ...es.answers, [es.qIndex]: opt } };
     examRef.current = next;
     setExamState(next);
-    if (next.qIndex < questions.length - 1) {
-      setTimeout(() => goNextQ(next), 400);
-    } else {
-      setTimeout(() => handleFinishAttempt(next), 400);
-    }
+    // A5 — capture the deferred advance so a skip (or a second answer) can cancel it;
+    // an uncancelled timeout was the double-advance / double-finish bug.
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    advanceTimerRef.current = setTimeout(() => {
+      advanceTimerRef.current = null;
+      if (next.qIndex < questions.length - 1) goNextQ(next);
+      else handleFinishAttempt(next);
+    }, 400);
   }, [stopTimer, goNextQ, handleFinishAttempt, questions]);
 
   // A5 — Skip the current question. One-way: records NO answer, so the question
@@ -418,6 +431,8 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const goSkipQ = useCallback(() => {
     const es = examRef.current;
     if (!es) return;
+    // A5 — cancel a pending answer→advance timeout so skip can't double-advance / double-finish.
+    if (advanceTimerRef.current) { clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
     stopTimer();
     if (micRef.current) { micRef.current.abort(); micRef.current = null; setMicLevel(0); }
     setVoiceError('');
@@ -429,6 +444,23 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   // across questions. This also neutralises an MCQ answer→skip double-tap: the
   // auto-advance changes qIndex, which closes the confirm before it can fire.
   useEffect(() => { setSkipConfirm(false); setVoiceFallback(false); }, [examState?.qIndex]);
+
+  // A5 — re-arm the finalize guard each time a fresh attempt's exam begins (a retry
+  // re-enters the 'exam' stage), and clear any pending answer-advance timer on unmount.
+  useEffect(() => { if (stage === 'exam') finishingRef.current = false; }, [stage]);
+  useEffect(() => () => { if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current); }, []);
+
+  // B2 — while the candidate is on the pre-test onboarding gate, poll the display
+  // layout so a second monitor is warned about before they start (and the warning
+  // clears live if they disconnect it). Graceful: isExtendedDisplayNow() returns
+  // null on unsupported browsers → never a false positive.
+  useEffect(() => {
+    if (stage !== 'onboarding') return;
+    const check = () => setExtendedDisplay(isExtendedDisplayNow() === true);
+    check();
+    const id = window.setInterval(check, 3000);
+    return () => window.clearInterval(id);
+  }, [stage]);
 
   // A4 — show a visible notice when narration falls back to the robotic browser
   // voice (neural Puck unavailable) instead of silently swapping it in. The handler
@@ -938,6 +970,15 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3.5 flex items-start gap-2.5">
               <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
               <p className="text-xs text-amber-800 leading-relaxed">هذا الاختبار مُراقَب بالذكاء الاصطناعي عبر الكاميرا ومشاركة الشاشة. أي مخالفة تُسجَّل وتؤثّر في درجة النزاهة.</p>
+            </div>
+          )}
+
+          {/* B2 — pre-test multi-monitor warning. Warn + flag (not a hard block):
+              if they proceed, the proctor records a `multiple_displays` violation. */}
+          {extendedDisplay && (
+            <div className="flex items-start gap-2 text-amber-800 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2.5 text-xs leading-relaxed" role="alert">
+              <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+              <span>تم رصد شاشة عرض ثانية (سطح مكتب ممتد). يُرجى فصل الشاشة الثانية قبل البدء — وإلا سيُسجَّل ذلك كمخالفة أثناء الاختبار.</span>
             </div>
           )}
 

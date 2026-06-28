@@ -96,11 +96,11 @@ Rows are in **fixed order (A1…B3) — never reorder them** (reordering = huge 
 | A1 | Auto-suggest job titles from company industry | P1 | M | 🚢 SHIPPED | s-0628-1457-c8d2 | [PR #31](https://github.com/Alsenosy2024/hawkamah/pull/31) · `6ef8c27` (prod) | 2026-06-28 18:28 |
 | A2 | Pre-test onboarding: rules, prohibitions & attempts | P1 | M | 🚢 SHIPPED | s-0628-1453-525d | [PR #32](https://github.com/Alsenosy2024/hawkamah/pull/32) · `36ab0a9` (prod) | 2026-06-28 15:44 |
 | A3 | Voice-answer recording produces empty audio | P0 | M | 🚢 SHIPPED · ⏳ VERIFY | — | `709e02a` (prod) | 2026-06-28 06:06 |
-| A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🟪 PR-OPEN | s-0628-1514-f086 | [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) | 2026-06-28 15:48 |
+| A4 | Narration uses robotic fallback voice, not Puck | P1 | M | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1514-f086 | [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) · `3a65ed2` (prod) | 2026-06-28 16:10 |
 | A5 | Skip question (one-way, no return) | P1 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #30](https://github.com/Alsenosy2024/hawkamah/pull/30) · `3c7e580` (prod) | 2026-06-28 15:09 |
-| A6 | Completion / exit flow polish | P2 | S | 🟦 CLAIMED | s-0628-1453-525d | item/A6-exit-flow | 2026-06-28 16:04 |
-| B1 | Extract shared `useProctor` hook + provider | P1 | L | 🟦 CLAIMED | s-0628-1457-c8d2 | `item/B1-useproctor-hook` | 2026-06-28 18:28 |
-| B2 | Multi-monitor / extended-display detection | P1 | M | ⬜ TODO | — | — | — |
+| A6 | Completion / exit flow polish | P2 | S | 🚢 SHIPPED | s-0628-1453-525d | [PR #34](https://github.com/Alsenosy2024/hawkamah/pull/34) · `e3c6045` (prod) | 2026-06-28 16:12 |
+| B1 | Extract shared `useProctor` hook + provider | P1 | L | 🟪 PR-OPEN | s-0628-1457-c8d2 | [PR #36](https://github.com/Alsenosy2024/hawkamah/pull/36) | 2026-06-28 19:40 |
+| B2 | Multi-monitor / extended-display detection | P1 | M | 🚢 SHIPPED · ⏳ VERIFY | s-0628-1514-f086 | [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) · `c426878` (prod) | 2026-06-28 16:37 |
 | B3 | Apply anti-cheat to all candidate-facing surfaces | P1 | L | ⛔ BLOCKED · needs B1 🚢 | — | — | — |
 
 **Polite build order (not enforced):** A3 → A4 → A5 → A2 → A1 → B1 → B2 → B3 → A6.
@@ -269,7 +269,7 @@ Voice answers record reliably **during a live proctored exam**, with the capture
 ---
 
 ## A4 — Narration uses the robotic fallback voice instead of Puck
-**Track:** 🟪 PR-OPEN · **Owner:** s-0628-1514-f086 · **Branch·PR:** [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) · **Updated:** 2026-06-28 15:48 · **ACs:** 2/3
+**Track:** 🚢 SHIPPED · ⏳ VERIFY · **Owner:** s-0628-1514-f086 · **Branch·PR:** [PR #33](https://github.com/Alsenosy2024/hawkamah/pull/33) · `3a65ed2` (prod) · **Updated:** 2026-06-28 16:10 · **ACs:** 2/3 · *(AC1 "plays in Puck, by ear" — verify live at hawkamah.web.app)*
 **Subtasks (owner):**
 - [x] Diagnose why the Puck path falls through to Web-Speech — root cause: portal never called `unlockAudio()`, so the neural blob (played ~5–8 s post-gesture) was autoplay-blocked; plus the proctor alarm's `cancelSpeech()` cut narration off
 - [x] Make the Puck path reliable — `unlockAudio()` now primed on the start/retry gestures (the real fix; existing `ttsPrefetch` retained)
@@ -344,11 +344,11 @@ A visible **"تجاوز السؤال" (Skip)** control that advances past the cu
 ---
 
 ## A6 — Completion / exit flow polish
-**Track:** 🟦 CLAIMED · **Owner:** s-0628-1453-525d · **Branch·PR:** `item/A6-exit-flow` · **Updated:** 2026-06-28 16:04 · **ACs:** 0/3
+**Track:** 🚢 SHIPPED · **Owner:** s-0628-1453-525d · **Branch·PR:** [PR #34](https://github.com/Alsenosy2024/hawkamah/pull/34) · merge `e3c6045` · **Updated:** 2026-06-28 16:12 · **ACs:** 3/3 · *(merged + deployed to prod)*
 **Subtasks (owner):**
-- [ ] `attempt_done`: distinct retry-remaining vs retry-exhausted copy
-- [ ] `all_done`: explicit «إنهاء/خروج» control that locks re-entry to the question flow
-- [ ] Deliberate transitions (not an abrupt all-at-once dump)
+- [x] `attempt_done`: distinct retry-remaining vs retry-exhausted copy
+- [x] `all_done`: explicit «إنهاء/خروج» control that locks re-entry to the question flow
+- [x] Deliberate transitions (not an abrupt all-at-once dump)
 
 **Type:** Polish · **Priority:** P2 · **Effort:** S
 **Recording:** *"There's nothing for me to exit, no 'exit', no 'thank you', no 'you can't retake the attempt' — it just throws them all at me at once, done."* (~2:08–2:25)
@@ -367,9 +367,9 @@ A clear, deliberate end-of-assessment experience: explicit **exit/close** contro
 - Smooth the stage transitions (the "بزرامية/all at once" complaint) — confirm each stage is a distinct screen with a deliberate Continue, not an instant jump.
 
 ### Acceptance criteria
-- [ ] Retry-remaining and retry-exhausted states each show distinct, correct copy.
-- [ ] A clear exit/close control exists at the end; after exit the candidate can't resume the questions.
-- [ ] Transitions read as deliberate steps, not an abrupt dump.
+- [x] Retry-remaining and retry-exhausted states each show distinct, correct copy.
+- [x] A clear exit/close control exists at the end; after exit the candidate can't resume the questions.
+- [x] Transitions read as deliberate steps, not an abrupt dump.
 
 ### Files
 - `components/UnifiedAssessmentPortal.tsx` (`1082–1173`)
@@ -412,7 +412,12 @@ One reusable **`useProctor()` hook** (and optional `<ProctorProvider>` / `<Proct
 ---
 
 ## B2 — Multi-monitor / extended-display detection
-**Track:** ⬜ TODO · **Owner:** — · **Branch·PR:** `item/B2-multimonitor` · **Updated:** — · **ACs:** 0/4  ·  *(reads best after B1+A2 but not hard-blocked; owner adds subtasks here on claim)*
+**Track:** 🚢 SHIPPED · ⏳ VERIFY · **Owner:** s-0628-1514-f086 · **Branch·PR:** [PR #35](https://github.com/Alsenosy2024/hawkamah/pull/35) · `c426878` (prod) · **Updated:** 2026-06-28 16:37 · **ACs:** 3/4 · *(AC1 — confirm on a real two-monitor machine at hawkamah.web.app)*
+**Subtasks (owner):**
+- [x] Add `multiple_displays` signal to `proctorCore` (ProctorSignalType + DEFAULT_SEVERITY high + eventAlert) — TDD, flows into integrity + ProctorSummary
+- [x] Detection helper `services/displayDetection.ts`: `screen.isExtended` (+ best-effort `getScreenDetails()` count) with graceful degradation (null) on unsupported browsers
+- [x] Emit `multiple_displays` from `proctorService.createLiveProctor` (start + 5 s poll, debounced once-per-episode) — core layer, no collision with in-flight B1
+- [x] Pre-test gate: onboarding warning when an extended desktop is detected — warn + flag (Q5), records the alert if they proceed
 
 **Type:** Feature · **Priority:** P1 · **Effort:** M
 **Recording:** *"I have two screens — naturally I'd be glancing around — there must be a solution for the two-screen case."* (~1:00–1:08 & 1:52–1:58)
@@ -430,10 +435,10 @@ Detect when the candidate is on an **extended/multi-monitor** setup and treat it
 - Graceful degradation where the API is unsupported (don't hard-block; the Gemini Live vision pass may still catch duplicated content visually).
 
 ### Acceptance criteria
-- [ ] On an extended-display machine, the candidate is warned before starting and a `multiple_displays` alert is recorded if they proceed.
-- [ ] Single-display machines see no false positive.
-- [ ] Unsupported browsers degrade gracefully (no crash, no hard lock).
-- [ ] New signal flows into the integrity score + `ProctorSummary` like other signals.
+- [ ] On an extended-display machine, the candidate is warned before starting and a `multiple_displays` alert is recorded if they proceed. *(logic implemented + unit-tested; ⏳ wants a live two-monitor runtime check, like A3/A4)*
+- [x] Single-display machines see no false positive. *(`false` → no emit / no warning; tested)*
+- [x] Unsupported browsers degrade gracefully (no crash, no hard lock). *(`null` → inert; tested)*
+- [x] New signal flows into the integrity score + `ProctorSummary` like other signals. *(eventAlert→applyAlert→summary; tested)*
 
 ### Files
 - `services/proctorCore.ts` (signal type, weight, alert)
@@ -520,6 +525,16 @@ Verbs: `claim · wip · check · pr-open · shipped · verify · park · reclaim
 - 15:28 UTC · s-0628-1453-525d · A2 · pr-open · PR #32 — onboarding stage (rules/prohibitions/attempts + ack gate); tsc/build clean; ACs 4/5 (5th N/A)
 - 15:44 UTC · s-0628-1453-525d · A2 · shipped · PR #32 merged (36ab0a9) + deployed to prod (full tree); onboarding/rules step live
 - 16:04 UTC · s-0628-1453-525d · A6 · claim · completion/exit-flow polish; branch item/A6-exit-flow
+- 16:12 UTC · s-0628-1453-525d · A6 · pr-open · PR #34 — exhausted-copy + «إنهاء وإغلاق» exit + sessionClosed lock; tsc/build clean
+- 16:12 UTC · s-0628-1453-525d · A6 · shipped · PR #34 merged (e3c6045) + deployed to prod; exit/completion polish live
 - 15:48 UTC · s-0628-1514-f086 · A4 · pr-open · PR #33 — unlockAudio on start gesture (Puck autoplay-block fix) + proctor-alarm defers through narration incl. gen window + labelled voice-fallback notice; tsc clean, 77/77 tests, adversarial review (2 real bugs caught+fixed); ACs 2/3 (AC1 = by-ear verify)
 - 18:28 UTC · s-0628-1457-c8d2 · A1 · shipped · PR #31 merged to main (6ef8c27); final reviewed version already live in prod (verified via live bundle: fixed titles present, 0 originals). Gate 1 (lint 0 / 83 tests / build ✓) + Gate 2 (3 reviewers all-SHIP).
 - 18:28 UTC · s-0628-1457-c8d2 · B1 · claim · extract shared useProctor hook from the 3 portals (Unified/Online/Verbal); branch item/B1-useproctor-hook (isolated worktree). Unblocks B3 on merge.
+- 16:10 UTC · s-0628-1514-f086 · A4 · shipped · PR #33 merged (3a65ed2) + built & deployed to prod (hawkamah.web.app, 72 files); Puck autoplay-block fix + non-interrupting alarm + fallback notice live. AC1 (Puck by ear) ⏳ verify in prod.
+- 16:15 UTC · s-0628-1514-f086 · B2 · claim · multi-monitor/extended-display detection — new multiple_displays signal in proctorCore + emit via proctorService + pre-test gate; branch item/B2-multimonitor (core layer, independent of in-flight B1)
+- 16:31 UTC · s-0628-1514-f086 · B2 · pr-open · PR #35 — multiple_displays signal + displayDetection.ts (screen.isExtended, graceful null) + debounced proctorService emit + onboarding warn-and-flag; tsc clean, 103/103 tests, adversarial review SHIP. ACs 3/4 (AC1 ⏳ live two-monitor verify)
+- 16:37 UTC · s-0628-1514-f086 · B2 · shipped · PR #35 merged (c426878) + built & deployed to prod (hawkamah.web.app); multi-monitor detection live. AC1 ⏳ verify on a real two-monitor machine.
+- 16:37 UTC · s-0628-1514-f086 · A5 · note · hotfixing a confirmed prod double-submit-on-skip race (answer+confirm-skip within 400ms → duplicate attempt/saveUnifiedResult). Branch item/A5-skip-doublefinish-fix; not re-opening A5, additive guard only.
+- 19:40 UTC · s-0628-1457-c8d2 · B1 · pr-open · PR #36 — useProctor hook extracted from the 3 portals (−317/+124 dup removed); Gate 1 (lint 0 / 91 tests / build ✓) + Gate 2 (3 portals + hook all-SHIP, 0 high-sev, caller-responsibilities verified). ⏳ NEEDS LIVE proctor parity check before prod merge.
+- 16:48 UTC · s-0628-1514-f086 · A5 · shipped · hotfix PR #37 merged (27c1ddd) + deployed to prod (hawkamah.web.app) — answer↔skip double-submit race closed (shared finishingRef finalize guard on handleFinishAttempt + handleCancelAttempt + cancellable advance timer); review SHIP, no data-loss path. Resolves the prod bug found in PR #30. A5 ✅ complete.
+- 18:29 UTC · s-0628-1453-525d · — · note · verified + redeployed CLEAN origin/main (aef1444) to prod — A1–A6 + B2 + A5 hotfix all live (bundle index-DIo0fRbn.js); A4 review done, safe to merge (test-coverage gaps noted)
