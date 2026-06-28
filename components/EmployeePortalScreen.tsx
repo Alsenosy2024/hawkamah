@@ -7,6 +7,8 @@ import { notifySurveyComplete } from '../services/notifyService';
 import { generateQuestions } from '../services/geminiService';
 import { speak, cancelSpeech } from '../services/ttsService';
 import WorkplaceSurveyScreen from './WorkplaceSurveyScreen';
+import ProctorOverlay from './ProctorOverlay';
+import { useProctor } from '../hooks/useProctor';
 import { useToast } from './ToastProvider';
 import type {
   EmployeeToken, Question, UserResponse, WorkEnvironmentAnswers, Language,
@@ -78,6 +80,65 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   const qTimerRef = useRef<number | null>(null);
   // Per-question durations (seconds) saved to report
   const qDurationsRef = useRef<number[]>([]);
+
+  // ── B3: live AI proctoring (camera + screen-share → Gemini Live signals) ──
+  // The employee assessment is a graded, candidate-facing exam, so it runs the
+  // standard full proctoring via the shared useProctor hook (same engine as the
+  // Unified/Online/Verbal portals). This screen owns the camera stream + the visible
+  // preview tiles (rendered via ProctorOverlay); the hook owns the engine lifecycle
+  // and the integrity score, and captures the ProctorSummary on stop.
+  const proctor = useProctor({ language: ar ? 'ar' : 'en', getQuestion: () => qIndex, intervalMs: 4000 });
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const screenPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const [camError, setCamError] = useState('');
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play().catch(() => {}); }
+    } catch {
+      setCamError(t('تعذّر الوصول للكاميرا — يستمر التقييم.', 'Camera unavailable — the assessment continues.'));
+    }
+  };
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach(tr => tr.stop());
+    streamRef.current = null;
+    proctor.stopProctor();   // captures the integrity summary + releases screen tracks & hidden engine feeds
+  };
+
+  // Bind the visible previews once a proctored phase (and its <video>s) has mounted —
+  // the gesture grabs the streams before these elements exist.
+  useEffect(() => {
+    if (phase !== 'assessment' && phase !== 'survey') return;
+    if (videoRef.current && streamRef.current && videoRef.current.srcObject !== streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+    const sp = screenPreviewRef.current, ss = proctor.screenStreamRef.current;
+    if (sp && ss && sp.srcObject !== ss) { sp.srcObject = ss; sp.play().catch(() => {}); }
+  }, [phase, proctor.status]);
+
+  // Release camera + proctor on unmount.
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach(tr => tr.stop());
+    proctor.stopProctor();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Shared proctoring furniture (camera tile + screen preview + status chip + alert
+  // banner), rendered in the proctored phases below.
+  const proctorOverlay = (
+    <ProctorOverlay
+      proctor={proctor}
+      videoRef={videoRef}
+      screenPreviewRef={screenPreviewRef}
+      camError={camError}
+      language={ar ? 'ar' : 'en'}
+    />
+  );
 
   // Load token on mount
   useEffect(() => {
@@ -157,6 +218,18 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
     setAnswers([]);
     setCurrentAnswer('');
     setPhase('assessment');
+    // B3 — begin proctoring on THIS user gesture (getDisplayMedia requires one).
+    // Request the screen first, then start the camera + Gemini-Live engine once the
+    // screen decision resolves so the engine receives both streams (camera-only if
+    // screen-share is declined). Never throws — degrades gracefully.
+    proctor.requestScreen().then(async (scr) => {
+      if (scr && screenPreviewRef.current) {
+        screenPreviewRef.current.srcObject = scr;
+        screenPreviewRef.current.play().catch(() => {});
+      }
+      await startCamera();
+      proctor.startProctor(streamRef.current, proctor.screenStreamRef.current);
+    });
   };
 
   const handleAnswerSubmit = () => {
@@ -183,6 +256,7 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
       setPhase('survey');
       return;
     }
+    stopCamera();   // stop camera + proctor and capture the integrity summary before persisting
     const elapsed = Math.round((Date.now() - startTime.current) / 1000);
     try {
       const timeout = new Promise<never>((_, reject) =>
@@ -204,6 +278,7 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
           submittedAt: new Date().toISOString(),
           completedInSeconds: elapsed,
           language,
+          ...(proctor.summaryRef.current ? { proctorSummary: proctor.summaryRef.current } : {}),
         }),
         timeout,
       ]);
@@ -426,6 +501,7 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F7FAFB] p-4" dir={dir}>
+        {proctorOverlay}
         <div className="bg-white border border-slate-200 rounded-xl p-6 max-w-2xl w-full space-y-5">
           {/* Progress bar + metadata row */}
           <div className="space-y-2">
@@ -522,6 +598,7 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   if (phase === 'survey') {
     return (
       <div className="min-h-screen bg-[#F7FAFB] p-4" dir={dir}>
+        {proctorOverlay}
         <div className="max-w-2xl mx-auto space-y-4">
           <div className="bg-white border border-slate-200 rounded-lg px-4 py-3 flex items-center gap-3">
             {logoUrl ? (

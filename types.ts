@@ -395,6 +395,7 @@ export interface PublicSurveyResponse {
   respondentJobTitle?: string;
   respondentDepartment?: string;
   analysis?: WorkEnvironmentReport; // lazy AI analysis, stored after admin triggers it
+  proctorSummary?: import('./services/proctorCore').ProctorSummary;  // B3: live AI proctoring integrity summary (camera + screen)
 }
 
 // ---- Employee assessment portal types (Track B) ----
@@ -479,6 +480,7 @@ export interface EmployeeResponse {
   submittedAt: string;
   completedInSeconds?: number;
   language: Language;
+  proctorSummary?: import('./services/proctorCore').ProctorSummary;  // B3: live AI proctoring integrity summary (camera + screen)
 }
 
 // ---- Department package types (Track D) ----

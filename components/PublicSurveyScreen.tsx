@@ -1,9 +1,11 @@
 // Public survey page — accessed via ?s=TOKEN (no admin login needed).
 // Reads the token to get tenant/company context, shows a participant info form,
 // then shows WorkplaceSurveyScreen. No other company names or data are ever shown here.
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getSurveyToken, savePublicResponse } from '../services/surveyTokenService';
 import WorkplaceSurveyScreen from './WorkplaceSurveyScreen';
+import ProctorOverlay from './ProctorOverlay';
+import { useProctor } from '../hooks/useProctor';
 import type { SurveyToken, WorkEnvironmentAnswers } from '../types';
 import { UI } from '../services/designTokens';
 
@@ -28,6 +30,51 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
   const ar = tokenData?.language !== 'en';
   const t = (a: string, e: string) => ar ? a : e;
 
+  // ── B3: live AI proctoring (camera + screen-share → Gemini Live signals) ──
+  // The environment survey is candidate-facing; the owner asked for full proctoring
+  // here too. The shared useProctor hook owns the engine lifecycle; this screen owns
+  // the camera stream and the visible preview tiles (rendered via ProctorOverlay).
+  const proctor = useProctor({ language: ar ? 'ar' : 'en', intervalMs: 4000 });
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const screenPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const [camError, setCamError] = useState('');
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play().catch(() => {}); }
+    } catch {
+      setCamError(t('تعذّر الوصول للكاميرا — يستمر الاستبيان.', 'Camera unavailable — the survey continues.'));
+    }
+  };
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach(tr => tr.stop());
+    streamRef.current = null;
+    proctor.stopProctor();   // captures the integrity summary + releases screen tracks & hidden engine feeds
+  };
+
+  // Bind the visible previews once the survey view (and its <video>s) has mounted —
+  // the gesture grabs the streams before these elements exist.
+  useEffect(() => {
+    if (state !== 'survey' && state !== 'submitting') return;
+    if (videoRef.current && streamRef.current && videoRef.current.srcObject !== streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+    const sp = screenPreviewRef.current, ss = proctor.screenStreamRef.current;
+    if (sp && ss && sp.srcObject !== ss) { sp.srcObject = ss; sp.play().catch(() => {}); }
+  }, [state, proctor.status]);
+
+  // Release camera + proctor on unmount.
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach(tr => tr.stop());
+    proctor.stopProctor();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     getSurveyToken(token)
       .then(tok => {
@@ -51,11 +98,24 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
     if (!participant.jobTitle.trim()) { setFormErr(t('المسمى الوظيفي مطلوب.', 'Job title required.')); return; }
     setFormErr('');
     setState('survey');
+    // B3 — begin proctoring on THIS user gesture (getDisplayMedia requires one).
+    // Request the screen first, then start the camera + Gemini-Live engine once the
+    // screen decision resolves, so the engine receives both streams (or camera-only
+    // if screen-share is declined). Never throws — degrades gracefully.
+    proctor.requestScreen().then(async (scr) => {
+      if (scr && screenPreviewRef.current) {
+        screenPreviewRef.current.srcObject = scr;
+        screenPreviewRef.current.play().catch(() => {});
+      }
+      await startCamera();
+      proctor.startProctor(streamRef.current, proctor.screenStreamRef.current);
+    });
   };
 
   const handleSubmit = async (answers: WorkEnvironmentAnswers) => {
     if (!tokenData) return;
     setState('submitting');
+    stopCamera();   // stop camera + proctor and capture the integrity summary before persisting
     try {
       await savePublicResponse({
         tokenId: token,
@@ -68,6 +128,7 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
         respondentEmail: participant.email,
         respondentJobTitle: participant.jobTitle,
         ...(participant.department.trim() ? { respondentDepartment: participant.department } : {}),
+        ...(proctor.summaryRef.current ? { proctorSummary: proctor.summaryRef.current } : {}),
       });
       setState('done');
     } catch {
@@ -255,6 +316,17 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
           </div>
         )}
       </main>
+
+      {/* B3 — live proctoring furniture (camera tile + screen preview + status chip + alert banner) */}
+      {(state === 'survey' || state === 'submitting') && (
+        <ProctorOverlay
+          proctor={proctor}
+          videoRef={videoRef}
+          screenPreviewRef={screenPreviewRef}
+          camError={camError}
+          language={ar ? 'ar' : 'en'}
+        />
+      )}
     </div>
   );
 };
