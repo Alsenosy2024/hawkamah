@@ -19,6 +19,7 @@ interface ResultsScreenProps {
   workplaceAnswers?: WorkEnvironmentAnswers;
   surveyScope?: SurveyScope;
   affectSignal?: AffectSignal;   // optional voice/facial affect from the verbal interview
+  proctorSummary?: import('../services/proctorCore').ProctorSummary;   // B3 — in-app survey live-proctoring integrity summary
   employeeView?: boolean;        // when true, employee sees thank-you card only; report saved to Firestore for admin
 }
 
@@ -78,6 +79,7 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
   workplaceAnswers,
   surveyScope = 'both',
   affectSignal,
+  proctorSummary,
   employeeView = true,
 }) => {
   const [report, setReport] = useState<ExtendedReport | null>(null);
@@ -174,7 +176,8 @@ const ResultsScreen: React.FC<ResultsScreenProps> = ({
             envReportData: envResult,
             surveyScope,
             assessmentKind: toKindArray(assessmentConfig.assessmentKind),
-            affectSignal: affectSignal || null   // voice/facial affect (verbal interview); null when unavailable
+            affectSignal: affectSignal || null,   // voice/facial affect (verbal interview); null when unavailable
+            proctorSummary: proctorSummary || null   // B3 — live proctoring integrity summary from the in-app survey
           });
         } catch (dbErr) {
           console.error("Failed to sync report to Firestore:", dbErr);
