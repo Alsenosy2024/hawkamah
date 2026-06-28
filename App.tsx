@@ -542,7 +542,7 @@ const App: React.FC = () => {
   // Take survey answers, record them, and shift to results screen
   const handleSurveySubmit = useCallback((answers: WorkEnvironmentAnswers, summary?: ProctorSummary) => {
     setWorkplaceAnswers(answers);
-    if (summary) setProctorSummary(summary);   // B3 — captured by the in-app survey proctor
+    setProctorSummary(summary);   // B3 — this run's in-app survey proctor summary (undefined if proctoring didn't run); set unconditionally so a prior run's summary can't linger
     setCurrentScreen(Screen.RESULTS); // Generate report and display dual results
   }, []);
 
