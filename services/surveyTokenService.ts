@@ -20,10 +20,12 @@ export async function createSurveyToken(
   companyName: string,
   language: Language,
   createdByEmail?: string,
+  cameraProctoring?: boolean,   // B5: per-link camera + screen proctoring (default OFF in the launch modal)
 ): Promise<{ token: string; url: string }> {
   const id = genToken();
   const tok: SurveyToken = {
     id, tenantId, projectId, companyName, language,
+    ...(cameraProctoring !== undefined ? { cameraProctoring } : {}),
     createdAt: new Date().toISOString(),
     ...(createdByEmail ? { createdByEmail } : {}),
   };

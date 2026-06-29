@@ -15,7 +15,7 @@ import PortalSpinner from './PortalSpinner';
 import PortalErrorCard from './PortalErrorCard';
 import PortalThankYou from './PortalThankYou';
 import ParticipantInfoForm from './ParticipantInfoForm';
-import MonitoringConsentNotice from './MonitoringConsentNotice';
+import AssessmentGate from './AssessmentGate';
 import type {
   EmployeeToken, Question, UserResponse, WorkEnvironmentAnswers, Language,
 } from '../types';
@@ -62,6 +62,9 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   const language = empToken?.language ?? 'ar';
   const ar = language === 'ar';
   const t = (a: string, e: string) => ar ? a : e;
+  // B5: per-link camera + screen proctoring. Legacy links (no field) keep B3's
+  // prior always-on behavior; new links carry the admin's modal choice (default ON).
+  const cameraOn = empToken?.cameraProctoring ?? true;
 
   // Employee info form
   const [empName, setEmpName] = useState('');
@@ -228,6 +231,9 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
     // Request the screen first, then start the camera + Gemini-Live engine once the
     // screen decision resolves so the engine receives both streams (camera-only if
     // screen-share is declined). Never throws — degrades gracefully.
+    // B5 — only when this link is proctored (admin toggle); otherwise no camera/
+    // screen prompt is shown at all.
+    if (!cameraOn) return;
     proctor.requestScreen().then(async (scr) => {
       if (scr && screenPreviewRef.current) {
         screenPreviewRef.current.srcObject = scr;
@@ -351,57 +357,18 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
     );
   }
 
-  // ── INSTRUCTIONS ──
+  // ── INSTRUCTIONS (B5: full onboarding ceremony, shared with الاثنين معاً) ──
   if (phase === 'instructions') {
-    const qCount = empToken?.questionCount || DEFAULT_QUESTION_COUNT;
-    const steps = ar ? [
-      { num: '1', title: 'أسئلة الجدارات', desc: `${qCount} أسئلة مخصصة لمسماك الوظيفي (${jobTitle})` },
-      { num: '2', title: 'استبيان بيئة العمل', desc: 'تقييم بيئة العمل والمحيط المؤسسي' },
-      { num: '3', title: 'السرية التامة', desc: 'إجاباتك آمنة ومحمية — لا يُعرض عليها إلا القيادة المختصة' },
-    ] : [
-      { num: '1', title: 'Competency Questions', desc: `${qCount} questions tailored to your role (${jobTitle})` },
-      { num: '2', title: 'Work Environment Survey', desc: 'Assessment of your work environment and organizational context' },
-      { num: '3', title: 'Full Confidentiality', desc: 'Your answers are secure — only relevant leadership can view them' },
-    ];
-
     return (
       <PortalShell language={language} companyName={companyName} logoUrl={logoUrl} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
-        <div className="bg-white border border-slate-200 rounded-xl p-8 max-w-lg w-full space-y-6">
-          <div className="text-center space-y-1">
-            <h2 className="text-lg font-bold text-slate-800">
-              {t('أهلاً بك في التقييم', `Welcome, ${empName}`)}
-            </h2>
-            <p className="text-sm text-slate-500 leading-relaxed">
-              {t(`مرحباً ${empName}، قبل البدء اطّلع على هيكل التقييم.`, `Before we begin, here's what to expect.`)}
-            </p>
-          </div>
-          <div className="space-y-2">
-            {steps.map((s, i) => (
-              <div key={i} className="flex items-start gap-3 border border-slate-200 rounded-lg px-4 py-3 bg-white">
-                <span className="flex-shrink-0 w-5 h-5 rounded-full border-2 border-emerald-600 text-emerald-600 flex items-center justify-center text-[10px] font-bold mt-0.5">{s.num}</span>
-                <div>
-                  <div className="font-semibold text-slate-800 text-sm">{s.title}</div>
-                  <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">{s.desc}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="border border-slate-200 rounded-lg px-4 py-3 bg-[#EEF3F5] text-xs text-slate-600 leading-relaxed">
-            {t(
-              'الوقت المتوقع: 15–25 دقيقة. أجب بصدق وشمولية — الإجابات القصيرة تؤثر على دقة التقرير.',
-              'Expected time: 15–25 minutes. Answer honestly and thoroughly — short answers affect report accuracy.',
-            )}
-          </div>
-          {/* B3 — proctoring disclosure: capture starts on «ابدأ التقييم», so warn here first. */}
-          <MonitoringConsentNotice language={language} context="assessment" />
-
-          <button
-            onClick={handleStartAssessment}
-            className="hw-btn hw-btn-primary hw-btn-w"
-          >
-            {t('ابدأ التقييم', 'Start Assessment')}
-          </button>
-        </div>
+        <AssessmentGate
+          language={language}
+          jobTitle={jobTitle}
+          totalQuestions={empToken?.questionCount || DEFAULT_QUESTION_COUNT}
+          maxAttempts={1}
+          cameraProctoring={cameraOn}
+          onStart={handleStartAssessment}
+        />
       </PortalShell>
     );
   }
@@ -414,7 +381,7 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
 
     return (
       <PortalShell language={language} companyName={companyName} logoUrl={logoUrl} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
-        {proctorOverlay}
+        {cameraOn && proctorOverlay}
         <div className="bg-white border border-slate-200 rounded-xl p-6 max-w-2xl w-full space-y-5">
           {/* Progress bar + metadata row */}
           <div className="space-y-2">
@@ -511,7 +478,7 @@ const EmployeePortalScreen: React.FC<Props> = ({ token }) => {
   if (phase === 'survey') {
     return (
       <PortalShell language={language} companyName={companyName} logoUrl={logoUrl} subtitle={t('بوابة تقييم الموظفين', 'Employee Assessment Portal')}>
-        {proctorOverlay}
+        {cameraOn && proctorOverlay}
         <div className="w-full max-w-2xl">
           <WorkplaceSurveyScreen
             onSubmit={handleSurveySubmit}

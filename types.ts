@@ -364,6 +364,10 @@ export interface SurveyToken {
   projectId: string;
   companyName: string; // shown at the top of the public survey page
   language: Language;
+  // B5: per-link camera + screen proctoring toggle. Absent on legacy links → the
+  // portal preserves B3's prior always-on behavior; new links default this OFF
+  // (a workplace survey is not a graded exam — see ProjectsStage launch modal).
+  cameraProctoring?: boolean;
   createdAt: string;   // ISO timestamp
   createdByEmail?: string;
 }
@@ -412,6 +416,9 @@ export interface EmployeeToken {
   // omit these; the portal falls back to sensible defaults (30 questions, 4 voice).
   questionCount?: number;   // total competency questions for this link (e.g. 30/40/50)
   voiceCount?: number;      // how many of those are answered by voice (e.g. 3/4/5)
+  // B5: per-link camera + screen proctoring toggle. Absent on legacy links → the
+  // portal preserves B3's prior always-on behavior; new links default this ON.
+  cameraProctoring?: boolean;
   // Company context snapshot so questions are grounded in the company's industry
   // even though the public portal has no Firestore project read.
   industry?: string;

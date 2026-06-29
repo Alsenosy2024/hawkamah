@@ -45,6 +45,7 @@ function genToken(): string {
 export interface CreateTokenOptions {
   questionCount?: number;   // total questions for this survey link
   voiceCount?: number;      // how many answered by voice
+  cameraProctoring?: boolean; // B5: per-link camera + screen proctoring (default ON in the launch modal)
   createdByEmail?: string;
 }
 
@@ -53,7 +54,7 @@ export async function createEmployeeToken(
   language: Language,
   options: CreateTokenOptions = {},
 ): Promise<{ token: string; url: string }> {
-  const { questionCount, voiceCount, createdByEmail } = options;
+  const { questionCount, voiceCount, cameraProctoring, createdByEmail } = options;
   const id = genToken();
   const tok: EmployeeToken = {
     id,
@@ -67,6 +68,7 @@ export async function createEmployeeToken(
     // at read-time in the portal, so omit when not chosen rather than forcing here.
     ...(questionCount ? { questionCount } : {}),
     ...(voiceCount ? { voiceCount } : {}),
+    ...(cameraProctoring !== undefined ? { cameraProctoring } : {}),
     ...(project.industry ? { industry: project.industry } : {}),
     ...(project.specialization ? { specialization: project.specialization } : {}),
     ...(project.description ? { companyDescription: project.description } : {}),
