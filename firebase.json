@@ -33,7 +33,7 @@
     ]
   },
   "firestore": {
-    "database": "ai-studio-f5454328-0305-43c4-a804-7c065b797d4e",
+    "database": "hawkamah",
     "rules": "firestore.rules"
   },
   "functions": {
