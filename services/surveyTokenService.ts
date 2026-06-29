@@ -14,18 +14,29 @@ function genToken(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 }
 
+// B6: options bag — per-link camera proctoring (B5) + optional access code / expiry
+// (from the shared rich config modal). All optional; legacy behavior unchanged.
+export interface CreateSurveyTokenOptions {
+  createdByEmail?: string;
+  cameraProctoring?: boolean;
+  accessCode?: string;
+  expiresAt?: string;
+}
+
 export async function createSurveyToken(
   tenantId: string,
   projectId: string,
   companyName: string,
   language: Language,
-  createdByEmail?: string,
-  cameraProctoring?: boolean,   // B5: per-link camera + screen proctoring (default OFF in the launch modal)
+  options: CreateSurveyTokenOptions = {},
 ): Promise<{ token: string; url: string }> {
+  const { createdByEmail, cameraProctoring, accessCode, expiresAt } = options;
   const id = genToken();
   const tok: SurveyToken = {
     id, tenantId, projectId, companyName, language,
     ...(cameraProctoring !== undefined ? { cameraProctoring } : {}),
+    ...(accessCode ? { accessCode } : {}),
+    ...(expiresAt ? { expiresAt } : {}),
     createdAt: new Date().toISOString(),
     ...(createdByEmail ? { createdByEmail } : {}),
   };

@@ -368,6 +368,10 @@ export interface SurveyToken {
   // portal preserves B3's prior always-on behavior; new links default this OFF
   // (a workplace survey is not a graded exam — see ProjectsStage launch modal).
   cameraProctoring?: boolean;
+  // B6: optional access control (from the shared rich modal). accessCode gates entry
+  // via the onboarding gate; expiresAt rejects the link after the date.
+  accessCode?: string;
+  expiresAt?: string;  // ISO timestamp
   createdAt: string;   // ISO timestamp
   createdByEmail?: string;
 }

@@ -91,6 +91,12 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
           setState('error');
           return;
         }
+        // B6: optional expiry from the shared rich modal.
+        if (tok.expiresAt && new Date(tok.expiresAt) < new Date()) {
+          setErrorMsg('انتهت صلاحية هذا الرابط.');
+          setState('error');
+          return;
+        }
         setTokenData(tok);
         setState('info_form');
       })
@@ -205,6 +211,7 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
             language={tokenData.language}
             surveyOnly
             cameraProctoring={cameraOn}
+            accessCode={tokenData.accessCode}
             onStart={startSurvey}
             onBack={() => setState('info_form')}
           />
