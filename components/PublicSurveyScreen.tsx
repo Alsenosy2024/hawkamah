@@ -12,6 +12,7 @@ import PortalSpinner from './PortalSpinner';
 import PortalErrorCard from './PortalErrorCard';
 import PortalThankYou from './PortalThankYou';
 import ParticipantInfoForm from './ParticipantInfoForm';
+import AssessmentGate from './AssessmentGate';
 
 interface Props {
   token: string;
@@ -26,13 +27,16 @@ interface ParticipantInfo {
 
 const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
   const [tokenData, setTokenData] = useState<SurveyToken | null>(null);
-  const [state, setState] = useState<'loading' | 'info_form' | 'survey' | 'submitting' | 'done' | 'error'>('loading');
+  const [state, setState] = useState<'loading' | 'info_form' | 'gate' | 'survey' | 'submitting' | 'done' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [participant, setParticipant] = useState<ParticipantInfo>({ name: '', email: '', jobTitle: '', department: '' });
   const [formErr, setFormErr] = useState('');
 
   const ar = tokenData?.language !== 'en';
   const t = (a: string, e: string) => ar ? a : e;
+  // B5: per-link camera + screen proctoring. Legacy survey links (no field) keep
+  // B3's prior always-on behavior; new links carry the admin's modal choice (default OFF).
+  const cameraOn = tokenData?.cameraProctoring ?? true;
 
   // ── B3: live AI proctoring (camera + screen-share → Gemini Live signals) ──
   // The environment survey is candidate-facing; the owner asked for full proctoring
@@ -96,16 +100,25 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
       });
   }, [token]);
 
+  // B5 — info form now leads into the shared onboarding gate (consent + rules)
+  // instead of jumping straight to the survey. Proctoring begins on the gate's
+  // consent click (startSurvey), not here.
   const handleInfoSubmit = () => {
     if (!participant.name.trim()) { setFormErr(t('الاسم مطلوب.', 'Name is required.')); return; }
     if (!participant.email.trim() || !participant.email.includes('@')) { setFormErr(t('بريد إلكتروني صالح مطلوب.', 'Valid email required.')); return; }
     if (!participant.jobTitle.trim()) { setFormErr(t('المسمى الوظيفي مطلوب.', 'Job title required.')); return; }
     setFormErr('');
+    setState('gate');
+  };
+
+  // B5 — the gate's «أوافق وأبدأ» consent click. Begin proctoring on THIS user
+  // gesture (getDisplayMedia requires one) — but only when the link is proctored
+  // (admin toggle, default OFF for surveys). Request the screen first, then start
+  // the camera + Gemini-Live engine once the screen decision resolves (camera-only
+  // if screen-share is declined). Never throws — degrades gracefully.
+  const startSurvey = () => {
     setState('survey');
-    // B3 — begin proctoring on THIS user gesture (getDisplayMedia requires one).
-    // Request the screen first, then start the camera + Gemini-Live engine once the
-    // screen decision resolves, so the engine receives both streams (or camera-only
-    // if screen-share is declined). Never throws — degrades gracefully.
+    if (!cameraOn) return;
     proctor.requestScreen().then(async (scr) => {
       if (scr && screenPreviewRef.current) {
         screenPreviewRef.current.srcObject = scr;
@@ -182,8 +195,18 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
             language={tokenData.language}
             title={t('بياناتك الشخصية', 'Your Information')}
             subtitle={t('نحتاج هذه المعلومات لمعرفة من ملأ الاستبيان', 'We need this information to know who completed the survey')}
-            showConsent
-            consentContext="survey"
+          />
+        )}
+
+        {/* B5 — shared onboarding gate (consent + rules) before the survey. For a
+            proctored link the «أوافق وأبدأ» click also grants camera + screen-share. */}
+        {state === 'gate' && tokenData && (
+          <AssessmentGate
+            language={tokenData.language}
+            surveyOnly
+            cameraProctoring={cameraOn}
+            onStart={startSurvey}
+            onBack={() => setState('info_form')}
           />
         )}
 
@@ -198,8 +221,9 @@ const PublicSurveyScreen: React.FC<Props> = ({ token }) => {
         )}
 
         {/* B3 — live proctoring furniture (camera tile + screen preview + status chip + alert banner).
-            Rendered inside PortalShell so it inherits the RTL/LTR direction (matches EmployeePortalScreen). */}
-        {(state === 'survey' || state === 'submitting') && (
+            Rendered inside PortalShell so it inherits the RTL/LTR direction (matches EmployeePortalScreen).
+            B5 — only when this link is proctored (admin toggle, default OFF for surveys). */}
+        {cameraOn && (state === 'survey' || state === 'submitting') && (
           <ProctorOverlay
             proctor={proctor}
             videoRef={videoRef}

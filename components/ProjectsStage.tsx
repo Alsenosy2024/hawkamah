@@ -46,7 +46,11 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
   const [launchModal, setLaunchModal] = useState<{ url: string; projectName: string; type: 'survey' | 'employee' | 'unified' } | null>(null);
   const [launching, setLaunching] = useState<string | null>(null); // projectId being launched
   // W3: employee-portal launch config — pick survey size before minting the token.
-  const [empCfg, setEmpCfg] = useState<{ project: GovProject; questionCount: number; voiceCount: number } | null>(null);
+  // B5: + camera proctoring toggle (parity with the unified «الاثنين معاً» modal).
+  const [empCfg, setEmpCfg] = useState<{ project: GovProject; questionCount: number; voiceCount: number; cameraProctoring: boolean } | null>(null);
+  // B5: environment-survey launch config — a real modal (was a direct one-click mint)
+  // so the admin can choose camera proctoring per link (default OFF for surveys).
+  const [surveyCfg, setSurveyCfg] = useState<{ project: GovProject; cameraProctoring: boolean } | null>(null);
 
   // Unified assessment (replaces separate paper + online) — 15-field config
   const [unifiedCfg, setUnifiedCfg] = useState<{
@@ -68,10 +72,19 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
   // Responses panel — show per-project unified results
   const [responseProjectId, setResponseProjectId] = useState<string | null>(null);
 
-  const launchSurvey = async (p: GovProject) => {
+  // B5: open the survey config dialog (camera toggle) before minting — surveys
+  // default to NO proctoring (a workplace survey is not a graded exam).
+  const launchSurvey = (p: GovProject) => {
+    setSurveyCfg({ project: p, cameraProctoring: false });
+  };
+
+  const confirmSurveyLaunch = async () => {
+    if (!surveyCfg) return;
+    const { project: p, cameraProctoring } = surveyCfg;
     setLaunching(p.id);
+    setSurveyCfg(null);
     try {
-      const { url } = await createSurveyToken(p.id, p.id, p.name, language);
+      const { url } = await createSurveyToken(p.id, p.id, p.name, language, undefined, cameraProctoring);
       setLaunchModal({ url, projectName: p.name, type: 'survey' });
     } catch (err: any) {
       toast.error(t('فشل إنشاء الرابط: ', 'Failed to create link: ') + (err?.message || err));
@@ -80,20 +93,20 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
     }
   };
 
-  // Open the size-config dialog (questions + voice) before minting the token.
+  // Open the size-config dialog (questions + voice + camera) before minting the token.
   const launchEmployeePortal = (p: GovProject) => {
     const def = p.survey?.questionCount || settings.defaultSurveyTemplate?.questionCount || 30;
-    setEmpCfg({ project: p, questionCount: def, voiceCount: 4 });
+    setEmpCfg({ project: p, questionCount: def, voiceCount: 4, cameraProctoring: true });
   };
 
-  // Mint the employee token with the chosen size + company context (W3/W4).
+  // Mint the employee token with the chosen size + company context (W3/W4) + proctoring (B5).
   const confirmEmpLaunch = async () => {
     if (!empCfg) return;
-    const { project: p, questionCount, voiceCount } = empCfg;
+    const { project: p, questionCount, voiceCount, cameraProctoring } = empCfg;
     setLaunching(`emp_${p.id}`);
     setEmpCfg(null);
     try {
-      const { url } = await createEmployeeToken(p, language, { questionCount, voiceCount });
+      const { url } = await createEmployeeToken(p, language, { questionCount, voiceCount, cameraProctoring });
       setLaunchModal({ url, projectName: p.name, type: 'employee' });
     } catch (err: any) {
       toast.error(t('فشل إنشاء رابط بوابة الموظف: ', 'Failed to create employee portal link: ') + (err?.message || err));
@@ -481,9 +494,64 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                 {t('باقي الأسئلة تُجاب كتابةً.', 'Remaining questions are answered in writing.')}
               </p>
             </div>
+            {/* B5 — camera proctoring toggle (parity with the unified «الاثنين معاً» modal) */}
+            <div className="flex items-center gap-3">
+              <button
+                className={`relative w-11 h-6 rounded-full transition-colors ${empCfg.cameraProctoring ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                onClick={() => setEmpCfg({ ...empCfg, cameraProctoring: !empCfg.cameraProctoring })}
+                role="switch" aria-checked={empCfg.cameraProctoring}
+              >
+                <span className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${empCfg.cameraProctoring ? 'ltr:translate-x-5 rtl:-translate-x-5' : ''}`} />
+              </button>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                {t('مراقبة بالكاميرا', 'Camera proctoring')}
+              </span>
+            </div>
             <div className="flex justify-end gap-2 pt-1">
               <button className={UI.btnGhost} onClick={() => setEmpCfg(null)}>{t('إلغاء', 'Cancel')}</button>
               <button className={UI.btnPrimary} onClick={confirmEmpLaunch}>
+                {t('إنشاء الرابط', 'Create link')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* B5 — Environment-survey config modal (camera proctoring toggle; was a direct mint) */}
+      {surveyCfg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className={`${UI.card} rounded-xl p-6 max-w-md w-full space-y-5 shadow-lg`}>
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-slate-800 dark:text-slate-100">
+                {t('إعداد استبيان البيئة', 'Configure Environment Survey')}
+              </h4>
+              <button className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors leading-none" onClick={() => setSurveyCfg(null)}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              {t(`المشروع: "${surveyCfg.project.name}". رابط استبيان يُشارَك مع الموظفين.`,
+                 `Project: "${surveyCfg.project.name}". A survey link shared with employees.`)}
+            </p>
+            {/* Camera proctoring toggle (default OFF for surveys) */}
+            <div className="flex items-center gap-3">
+              <button
+                className={`relative w-11 h-6 rounded-full transition-colors ${surveyCfg.cameraProctoring ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                onClick={() => setSurveyCfg({ ...surveyCfg, cameraProctoring: !surveyCfg.cameraProctoring })}
+                role="switch" aria-checked={surveyCfg.cameraProctoring}
+              >
+                <span className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${surveyCfg.cameraProctoring ? 'ltr:translate-x-5 rtl:-translate-x-5' : ''}`} />
+              </button>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                {t('مراقبة بالكاميرا', 'Camera proctoring')}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {t('الاستبيان غير مُراقَب افتراضياً. فعّل المراقبة فقط إذا لزم.', 'Surveys are unproctored by default. Enable monitoring only if needed.')}
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button className={UI.btnGhost} onClick={() => setSurveyCfg(null)}>{t('إلغاء', 'Cancel')}</button>
+              <button className={UI.btnPrimary} onClick={confirmSurveyLaunch}>
                 {t('إنشاء الرابط', 'Create link')}
               </button>
             </div>
