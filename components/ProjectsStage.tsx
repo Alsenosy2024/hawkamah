@@ -8,7 +8,6 @@ import React, { useRef, useState } from 'react';
 import type { Language, AdminSettings, GovProject, PaperDifficulty, PaperTheories } from '../types';
 import { seedProjectSurvey } from '../services/governanceService';
 import { createSurveyToken } from '../services/surveyTokenService';
-import { createEmployeeToken } from '../services/employeePortalService';
 import { createUnifiedToken } from '../services/unifiedAssessmentService';
 import { extractProjectFromFiles, draftToProject, type ProjectDraft } from '../services/projectExtraction';
 import { suggestJobTitles, suggestJobTitleLines } from '../services/jobTitleSuggestions';
@@ -45,16 +44,15 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
   const [extracting, setExtracting] = useState(false);
   const [launchModal, setLaunchModal] = useState<{ url: string; projectName: string; type: 'survey' | 'employee' | 'unified' } | null>(null);
   const [launching, setLaunching] = useState<string | null>(null); // projectId being launched
-  // W3: employee-portal launch config — pick survey size before minting the token.
-  // B5: + camera proctoring toggle (parity with the unified «الاثنين معاً» modal).
-  const [empCfg, setEmpCfg] = useState<{ project: GovProject; questionCount: number; voiceCount: number; cameraProctoring: boolean } | null>(null);
-  // B5: environment-survey launch config — a real modal (was a direct one-click mint)
-  // so the admin can choose camera proctoring per link (default OFF for surveys).
-  const [surveyCfg, setSurveyCfg] = useState<{ project: GovProject; cameraProctoring: boolean } | null>(null);
-
-  // Unified assessment (replaces separate paper + online) — 15-field config
+  // B6: all three query buttons (استبيان البيئة / تقييم الموظفين / الاثنين معاً) now open
+  // ONE shared rich configurator (the الاثنين معاً option set). `kind` decides which
+  // token is minted on submit:
+  //  • 'survey'   → createSurveyToken (?s=)      — exam fields shown but inert; access-code/expiry apply
+  //  • 'employee' → createUnifiedToken (?assess=) — competency preset, full MCQ-scored engine
+  //  • 'unified'  → createUnifiedToken (?assess=) — person + environment preset
   const [unifiedCfg, setUnifiedCfg] = useState<{
     project: GovProject;
+    kind: 'survey' | 'employee' | 'unified';
     questionCount: number;
     behavioralPct: number;
     difficulty: PaperDifficulty;
@@ -72,69 +70,27 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
   // Responses panel — show per-project unified results
   const [responseProjectId, setResponseProjectId] = useState<string | null>(null);
 
-  // B5: open the survey config dialog (camera toggle) before minting — surveys
-  // default to NO proctoring (a workplace survey is not a graded exam).
-  const launchSurvey = (p: GovProject) => {
-    setSurveyCfg({ project: p, cameraProctoring: false });
-  };
-
-  const confirmSurveyLaunch = async () => {
-    if (!surveyCfg) return;
-    const { project: p, cameraProctoring } = surveyCfg;
-    setLaunching(p.id);
-    setSurveyCfg(null);
-    try {
-      const { url } = await createSurveyToken(p.id, p.id, p.name, language, undefined, cameraProctoring);
-      setLaunchModal({ url, projectName: p.name, type: 'survey' });
-    } catch (err: any) {
-      toast.error(t('فشل إنشاء الرابط: ', 'Failed to create link: ') + (err?.message || err));
-    } finally {
-      setLaunching(null);
-    }
-  };
-
-  // Open the size-config dialog (questions + voice + camera) before minting the token.
-  const launchEmployeePortal = (p: GovProject) => {
-    const def = p.survey?.questionCount || settings.defaultSurveyTemplate?.questionCount || 30;
-    setEmpCfg({ project: p, questionCount: def, voiceCount: 4, cameraProctoring: true });
-  };
-
-  // Mint the employee token with the chosen size + company context (W3/W4) + proctoring (B5).
-  const confirmEmpLaunch = async () => {
-    if (!empCfg) return;
-    const { project: p, questionCount, voiceCount, cameraProctoring } = empCfg;
-    setLaunching(`emp_${p.id}`);
-    setEmpCfg(null);
-    try {
-      const { url } = await createEmployeeToken(p, language, { questionCount, voiceCount, cameraProctoring });
-      setLaunchModal({ url, projectName: p.name, type: 'employee' });
-    } catch (err: any) {
-      toast.error(t('فشل إنشاء رابط بوابة الموظف: ', 'Failed to create employee portal link: ') + (err?.message || err));
-    } finally {
-      setLaunching(null);
-    }
-  };
-
-  const launchUnifiedAssessment = (p: GovProject) => {
+  // B6: open the ONE shared rich configurator for any of the three query kinds.
+  // Presets differ slightly by intent; the admin can change everything. Job titles
+  // are seeded for the exam kinds (A1: from jobRoles, else industry suggestions).
+  const openConfig = (p: GovProject, kind: 'survey' | 'employee' | 'unified') => {
     const jobTitles = (p.jobRoles ?? []).map(r => (language === 'ar' ? r.title_ar : r.title_en)).filter(Boolean);
-    // A1: when the company has no explicit jobRoles, seed industry-appropriate
-    // suggestions from the (free-text) sector. An unknown/blank sector yields []
-    // → the textarea stays empty with its placeholder, exactly as before.
     const seededTitles = jobTitles.length
       ? jobTitles
       : suggestJobTitleLines(p.industry, p.specialization, ar ? 'ar' : 'en');
     setUnifiedCfg({
       project: p,
+      kind,
       questionCount: 20,
-      behavioralPct: 40,
+      // employee = competency-focused (mostly technical); both = balanced person+environment.
+      behavioralPct: kind === 'employee' ? 20 : 40,
       difficulty: 'medium',
       secondsPerQuestion: 90,
       maxAttempts: 2,
       passingScore: 60,
       voiceQuestionCount: 0,
-      // AI camera + screen-share proctoring ON by default (same anti-cheat engine
-      // as the online proctored exam). Admin can still toggle it off per link.
-      cameraProctoring: true,
+      // AI camera + screen-share proctoring ON by default for exams; OFF for surveys.
+      cameraProctoring: kind !== 'survey',
       theories: { birkman: false, holland: true, psychTech: false, bloom: false },
       allowedJobTitles: seededTitles.join('\n'),
       accessCode: '',
@@ -142,38 +98,54 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
     });
   };
 
+  const launchSurvey = (p: GovProject) => openConfig(p, 'survey');
+  const launchEmployeePortal = (p: GovProject) => openConfig(p, 'employee');
+  const launchUnifiedAssessment = (p: GovProject) => openConfig(p, 'unified');
+
+  // Mint the right token for the chosen kind. Survey → survey token (?s=, exam fields
+  // ignored). Employee + unified → the unified MCQ-scored engine (?assess=).
   const confirmUnifiedLaunch = async () => {
     if (!unifiedCfg) return;
-    const { project: p } = unifiedCfg;
+    const { project: p, kind } = unifiedCfg;
     const titles = unifiedCfg.allowedJobTitles.split('\n').map(s => s.trim()).filter(Boolean);
-    if (!titles.length) {
+    // Surveys generate no questions → job titles aren't required there.
+    if (kind !== 'survey' && !titles.length) {
       toast.error(t('أضف مسمىً وظيفياً واحداً على الأقل.', 'Add at least one job title.'));
       return;
     }
-    setLaunching(`unified_${p.id}`);
+    setLaunching(`${kind}_${p.id}`);
     setUnifiedCfg(null);
     try {
-      const { url } = await createUnifiedToken({
-        tenantId: p.id,
-        projectId: p.id,
-        companyName: p.name,
-        companyLogoUrl: p.logoUrl,
-        questionCount: unifiedCfg.questionCount,
-        behavioralPct: unifiedCfg.behavioralPct,
-        difficulty: unifiedCfg.difficulty,
-        secondsPerQuestion: unifiedCfg.secondsPerQuestion,
-        maxAttempts: unifiedCfg.maxAttempts,
-        passingScore: unifiedCfg.passingScore,
-        voiceQuestionCount: unifiedCfg.voiceQuestionCount,
-        cameraProctoring: unifiedCfg.cameraProctoring,
-        theories: unifiedCfg.theories,
-        allowedJobTitles: titles,
-        ...(unifiedCfg.accessCode.trim() ? { accessCode: unifiedCfg.accessCode.trim() } : {}),
-        ...(unifiedCfg.expiresAt.trim() ? { expiresAt: new Date(unifiedCfg.expiresAt).toISOString() } : {}),
-      });
-      setLaunchModal({ url, projectName: p.name, type: 'unified' });
+      let url: string;
+      if (kind === 'survey') {
+        ({ url } = await createSurveyToken(p.id, p.id, p.name, language, {
+          cameraProctoring: unifiedCfg.cameraProctoring,
+          ...(unifiedCfg.accessCode.trim() ? { accessCode: unifiedCfg.accessCode.trim() } : {}),
+          ...(unifiedCfg.expiresAt.trim() ? { expiresAt: new Date(unifiedCfg.expiresAt).toISOString() } : {}),
+        }));
+      } else {
+        ({ url } = await createUnifiedToken({
+          tenantId: p.id,
+          projectId: p.id,
+          companyName: p.name,
+          companyLogoUrl: p.logoUrl,
+          questionCount: unifiedCfg.questionCount,
+          behavioralPct: unifiedCfg.behavioralPct,
+          difficulty: unifiedCfg.difficulty,
+          secondsPerQuestion: unifiedCfg.secondsPerQuestion,
+          maxAttempts: unifiedCfg.maxAttempts,
+          passingScore: unifiedCfg.passingScore,
+          voiceQuestionCount: unifiedCfg.voiceQuestionCount,
+          cameraProctoring: unifiedCfg.cameraProctoring,
+          theories: unifiedCfg.theories,
+          allowedJobTitles: titles,
+          ...(unifiedCfg.accessCode.trim() ? { accessCode: unifiedCfg.accessCode.trim() } : {}),
+          ...(unifiedCfg.expiresAt.trim() ? { expiresAt: new Date(unifiedCfg.expiresAt).toISOString() } : {}),
+        }));
+      }
+      setLaunchModal({ url, projectName: p.name, type: kind });
     } catch (err: any) {
-      toast.error(t('فشل إنشاء الرابط الموحد: ', 'Failed to create unified link: ') + (err?.message || err));
+      toast.error(t('فشل إنشاء الرابط: ', 'Failed to create link: ') + (err?.message || err));
     } finally {
       setLaunching(null);
     }
@@ -403,19 +375,19 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
                   </button>
                   <button
                     className={`${UI.btnGhost} !px-2.5 !py-1 text-xs`}
-                    disabled={launching === p.id}
+                    disabled={launching === `survey_${p.id}`}
                     onClick={() => launchSurvey(p)}
                     title={t('رابط استبيان بيئة العمل فقط', 'Work environment survey link')}
                   >
-                    {launching === p.id ? '…' : t('استبيان البيئة', 'Env. survey')}
+                    {launching === `survey_${p.id}` ? '…' : t('استبيان البيئة', 'Env. survey')}
                   </button>
                   <button
                     className={`${UI.btnSubtle} !px-2.5 !py-1 text-xs`}
-                    disabled={launching === `emp_${p.id}`}
+                    disabled={launching === `employee_${p.id}`}
                     onClick={() => launchEmployeePortal(p)}
                     title={t('بوابة التقييم الشامل للموظف (جدارات + بيئة)', 'Full employee assessment portal (competency + environment)')}
                   >
-                    {launching === `emp_${p.id}` ? '…' : t('تقييم الموظفين', 'Employee Assessment')}
+                    {launching === `employee_${p.id}` ? '…' : t('تقييم الموظفين', 'Employee Assessment')}
                   </button>
                   <button
                     className={`${UI.btnGhost} !px-2.5 !py-1 text-xs`}
@@ -445,135 +417,28 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
         </div>
       )}
 
-      {/* Employee-portal size config (W3) — pick total questions + voice count before minting */}
-      {empCfg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className={`${UI.card} rounded-xl p-6 max-w-md w-full space-y-5 shadow-lg`}>
-            <div className="flex items-center justify-between">
-              <h4 className="font-bold text-slate-800 dark:text-slate-100">
-                {t('إعداد تقييم الموظفين', 'Configure Employee Assessment')}
-              </h4>
-              <button className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors leading-none" onClick={() => setEmpCfg(null)}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              {t(`المشروع: "${empCfg.project.name}". اختر حجم الاستبيان قبل إنشاء الرابط.`,
-                 `Project: "${empCfg.project.name}". Choose the survey size before creating the link.`)}
-            </p>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
-                {t('عدد الأسئلة', 'Number of questions')}
-              </label>
-              <div className="flex gap-2">
-                {[30, 40, 50].map(n => (
-                  <button key={n}
-                    className={`flex-1 py-2 rounded-md text-sm font-bold transition border ${
-                      empCfg.questionCount === n
-                        ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
-                    onClick={() => setEmpCfg({ ...empCfg, questionCount: n })}>{n}</button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
-                {t('عدد الأسئلة الصوتية', 'Voice questions')}
-              </label>
-              <div className="flex gap-2">
-                {[3, 4, 5].map(n => (
-                  <button key={n}
-                    className={`flex-1 py-2 rounded-md text-sm font-bold transition border ${
-                      empCfg.voiceCount === n
-                        ? 'bg-emerald-600 text-white border-emerald-600'
-                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-600 hover:border-emerald-400'}`}
-                    onClick={() => setEmpCfg({ ...empCfg, voiceCount: n })}>{n}</button>
-                ))}
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">
-                {t('باقي الأسئلة تُجاب كتابةً.', 'Remaining questions are answered in writing.')}
-              </p>
-            </div>
-            {/* B5 — camera proctoring toggle (parity with the unified «الاثنين معاً» modal) */}
-            <div className="flex items-center gap-3">
-              <button
-                className={`relative w-11 h-6 rounded-full transition-colors ${empCfg.cameraProctoring ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
-                onClick={() => setEmpCfg({ ...empCfg, cameraProctoring: !empCfg.cameraProctoring })}
-                role="switch" aria-checked={empCfg.cameraProctoring}
-              >
-                <span className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${empCfg.cameraProctoring ? 'ltr:translate-x-5 rtl:-translate-x-5' : ''}`} />
-              </button>
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                {t('مراقبة بالكاميرا', 'Camera proctoring')}
-              </span>
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <button className={UI.btnGhost} onClick={() => setEmpCfg(null)}>{t('إلغاء', 'Cancel')}</button>
-              <button className={UI.btnPrimary} onClick={confirmEmpLaunch}>
-                {t('إنشاء الرابط', 'Create link')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* B5 — Environment-survey config modal (camera proctoring toggle; was a direct mint) */}
-      {surveyCfg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className={`${UI.card} rounded-xl p-6 max-w-md w-full space-y-5 shadow-lg`}>
-            <div className="flex items-center justify-between">
-              <h4 className="font-bold text-slate-800 dark:text-slate-100">
-                {t('إعداد استبيان البيئة', 'Configure Environment Survey')}
-              </h4>
-              <button className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors leading-none" onClick={() => setSurveyCfg(null)}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              {t(`المشروع: "${surveyCfg.project.name}". رابط استبيان يُشارَك مع الموظفين.`,
-                 `Project: "${surveyCfg.project.name}". A survey link shared with employees.`)}
-            </p>
-            {/* Camera proctoring toggle (default OFF for surveys) */}
-            <div className="flex items-center gap-3">
-              <button
-                className={`relative w-11 h-6 rounded-full transition-colors ${surveyCfg.cameraProctoring ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
-                onClick={() => setSurveyCfg({ ...surveyCfg, cameraProctoring: !surveyCfg.cameraProctoring })}
-                role="switch" aria-checked={surveyCfg.cameraProctoring}
-              >
-                <span className={`absolute top-0.5 start-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${surveyCfg.cameraProctoring ? 'ltr:translate-x-5 rtl:-translate-x-5' : ''}`} />
-              </button>
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                {t('مراقبة بالكاميرا', 'Camera proctoring')}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              {t('الاستبيان غير مُراقَب افتراضياً. فعّل المراقبة فقط إذا لزم.', 'Surveys are unproctored by default. Enable monitoring only if needed.')}
-            </p>
-            <div className="flex justify-end gap-2 pt-1">
-              <button className={UI.btnGhost} onClick={() => setSurveyCfg(null)}>{t('إلغاء', 'Cancel')}</button>
-              <button className={UI.btnPrimary} onClick={confirmSurveyLaunch}>
-                {t('إنشاء الرابط', 'Create link')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Unified assessment 15-field config modal */}
       {unifiedCfg && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
           <div className={`${UI.card} rounded-xl p-6 max-w-lg w-full space-y-5 shadow-lg my-4`}>
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-slate-800 dark:text-slate-100">
-                {t('إعداد تقييم الموظف والبيئة معاً', 'Person + Environment Setup')}
+                {unifiedCfg.kind === 'survey'
+                  ? t('إعداد استبيان البيئة', 'Configure Environment Survey')
+                  : unifiedCfg.kind === 'employee'
+                  ? t('إعداد تقييم الموظفين', 'Configure Employee Assessment')
+                  : t('إعداد تقييم الموظف والبيئة معاً', 'Person + Environment Setup')}
               </h4>
               <button className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors leading-none" onClick={() => setUnifiedCfg(null)}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              {t(`المشروع: "${unifiedCfg.project.name}". رابط واحد يُشارَك مع جميع الموظفين.`,
-                 `Project: "${unifiedCfg.project.name}". One link shared with all employees.`)}
+              {unifiedCfg.kind === 'survey'
+                ? t(`المشروع: "${unifiedCfg.project.name}". رابط استبيان يُشارَك مع الموظفين. (إعدادات الأسئلة أدناه لا تؤثّر على الاستبيان.)`,
+                     `Project: "${unifiedCfg.project.name}". A survey link shared with employees. (The question settings below don't affect a survey.)`)
+                : t(`المشروع: "${unifiedCfg.project.name}". رابط واحد يُشارَك مع جميع الموظفين.`,
+                     `Project: "${unifiedCfg.project.name}". One link shared with all employees.`)}
             </p>
 
             {/* Row 1 — Questions */}
@@ -789,10 +654,14 @@ const ProjectsStage: React.FC<Props> = ({ settings, language, onUpdateSettings, 
               <button className={UI.btnGhost} onClick={() => setUnifiedCfg(null)}>{t('إلغاء', 'Cancel')}</button>
               <button
                 className={UI.btnPrimary}
-                disabled={!unifiedCfg.allowedJobTitles.trim()}
+                disabled={unifiedCfg.kind !== 'survey' && !unifiedCfg.allowedJobTitles.trim()}
                 onClick={confirmUnifiedLaunch}
               >
-                {t('إنشاء الرابط الموحد', 'Create unified link')}
+                {unifiedCfg.kind === 'survey'
+                  ? t('إنشاء رابط الاستبيان', 'Create survey link')
+                  : unifiedCfg.kind === 'employee'
+                  ? t('إنشاء رابط التقييم', 'Create assessment link')
+                  : t('إنشاء الرابط الموحد', 'Create unified link')}
               </button>
             </div>
           </div>
