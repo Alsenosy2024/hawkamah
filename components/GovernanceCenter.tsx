@@ -37,7 +37,7 @@ import { exportDocx, exportPdfViaPrint, exportPdfDirect, exportGovernanceManual,
 import { generateJson } from '../services/agentOrchestrator';
 import { GOV_DOC_CATALOG, CATALOG_CATEGORIES, recommendDocuments, type DocCatalogEntry } from '../services/governanceDocCatalog';
 import { analyzeIntegrity, maturity as computeMaturity, coverageMatrix, mergeModels, traceEntity } from '../services/governanceValidation';
-import { alignAll, standardsLens } from '../services/governanceFrameworks';
+import { alignAll, standardsLens, buildCriteriaLens, type BuildCriterion } from '../services/governanceFrameworks';
 import { proposeModelActions, applyActions, appendAudit } from '../services/governanceActions';
 import { buildCharter, buildRiskRegister, buildRoadmap } from '../services/governanceArtifacts';
 import { runGovernanceAgent } from '../services/governanceAgent';
@@ -420,6 +420,59 @@ ${content.slice(0, 8000)}`;
 
   // bulk generation (stage 3)
   const [bulkScope, setBulkScope] = useState<BulkScope>('procedures');
+
+  // V17 — build-criteria/recommendations table + a general-notes box, surfaced in
+  // the Build stage. The owner had "no criteria to base the build on" and wanted a
+  // recommendations table plus general notes applied across a bulk run. Both are
+  // threaded into generation (see refsWithReco) so the model actually follows them.
+  // Persisted per-tenant in localStorage — mirrors removedUnitNames; no new storage,
+  // no model/type changes. Loaded on tenant change; written explicitly on each edit.
+  const [buildCriteria, setBuildCriteria] = useState<BuildCriterion[]>([]);
+  const [buildRecos, setBuildRecos] = useState('');
+  const buildCriteriaKey = `gov_build_criteria:${tenantId}`;
+  const buildRecosKey = `gov_build_recos:${tenantId}`;
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`gov_build_criteria:${tenantId}`);
+      const arr = raw ? JSON.parse(raw) : [];
+      setBuildCriteria(Array.isArray(arr)
+        ? arr.map((x: any) => ({ id: String(x?.id || uid('crit')), criterion: String(x?.criterion || ''), recommendation: String(x?.recommendation || '') }))
+        : []);
+    } catch { setBuildCriteria([]); }
+    try { setBuildRecos(localStorage.getItem(`gov_build_recos:${tenantId}`) || ''); } catch { setBuildRecos(''); }
+  }, [tenantId]);
+  const persistCriteria = (next: BuildCriterion[]) => {
+    setBuildCriteria(next);
+    try { localStorage.setItem(buildCriteriaKey, JSON.stringify(next)); } catch { /* quota — ignore */ }
+  };
+  const persistRecos = (next: string) => {
+    setBuildRecos(next);
+    try { localStorage.setItem(buildRecosKey, next); } catch { /* quota — ignore */ }
+  };
+  // Fold the criteria table + general notes into ONE clearly-labeled reference
+  // whose body is the directive block (buildCriteriaLens). Both generateGovernanceDoc
+  // and generateBulkDoc render referenceProjects into their system prompt, so this is
+  // the single in-scope channel that reaches EVERY generated section/doc — the bulk
+  // path has no other free-text hook. sector match keeps it ranked in. null = unset.
+  const recoReference = useCallback((): ReferenceProject | null => {
+    const block = buildCriteriaLens(buildCriteria, buildRecos);
+    if (!block.trim()) return null;
+    return {
+      id: 'gov_build_reco',
+      name: t('توصيات ومعايير البناء (إلزامية)', 'Build criteria & recommendations (required)'),
+      sector: sector || '',
+      companySize: 'medium',
+      artifactKind: 'policy_manual',
+      summary: t('معايير وتوصيات عامة يحددها المالك تُطبَّق على كل المخرجات.', 'Owner-defined criteria & general recommendations applied to all generated outputs.'),
+      content: block,
+      tags: [t('توصيات', 'recommendations'), t('بناء', 'build')],
+      createdAt: new Date().toISOString(),
+    };
+  }, [buildCriteria, buildRecos, sector, t]);
+  const refsWithReco = useCallback((): ReferenceProject[] => {
+    const r = recoReference();
+    return r ? [r, ...refProjects] : refProjects;
+  }, [recoReference, refProjects]);
 
   // model-bound canvas (stage 2 — direct from model)
   const [modelCanvas, setModelCanvas] = useState(false);
@@ -978,7 +1031,7 @@ ${content.slice(0, 8000)}`;
     try {
       const chunks = await loadChunks(tenantId);
       const doc = await generateGovernanceDoc({
-        docTitle, goal: docGoal, model, chunks, referenceProjects: refProjects,
+        docTitle, goal: docGoal, model, chunks, referenceProjects: refsWithReco(), // V17: build criteria/notes
         sector, language, signal: ac.signal,
         onProgress: setGenProgress,
         onThought: (txt) => pushThought(txt),
@@ -1025,6 +1078,8 @@ ${content.slice(0, 8000)}`;
       const chunks = await loadChunks(tenantId).catch(() => [] as any[]);
       // shared cross-doc fact memory → coherent names/numbers across all docs in the batch
       const sharedFacts: string[] = [];
+      // V17: owner's build criteria/notes apply to EVERY doc in this batch run.
+      const refsForBatch = refsWithReco();
       setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
 
       // bounded concurrency pool with retry/backoff. HWK-C3: sequential (1) for the
@@ -1041,7 +1096,7 @@ ${content.slice(0, 8000)}`;
           if (ac.signal.aborted) return;
           try {
             const doc = await generateGovernanceDoc({
-              docTitle: d.title, goal: d.goal, model, chunks, referenceProjects: refProjects,
+              docTitle: d.title, goal: d.goal, model, chunks, referenceProjects: refsForBatch,
               sector, language, targetPages: pages, kind: d.key, signal: ac.signal,
               sharedFacts,
               // in parallel mode show the live preview of whichever doc reports last
@@ -1274,7 +1329,7 @@ ${content.slice(0, 8000)}`;
     try {
       const chunks = await loadChunks(tenantId);
       const doc = await generateBulkDoc({
-        scope: bulkScope, model, chunks, language, sector, referenceProjects: refProjects, signal: ac.signal,
+        scope: bulkScope, model, chunks, language, sector, referenceProjects: refsWithReco(), signal: ac.signal, // V17: criteria/notes apply to every item
         onProgress: setGenProgress,
         onThought: (txt) => pushThought(txt),
         onSection: (s) => pushSection(s),
@@ -3216,6 +3271,71 @@ ${content.slice(0, 8000)}`;
             <section className="space-y-5">
               <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>} title={t('توليد الوثائق', 'Document generation')}
                 desc={t('وثيقة طويلة مترابطة مُسندة بالمصادر. اختر طريقة الإنشاء ثم اضغط "توليد".', 'A long, coherent, source-cited document. Choose a creation mode then press generate.')} />
+
+              {/* V17 — build criteria / recommendations: an editable table + a general-notes box.
+                  Both apply to ALL generation modes below (batch / custom / bulk) — they are
+                  injected into every generated section as a directive the model must follow. */}
+              <details className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20 p-4" open={buildCriteria.length > 0 || !!buildRecos}>
+                <summary className="cursor-pointer select-none font-black text-amber-800 dark:text-amber-200 text-sm flex items-center gap-1.5">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                  {t('معايير وتوصيات البناء', 'Build criteria & recommendations')}
+                  {(buildCriteria.length > 0 || !!buildRecos) && (
+                    <span className="ms-1 text-[10px] font-black px-1.5 py-0.5 rounded-full bg-amber-200 dark:bg-amber-800/60 text-amber-800 dark:text-amber-200">
+                      {buildCriteria.length + (buildRecos ? 1 : 0)}
+                    </span>
+                  )}
+                </summary>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 mb-3">
+                  {t('حدّد على أي أساس يُبنى المحتوى: جدول بنود + توصياتها، وصندوق ملاحظات عامة. تُطبَّق على كل وثيقة في وضع الدُّفعة والتوليد بالجملة. تُحفظ مع المشروع.',
+                     'Define what the build is based on: a table of criteria + their recommendations, plus a general-notes box. Applied to every document in batch & bulk runs. Saved with the project.')}
+                </div>
+
+                {/* Criteria table */}
+                <div className="space-y-2">
+                  <div className="hidden sm:flex gap-2 px-1 text-[10px] font-bold text-amber-700/70 dark:text-amber-300/70">
+                    <span className="flex-[2]">{t('المعيار / البند', 'Criterion')}</span>
+                    <span className="flex-[3]">{t('التوصية / الملاحظة', 'Recommendation / note')}</span>
+                    <span className="w-8" />
+                  </div>
+                  {buildCriteria.map(row => (
+                    <div key={row.id} className="flex flex-col sm:flex-row gap-2">
+                      <input value={row.criterion}
+                        onChange={e => persistCriteria(buildCriteria.map(r => r.id === row.id ? { ...r, criterion: e.target.value } : r))}
+                        dir={ar ? 'rtl' : 'ltr'} maxLength={200}
+                        placeholder={t('مثال: مستوى التفصيل', 'e.g. Level of detail')}
+                        className="flex-[2] min-w-0 px-3 py-2 rounded-lg border border-amber-200 dark:border-amber-700 bg-white dark:bg-slate-800 text-sm font-bold text-slate-700 dark:text-slate-200" />
+                      <input value={row.recommendation}
+                        onChange={e => persistCriteria(buildCriteria.map(r => r.id === row.id ? { ...r, recommendation: e.target.value } : r))}
+                        dir={ar ? 'rtl' : 'ltr'} maxLength={600}
+                        placeholder={t('مثال: اجعل كل إجراء موجزاً في صفحة واحدة مع SLA', 'e.g. Keep each procedure to one page with an SLA')}
+                        className="flex-[3] min-w-0 px-3 py-2 rounded-lg border border-amber-200 dark:border-amber-700 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200" />
+                      <button onClick={() => persistCriteria(buildCriteria.filter(r => r.id !== row.id))}
+                        title={t('حذف الصف', 'Remove row')}
+                        className="w-8 h-9 shrink-0 self-end rounded-lg border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 flex items-center justify-center">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                      </button>
+                    </div>
+                  ))}
+                  <button onClick={() => persistCriteria([...buildCriteria, { id: uid('crit'), criterion: '', recommendation: '' }])}
+                    className="hw-btn hw-btn-sm hw-btn-ghost">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    {t('إضافة معيار/توصية', 'Add criterion')}
+                  </button>
+                </div>
+
+                {/* General notes box */}
+                <div className="mt-4 pt-3 border-t border-amber-200 dark:border-amber-800">
+                  <div className="text-xs font-bold text-amber-800 dark:text-amber-200 mb-1 flex items-center gap-1">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    {t('توصيات/ملاحظات عامة (تُطبَّق على كل عناصر الدُّفعة)', 'General recommendations / notes (applied to the whole batch)')}
+                  </div>
+                  <textarea value={buildRecos} onChange={e => persistRecos(e.target.value)}
+                    rows={3} maxLength={4000} dir={ar ? 'rtl' : 'ltr'}
+                    placeholder={t('مثال: التزم بمصطلحات قطاع المقاولات، أضِف مصفوفة RACI لكل إجراء، واربط كل سياسة بمعيار ISO المناسب.', 'e.g. Use construction-sector terminology, add a RACI matrix per procedure, and map each policy to the relevant ISO standard.')}
+                    className="w-full rounded-xl border border-amber-200 dark:border-amber-700 bg-white dark:bg-slate-800 p-3 text-sm text-slate-700 dark:text-slate-200 resize-y" />
+                  <div className="text-[10px] text-slate-400 mt-1">{buildRecos.length}/4000</div>
+                </div>
+              </details>
 
               {/* Mode selector — 3 clean options */}
               <div className="flex rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-1 gap-1">

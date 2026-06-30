@@ -111,3 +111,47 @@ export function alignFramework(m: CompanyGovernanceModel, frameworkId: string): 
 export function alignAll(m: CompanyGovernanceModel): FrameworkAlignment[] {
   return FRAMEWORKS.map(f => alignFramework(m, f.id)!).filter(Boolean);
 }
+
+// ===========================================================================
+// V17 — build criteria & recommendations.
+// The build stage lets the owner attach an editable criteria→recommendation
+// table plus a general-notes box, then inject them across a bulk/batch run
+// ("ممكن يدّيني جدول توصيات؟ … أو توصيات عامة في بوكس ياخدها في دول كلهم").
+// These are PURE formatters (no AI, no I/O) that turn that table + notes into a
+// directive the generation prompts already consume. UI + persistence live in
+// the GovernanceCenter; the threading reuses the existing reference-block channel
+// so the same text reaches every generated section. Mirrors standardsLens().
+// ===========================================================================
+
+export interface BuildCriterion {
+  id: string;
+  criterion: string;       // what to base the build on (e.g. "مستوى التفصيل")
+  recommendation: string;  // the directive/note attached to that criterion
+}
+
+// Normalize + drop empty rows so a half-filled table never injects blank lines.
+function cleanCriteria(criteria?: BuildCriterion[]): { criterion: string; recommendation: string }[] {
+  return (criteria || [])
+    .map(c => ({ criterion: (c?.criterion || '').trim(), recommendation: (c?.recommendation || '').trim() }))
+    .filter(c => c.criterion || c.recommendation);
+}
+
+// A single labeled directive block the generator MUST obey. Returns '' when
+// there is nothing to inject (preserves the prior prompts byte-for-byte).
+export function buildCriteriaLens(criteria?: BuildCriterion[], generalNotes?: string): string {
+  const rows = cleanCriteria(criteria);
+  const notes = (generalNotes || '').trim();
+  if (!rows.length && !notes) return '';
+  const parts: string[] = [];
+  if (rows.length) {
+    parts.push('— جدول المعايير والتوصيات (طبّق كل بند على القسم المعني):');
+    rows.forEach((c, i) => parts.push(`  ${i + 1}. ${c.criterion || 'توصية'}${c.recommendation ? `: ${c.recommendation}` : ''}`));
+  }
+  if (notes) {
+    parts.push('— توصيات/ملاحظات عامة (طبّقها على كل عنصر من المخرجات):');
+    parts.push(notes);
+  }
+  return `
+=== معايير وتوصيات البناء (إلزامية — التزم بها في كل قسم) ===
+${parts.join('\n')}`;
+}
