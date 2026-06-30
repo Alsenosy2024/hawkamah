@@ -60,6 +60,99 @@ FORMATTING_RULE = (
     "لا ترسم المخططات بالحروف أو ASCII أبداً. قدّم البيانات الجدولية كجداول Markdown."
 )
 
+# V9 — the dedicated "probe inputs + criteria + current-state before drafting"
+# rule. Generated procedures/policies used to be generic boilerplate because the
+# model drafted straight from a thin prompt. This directive forces the per-axis
+# discipline the spec describes: read the real inputs, the benchmark criteria, and
+# the current-state diagnostic FIRST, then derive axis-specific findings — never a
+# generic template. It is injected into every grounded section + axis draft.
+AXIS_PROBE_RULE = (
+    "منهجية الاستناد (إلزامية قبل الصياغة): لا تبدأ الكتابة قبل أن تَسبُر ثلاثة مصادر "
+    "بالترتيب — (١) المدخلات الفعلية للمنظمة (الملفات/الأدلة [مصدر N])، (٢) المعايير "
+    "المرجعية للمحور (الإطار/الـbest practice المقارَن به)، (٣) تقرير الواقع الراهن "
+    "وما رصده من فجوات. اربط كل عبارة بواقع المنظمة الفعلي: سمِّ الإدارات والأدوار "
+    "والأنظمة بأسمائها الحقيقية كما وردت في المدخلات، ولا تستخدم أمثلة عامة أو أسماء "
+    "افتراضية. لكل محور حوكمة استخرِج بوضوح: الوضع الراهن → الفجوات → التوصيات → "
+    "التحسينات، كلٌّ مستند إلى دليل. إذا غاب الدليل لجزء، فاذكر النقص صراحةً واطلب "
+    "المُدخل اللازم بدل اختراع إجراء أو سياسة."
+)
+
+
+@dataclass(frozen=True)
+class GovernanceAxis:
+    """One governance assessment axis (skill §8.2 — the 17 dimensions).
+
+    ``probe`` tells the engine which inputs to retrieve for this axis; ``benchmark``
+    is the framework/standard the axis is compared against so the current-state is
+    judged against best practice rather than described in a vacuum.
+    """
+
+    key: str
+    name_ar: str
+    probe: str
+    benchmark: str
+
+
+# The 17 assessment dimensions (skill §8.2), each with what to PROBE in the inputs
+# and the BENCHMARK to compare the current-state against. The per-axis pipeline
+# walks these so each axis yields its own current-state → gaps → recommendations →
+# improvements, grounded in the company's real inputs.
+GOVERNANCE_AXES: tuple[GovernanceAxis, ...] = (
+    GovernanceAxis("corporate_governance", "الحوكمة المؤسسية",
+                   "إطار الحوكمة، الميثاق، الفصل بين الملكية والإدارة، الإفصاح",
+                   "ISO 37000 / OECD-G20 2023"),
+    GovernanceAxis("board_committees", "مجلس الإدارة واللجان",
+                   "تشكيل المجلس، اللجان القائمة، المواثيق، استقلالية الأعضاء",
+                   "OECD / مبادئ حوكمة المجالس"),
+    GovernanceAxis("strategy", "الاستراتيجية والتوجهات",
+                   "الرؤية والرسالة والأهداف، خطط العمل، مؤشرات التوجه",
+                   "Balanced Scorecard / التخطيط الاستراتيجي"),
+    GovernanceAxis("org_structure", "الهيكل التنظيمي",
+                   "الوحدات التنظيمية، خطوط التقرير، الإدارات وأغراضها",
+                   "Operating Model Design / تصميم منظمات"),
+    GovernanceAxis("decision_rights", "الصلاحيات وحقوق القرار",
+                   "مصفوفة الصلاحيات، حدود الاعتماد، تفويض السلطة",
+                   "Delegation of Authority / RACI"),
+    GovernanceAxis("policies", "السياسات واللوائح",
+                   "السياسات المعتمدة، اللوائح، دورية المراجعة، مالكو السياسات",
+                   "إطار السياسات Policy Framework"),
+    GovernanceAxis("processes", "العمليات والإجراءات",
+                   "العمليات الرئيسية، الإجراءات SOPs، نقاط القرار والضوابط",
+                   "BPM / إدارة العمليات"),
+    GovernanceAxis("technology", "الأنظمة التقنية والأدوات",
+                   "الأنظمة المستخدمة، درجة الأتمتة، التكامل، الفجوات التقنية",
+                   "COBIT / حوكمة تقنية المعلومات"),
+    GovernanceAxis("data_reporting", "البيانات والتقارير",
+                   "مصادر البيانات، التقارير الدورية، جودة البيانات وحوكمتها",
+                   "DAMA-DMBOK / حوكمة البيانات"),
+    GovernanceAxis("people_capabilities", "الأفراد والقدرات",
+                   "الكفاءات، الوصف الوظيفي، فجوات المهارات، التدريب",
+                   "Competency Framework / إدارة المواهب"),
+    GovernanceAxis("culture", "الثقافة والسلوك المؤسسي",
+                   "القيم المعلنة، السلوك الفعلي، التواصل، الحوافز",
+                   "أطر الثقافة المؤسسية"),
+    GovernanceAxis("risk_control", "إدارة المخاطر والرقابة الداخلية",
+                   "سجل المخاطر، الضوابط، خطوط الدفاع، الرقابة الداخلية",
+                   "COSO ERM / Three Lines Model"),
+    GovernanceAxis("compliance", "الامتثال والالتزام",
+                   "المتطلبات النظامية، آليات الالتزام، المتابعة والإبلاغ",
+                   "إطار الامتثال Compliance"),
+    GovernanceAxis("performance", "الأداء ومؤشرات القياس",
+                   "مؤشرات الأداء، المستهدفات، دورية القياس والمراجعة",
+                   "KPI / Balanced Scorecard"),
+    GovernanceAxis("customer", "تجربة العملاء أو المستفيدين",
+                   "رحلة العميل، قنوات الخدمة، قياس الرضا، معالجة الشكاوى",
+                   "Customer Experience"),
+    GovernanceAxis("projects", "إدارة المشاريع والبرامج",
+                   "منهجية المشاريع، مكتب إدارة المشاريع، المتابعة والحوكمة",
+                   "PMI / P3O"),
+    GovernanceAxis("change", "إدارة التغيير والتحول",
+                   "مبادرات التحول، إدارة التغيير، الاستعداد المؤسسي",
+                   "Change Management / Kotter"),
+)
+
+GOVERNANCE_AXES_BY_KEY: dict[str, GovernanceAxis] = {a.key: a for a in GOVERNANCE_AXES}
+
 
 @dataclass(frozen=True)
 class Deliverable:
@@ -244,4 +337,61 @@ def system_prompt(extra: str = "") -> str:
     parts = [PERSONA, GROUNDING_RULE, FORMATTING_RULE]
     if extra:
         parts.append(extra)
+    return "\n\n".join(parts)
+
+
+def grounding_brief(
+    *,
+    company: str = "",
+    departments: tuple[str, ...] | list[str] | None = None,
+    criteria: tuple[str, ...] | list[str] | None = None,
+    has_current_state: bool = False,
+) -> str:
+    """A compact, real-input briefing injected into grounded prompts.
+
+    Naming the company's ACTUAL departments/criteria in the system prompt is what
+    stops the model from inventing generic ones — it must use these exact names.
+    Returns "" when there is nothing concrete to assert (so ungrounded calls are
+    unchanged)."""
+    lines: list[str] = []
+    if company:
+        lines.append(f"المنظمة محل العمل: {company}.")
+    depts = [d for d in (departments or []) if d]
+    if depts:
+        lines.append(
+            "إداراتها/وحداتها الفعلية (استخدم هذه الأسماء حصراً عند ذكر الإدارات، "
+            "ولا تخترع غيرها): " + "، ".join(depts) + "."
+        )
+    crit = [c for c in (criteria or []) if c]
+    if crit:
+        lines.append("معايير القياس المعتمدة: " + "، ".join(crit) + ".")
+    if has_current_state:
+        lines.append(
+            "تقرير الواقع الراهن للمنظمة متاحٌ ضمن السياق؛ استند إليه في رصد الفجوات "
+            "والتوصيات بدل التعميم."
+        )
+    return "\n".join(lines)
+
+
+def grounded_system_prompt(brief: str = "") -> str:
+    """System prompt for grounded drafting: persona + grounding + the probe rule
+    + the company-specific briefing. Used by per-section drafting so every section
+    is derived from the real inputs/criteria/current-state, not a template."""
+    parts = [PERSONA, GROUNDING_RULE, FORMATTING_RULE, AXIS_PROBE_RULE]
+    if brief:
+        parts.append(brief)
+    return "\n\n".join(parts)
+
+
+def axis_system_prompt(axis: GovernanceAxis, brief: str = "") -> str:
+    """System prompt for one axis of the per-axis pipeline: the probe discipline +
+    the axis's benchmark, so the current-state is judged against best practice."""
+    axis_ctx = (
+        f"المحور قيد التقييم الآن: «{axis.name_ar}». "
+        f"اسبر في المدخلات: {axis.probe}. "
+        f"قارن الوضع الراهن بالمعيار المرجعي: {axis.benchmark}."
+    )
+    parts = [PERSONA, GROUNDING_RULE, AXIS_PROBE_RULE, axis_ctx]
+    if brief:
+        parts.append(brief)
     return "\n\n".join(parts)

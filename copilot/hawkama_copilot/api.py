@@ -32,7 +32,7 @@ from .agent import HawkamaAgent
 from .config import MODELS, SETTINGS
 from .conversations import ConversationStore
 from .exporters import FORMATS, export
-from .generation import GeneratedDoc
+from .generation import GeneratedDoc, GroundingContext, draft_request, generate_full_model
 
 # The API lives on `api`; the ASGI entrypoint `app` mounts it under /copilot so it
 # can be served through a Firebase Hosting rewrite (same-origin as hawkamah.web.app
@@ -82,6 +82,25 @@ def get_conversations(corpus: str) -> ConversationStore:
     if corpus not in _conversations:
         _conversations[corpus] = ConversationStore(corpus)
     return _conversations[corpus]
+
+
+def _grounding_from_body(body: dict[str, Any]) -> GroundingContext | None:
+    """Build the V9/BE-3 grounding context from the request body.
+
+    The front-end may send the company's real `org_units` / `roles` (BE-3), an
+    explicit `departments` / `criteria` list, and a `current_state` diagnostic so
+    generation derives from them instead of generic boilerplate. Absent → None, so
+    the ungrounded path is byte-for-byte unchanged."""
+    model = body.get("model") if isinstance(body.get("model"), dict) else {}
+    g = GroundingContext(
+        company=body.get("company") or model.get("companyName") or "",
+        org_units=list(body.get("org_units") or body.get("orgUnits") or model.get("orgUnits") or []),
+        roles=list(body.get("roles") or model.get("roles") or []),
+        departments=list(body.get("departments") or []),
+        criteria=list(body.get("criteria") or []),
+        current_state_md=body.get("current_state") or body.get("current_state_md") or "",
+    )
+    return None if g.is_empty else g
 
 
 @api.get("/health")
@@ -137,10 +156,15 @@ def draft(body: dict[str, Any]) -> dict[str, Any]:
     if not request:
         raise HTTPException(400, "request is required")
     agent = get_agent(corpus)
-    doc = agent.draft(
+    # Grounded path (V9/BE-3): when the body carries the company's real inputs we
+    # route through generation.draft_request with a GroundingContext; otherwise the
+    # routing is identical to agent.draft (same deliverable detection + free-form).
+    doc = draft_request(
+        agent.rag,
         request,
         language=body.get("language", "ar"),
         target_pages=body.get("target_pages"),
+        ground=_grounding_from_body(body),
     )
     return _doc_payload(doc)
 
@@ -174,12 +198,16 @@ async def draft_stream(body: dict[str, Any]) -> StreamingResponse:
             {"type": "progress", "stage": stage, "done": done, "total": total},
         )
 
+    ground = _grounding_from_body(body)
+
     def worker() -> None:
         try:
-            doc = agent.draft(
+            doc = draft_request(
+                agent.rag,
                 request,
                 language=body.get("language", "ar"),
                 target_pages=body.get("target_pages"),
+                ground=ground,
                 on_progress=on_progress,
             )
             doc_holder.append(_doc_payload(doc))
@@ -213,10 +241,14 @@ async def draft_stream(body: dict[str, Any]) -> StreamingResponse:
 def build_full(body: dict[str, Any]) -> dict[str, Any]:
     corpus = body.get("corpus", "default")
     agent = get_agent(corpus)
-    docs, manual = agent.build_full_model(
+    # Grounded full build (V9/BE-3): per-axis pipeline once, diagnostic shared
+    # across deliverables, org structure grounded in the real org units.
+    docs, manual = generate_full_model(
+        agent.rag,
         company=body.get("company", ""),
         department_list=body.get("departments") or [],
         language=body.get("language", "ar"),
+        ground=_grounding_from_body(body),
     )
     return {
         "documents": [_doc_payload(d, with_html=False) for d in docs],
