@@ -39,6 +39,29 @@ _LONGFORM = re.compile(
     re.IGNORECASE,
 )
 
+# V5 + V16 — build-intent phrases for the conversational wizard. When a grounded
+# ASK turn looks like a *build* request, the copilot should converse first: ask
+# which departments/scope/preferences the user wants and propose a short editable
+# plan, instead of dumping a document with no give-and-take ("ومسألنيش أي سؤال
+# ولا خد وعطا معايا أصلاً"). This complements the front-end wizard (which proposes
+# the plan in-app) by making the backend ask-before-generating on the /ask path.
+_BUILD_INTENT = re.compile(
+    r"ابن|ابدأ\s*البناء|ابدا\s*البناء|الهيكل\s*التنظيمي|أنشئ|انشئ|صمّم|صمم|ولّد|ولد|نبني|"
+    r"build|generate|create|design|start\s*building|org\s*structure",
+    re.IGNORECASE,
+)
+
+# The conversational steer injected into a build-intent ASK turn. It does NOT
+# write the document — it asks guiding questions and proposes an editable plan,
+# then waits for confirmation, which is exactly the V5/V16 behavior.
+_WIZARD_HINT_AR = (
+    "ملاحظة مهمة: يبدو أن المستخدم يريد *بناء* مخرجات حوكمة. قبل أي توليد طويل، "
+    "تحاور معه أولاً ولا تكتب الوثيقة كاملة في هذا الرد. اقترح خطة موجزة قابلة "
+    "للتعديل (عنوان مقترح، عدد صفحات مناسب لحجم المنشأة، المحاور، الإدارات المعنية، "
+    "والأقسام الرئيسية)، واسأله صراحةً: ما الإدارات التي تريد تضمينها أو حذفها؟ ما "
+    "النطاق والتفضيلات؟ ثم اطلب تأكيده أو تعديله قبل البناء.\n\n"
+)
+
 
 @dataclass
 class AskResult:
@@ -105,13 +128,22 @@ class HawkamaAgent:
         )
         return contents
 
+    @staticmethod
+    def _is_build_request(message: str) -> bool:
+        """True when an ASK turn is really a 'build this' request (V5/V16)."""
+        return bool(_BUILD_INTENT.search(message or ""))
+
     def _ask_prompt(self, question: str, evidence: list[Evidence]) -> str:
         ev_block = self.rag.format_evidence(evidence)
+        # V5/V16: on a build-intent ASK, steer the copilot to converse + propose an
+        # editable plan before generating, rather than dumping a document.
+        wizard = _WIZARD_HINT_AR if self._is_build_request(question) else ""
         return (
             f"السؤال: {question}\n\n"
             "أجب بدقة واستنادًا إلى الأدلة أدناه فقط فيما يخص وقائع المنظمة، مع الاستشهاد "
             "بـ [مصدر N]. إن لم تكفِ الأدلة فاذكر ذلك واقترح ما يلزم من ملفات. استعن بسياق "
             "المحادثة السابق لفهم الإحالات (مثل «وسّع ذلك» أو «والإدارة الأخرى؟») دون تكراره.\n\n"
+            f"{wizard}"
             f"== الأدلة ==\n{ev_block or 'لا توجد ملفات مفهرسة بعد.'}"
         )
 

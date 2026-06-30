@@ -1,6 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CompanyGovernanceModel, DocChunk, Language, ThinkingStep, ProgressStep } from '../types';
-import { stageChat, type GovStageKey, type GovCopilotMode, type GovStateSnapshot } from '../services/governanceChat';
+import {
+  stageChat,
+  // V5 + V16 — conversational build wizard (pure logic lives in governanceChat).
+  isExplicitBuild, proposeBuildPlan, planToBuildRequest,
+  addPlanItem, removePlanItem, toggleComponent, clampPlanPages,
+  type BuildPlan,
+  type GovStageKey, type GovCopilotMode, type GovStateSnapshot,
+} from '../services/governanceChat';
 import type { ChatTurn } from '../services/agentOrchestrator';
 import { toStreamCallbacks, toAskCallbacks, type GenerationProgressHandler } from '../services/generationProgress';
 import { loadChunks, retrieve } from '../services/governanceService';
@@ -83,6 +90,9 @@ interface Props {
   seedChunks?: DocChunk[];    // dev/test injection — bypass Firestore loadChunks
   stateSnapshot?: GovStateSnapshot; // P0-2: live page state — copilot never contradicts it
   onOpenSource?: (docName: string) => void; // clicking a citation collapses the copilot and jumps to that resource
+  // V16: when the build wizard's confirmed plan changes the departments, the
+  // parent folds the new ones into model.orgUnits (so the build reflects them).
+  onApplyDepartments?: (names: string[]) => void;
 
   // edit mode (parent owns the engine + state)
   actionInput: string;
@@ -295,7 +305,7 @@ class CopilotRunBoundary extends React.Component<{ ar: boolean; children: React.
 }
 
 const GovCopilot: React.FC<Props> = (props) => {
-  const { stageKey, stageLabel, model, language, extraContext, logoUrl, tenantId, seedChunks, stateSnapshot, onOpenSource } = props;
+  const { stageKey, stageLabel, model, language, extraContext, logoUrl, tenantId, seedChunks, stateSnapshot, onOpenSource, onApplyDepartments } = props;
   const ar = (language || 'ar') === 'ar';
   const t = (a: string, e: string) => (ar ? a : e);
   const [open, setOpen] = useState(false);
@@ -312,6 +322,22 @@ const GovCopilot: React.FC<Props> = (props) => {
   const [canvasDoc, setCanvasDoc] = useState<{ id: string; md: string } | null>(null);
   const canvasEditsRef = useRef<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
+  // ── V5 + V16: conversational build wizard ──
+  // Before a long autonomous build the copilot proposes an editable plan (length,
+  // axes, departments, components, notes); nothing is fixed. `plan` is that
+  // editable contract; `building` is true while a confirmed plan is generating
+  // (so the user can intervene); `wizardOn` lets a user opt out and keep the
+  // one-shot path (the fallback). See send()/openPlan()/acceptPlan() below.
+  const [wizardOn, setWizardOn] = useState(true);
+  const [plan, setPlan] = useState<BuildPlan | null>(null);
+  const [planBusy, setPlanBusy] = useState(false);     // proposing/regenerating a plan
+  const [building, setBuilding] = useState(false);     // a confirmed plan is generating
+  const [deptDraft, setDeptDraft] = useState('');      // add-department input
+  const [axisDraft, setAxisDraft] = useState('');      // add-axis input
+  const [interjectNote, setInterjectNote] = useState(''); // mid-build note (V16 intervene)
+  const planReqRef = useRef('');                       // the original request that opened the plan
+  const planAbortRef = useRef<AbortController | null>(null);
+  const buildInterruptedRef = useRef(false);           // user paused a build to adjust the plan
   const scrollRef = useRef<HTMLDivElement>(null);
   const chunksRef = useRef<DocChunk[] | null>(null);
   // Ask-mode image/video attachments (multimodal RAG via gemini-embedding-2). Kept
@@ -336,6 +362,7 @@ const GovCopilot: React.FC<Props> = (props) => {
     chunksRef.current = null; corpusReadyRef.current = null;
     convIdRef.current = ''; convCreatedRef.current = undefined;
     setConvId(''); setConvs([]); setMsgs([]); setHistOpen(false);
+    setPlan(null); setBuilding(false); setPlanBusy(false);
   }, [tenantId]);
 
   const lsKey = (tid: string) => `gc_conv:${tid}`;
@@ -417,6 +444,7 @@ const GovCopilot: React.FC<Props> = (props) => {
     setMsgs([]); convIdRef.current = ''; setConvId(''); convCreatedRef.current = undefined;
     try { if (tenantId) { localStorage.removeItem(lsKey(tenantId)); localStorage.removeItem(lsDraftKey(tenantId)); } } catch { /* ignore */ }
     setHistOpen(false); setInput('');
+    setPlan(null); setBuilding(false);   // drop any open build plan
     setAttachments(a => { a.forEach(x => URL.revokeObjectURL(x.url)); return []; });
   };
 
@@ -615,15 +643,95 @@ const GovCopilot: React.FC<Props> = (props) => {
       }
     }
 
+    // V5 + V16 — BUILD WIZARD: a build/long-doc request first proposes an
+    // editable plan (length, axes, departments, components, notes) and asks for
+    // confirmation/edits instead of jumping straight to a 7–8 min generation.
+    // Turning the wizard off (or an already-open plan/build) keeps the old path.
+    if (raw && !att.length && wizardOn && mode === 'ask' && !plan && !planBusy && !building
+        && (LONG_RE.test(raw) || isExplicitBuild(raw))) {
+      setInput('');
+      await openPlan(q);
+      return;
+    }
+
     setInput('');
     setAttachments([]);
+    await runGeneration(q, att);
+  };
+
+  // Propose an editable build plan for a request (the wizard's "ask first" turn,
+  // V5). proposeBuildPlan never throws — it falls back to a deterministic plan —
+  // so the card always appears. The request shows as the user's chat bubble.
+  const openPlan = async (request: string) => {
+    planReqRef.current = request;
+    const userMsg: Msg = { id: nid(), sender: 'user', text: request, thoughts: [], steps: [], thinking: false, streaming: false };
+    ensureConvId();
+    setMsgs(m => [...m, userMsg]);
+    setPlan(null);
+    setPlanBusy(true);
+    scrollDown();
+    const ac = new AbortController();
+    planAbortRef.current = ac;
+    try {
+      const { ctx } = await buildFileContext(request, ac.signal);
+      const p = await proposeBuildPlan({ request, model, language, fileContext: ctx, signal: ac.signal });
+      if (!ac.signal.aborted) { setPlan(p); setDeptDraft(''); setAxisDraft(''); }
+    } finally {
+      setPlanBusy(false);
+      planAbortRef.current = null;
+      scrollDown();
+    }
+  };
+
+  // Accept the (edited) plan → fold any new departments into the model (V16),
+  // then build using the CONFIRMED plan as the generation request (V5). The plan
+  // stays in state during the build so the user can intervene (stop & adjust).
+  const acceptPlan = async () => {
+    if (!plan || busy) return;
+    const confirmed = plan;
+    buildInterruptedRef.current = false;
+    try { onApplyDepartments?.(confirmed.departments); } catch { /* parent sync best-effort */ }
+    const request = planToBuildRequest(confirmed, language);
+    setBuilding(true);
+    await runGeneration(request, [], { targetPages: clampPlanPages(confirmed.targetPages), userText: null });
+    setBuilding(false);
+    if (!buildInterruptedRef.current) setPlan(null);   // plan consumed unless the user paused to adjust
+  };
+
+  // Build directly from the ORIGINAL request, skipping the plan (the one-shot
+  // fallback the wizard must never remove).
+  const skipPlanAndBuild = async () => {
+    const request = planReqRef.current;
+    setPlan(null);
+    if (request) await runGeneration(request, []);
+  };
+
+  // V16 — intervene mid-build: stop the current generation and reopen the plan
+  // (carrying a note the user just typed) so they can adjust departments / scope /
+  // notes and rebuild. Finer-grained live injection without a restart is a
+  // documented follow-up.
+  const interveneAndAdjust = () => {
+    buildInterruptedRef.current = true;
+    abortRef.current?.abort();
+    if (interjectNote.trim()) {
+      setPlan(p => (p ? { ...p, notes: (p.notes ? p.notes + '\n' : '') + interjectNote.trim() } : p));
+    }
+    setInterjectNote('');
+    setBuilding(false);   // plan card reappears (plan retained)
+  };
+
+  // The generation turn — shared by the direct path and the wizard accept.
+  // `opts.userText === null` suppresses the user bubble (wizard build, where the
+  // serialized plan request is internal); `opts.targetPages` pins the V4 length.
+  const runGeneration = async (q: string, att: { file: File; url: string }[], opts?: { targetPages?: number; userText?: string | null }) => {
     const attNote = att.length ? t(` (${att.length} ملف مرفق)`, ` (${att.length} file(s) attached)`) : '';
-    const userMsg: Msg = { id: nid(), sender: 'user', text: q + attNote, thoughts: [], steps: [], thinking: false, streaming: false };
     const agentId = nid();
-    const agentMsg: Msg = { id: agentId, sender: 'agent', text: '', thoughts: [], steps: [], thinking: true, streaming: true };
+    const queued: Msg[] = [];
+    if (opts?.userText !== null) queued.push({ id: nid(), sender: 'user', text: (opts?.userText ?? q) + attNote, thoughts: [], steps: [], thinking: false, streaming: false });
+    queued.push({ id: agentId, sender: 'agent', text: '', thoughts: [], steps: [], thinking: true, streaming: true });
     const history: ChatTurn[] = msgs.map(m => ({ role: m.sender === 'user' ? 'user' : 'model', parts: [{ text: m.text }] }));
     ensureConvId();   // stable thread id for this turn (and durable autosave)
-    setMsgs(m => [...m, userMsg, agentMsg]);
+    setMsgs(m => [...m, ...queued]);
     setBusy(true);
     scrollDown();
     const ac = new AbortController();
@@ -679,7 +787,7 @@ const GovCopilot: React.FC<Props> = (props) => {
           };
           let lastStage = '';
           const doc = await copilotDraftStream(
-            { corpus, request: q + FORMAT_HINT, language },
+            { corpus, request: q + FORMAT_HINT, language, target_pages: opts?.targetPages },
             ev => {
               if (ev.stage === lastStage) return;
               lastStage = ev.stage;
@@ -731,7 +839,8 @@ const GovCopilot: React.FC<Props> = (props) => {
       await stageChat(
         {
           stage: stageKey, model, history, message: q + FORMAT_HINT, language, signal: ac.signal,
-          extraContext, mode, fileContext: ctx, fileCount: count, longForm: LONG_RE.test(q),
+          extraContext, mode, fileContext: ctx, fileCount: count, longForm: LONG_RE.test(q) || !!opts?.targetPages,
+          targetPages: opts?.targetPages,
           stateSnapshot,
         },
         toStreamCallbacks(onStage),
@@ -751,7 +860,7 @@ const GovCopilot: React.FC<Props> = (props) => {
     }
   };
 
-  const stop = () => { abortRef.current?.abort(); setBusy(false); };
+  const stop = () => { abortRef.current?.abort(); planAbortRef.current?.abort(); setBusy(false); };
 
   // Animated close: play the exit keyframe, then unmount. A fallback timer
   // guarantees teardown even when animations are disabled (reduced-motion),
@@ -827,6 +936,134 @@ const GovCopilot: React.FC<Props> = (props) => {
     } catch (e) { console.error('export failed', e); }
     finally { setExporting(null); }
   };
+
+  // ── Build-wizard plan editors (pure state updates) ──
+  const updatePlan = (patch: Partial<BuildPlan>) => setPlan(p => (p ? { ...p, ...patch } : p));
+  const addDept = () => { if (!plan || !deptDraft.trim()) return; updatePlan({ departments: addPlanItem(plan.departments, deptDraft) }); setDeptDraft(''); };
+  const addAxis = () => { if (!plan || !axisDraft.trim()) return; updatePlan({ axes: addPlanItem(plan.axes, axisDraft) }); setAxisDraft(''); };
+
+  // The editable plan card — the heart of the wizard (V5/V16). Everything is
+  // editable: title, target pages, audience, governance axes (add/remove),
+  // departments (add/remove), components (toggle), and free-text notes. Nothing
+  // is fixed; "ابنِ الآن" runs the build from THIS confirmed config.
+  const renderPlanCard = () => {
+    if (!plan) return null;
+    return (
+      <div className="gc-msg-in rounded-2xl border border-[color:var(--hw-brand)]/30 bg-[var(--hw-brand-50,rgba(17,168,188,0.06))] dark:bg-slate-800/60 p-3.5 space-y-3" dir={ar ? 'rtl' : 'ltr'}>
+        <div className="flex items-start gap-2.5">
+          <RobotAvatar label={t('المساعد', 'Assistant')} className="w-7 h-7 mt-0.5" markClassName="w-[17px] h-[17px]" />
+          <div className="min-w-0">
+            <div className="text-[13px] font-bold text-slate-800 dark:text-slate-100">{t('خطة البناء المقترحة — راجِعها وعدّلها قبل أن أبدأ', 'Proposed build plan — review & edit before I start')}</div>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{t('كل شيء قابل للتعديل: الطول، المحاور، الإدارات، الأقسام والملاحظات. ابدأ متى شئت.', 'Everything is editable: length, axes, departments, sections and notes. Build whenever you like.')}</div>
+          </div>
+        </div>
+
+        {/* title + length + audience */}
+        <div className="space-y-2">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">{t('العنوان', 'Title')}</label>
+          <input value={plan.title} onChange={e => updatePlan({ title: e.target.value })}
+            className="hw-input w-full text-sm font-bold py-1.5" dir={ar ? 'rtl' : 'ltr'} />
+          <div className="flex flex-wrap gap-2">
+            <div className="flex items-center gap-1.5">
+              <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400">{t('عدد الصفحات', 'Pages')}</label>
+              <input type="number" min={1} max={120} value={plan.targetPages}
+                onChange={e => updatePlan({ targetPages: clampPlanPages(parseInt(e.target.value, 10)) })}
+                className="hw-input w-16 text-sm text-center py-1.5" />
+            </div>
+            <div className="flex items-center gap-1.5 flex-1 min-w-[10rem]">
+              <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 shrink-0">{t('الجمهور', 'Audience')}</label>
+              <input value={plan.audience} onChange={e => updatePlan({ audience: e.target.value })}
+                className="hw-input flex-1 min-w-0 text-sm py-1.5" dir={ar ? 'rtl' : 'ltr'} />
+            </div>
+          </div>
+        </div>
+
+        {/* governance axes — add/remove */}
+        {renderChipEditor(
+          t('المحاور الحوكمية', 'Governance axes'),
+          plan.axes,
+          axisDraft, setAxisDraft, addAxis,
+          v => updatePlan({ axes: removePlanItem(plan.axes, v) }),
+          t('أضف محوراً…', 'Add an axis…'),
+        )}
+
+        {/* departments — add/remove (V16 core) */}
+        {renderChipEditor(
+          t('الإدارات المشمولة', 'Departments in scope'),
+          plan.departments,
+          deptDraft, setDeptDraft, addDept,
+          v => updatePlan({ departments: removePlanItem(plan.departments, v) }),
+          t('أضف إدارة…', 'Add a department…'),
+        )}
+
+        {/* components — toggle on/off */}
+        <div className="space-y-1.5">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">{t('الأقسام والمكوّنات', 'Sections & components')}</label>
+          <div className="flex flex-wrap gap-1.5">
+            {plan.components.map(c => (
+              <button key={c.id} type="button" onClick={() => updatePlan({ components: toggleComponent(plan.components, c.id) })}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition ${c.include ? 'bg-[var(--hw-brand-100)] text-[color:var(--hw-brand)] border-[color:var(--hw-brand)]/40' : 'bg-transparent text-slate-400 border-slate-300 dark:border-slate-600 line-through opacity-70'}`}
+                title={c.include ? t('مُضمَّن — اضغط للاستبعاد', 'Included — click to exclude') : t('مُستبعَد — اضغط للتضمين', 'Excluded — click to include')}>
+                {c.include ? '✓ ' : ''}{c.title}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* notes */}
+        <div className="space-y-1.5">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">{t('ملاحظات وتوجيهات (تُطبَّق على كل قسم)', 'Notes & directives (applied to every section)')}</label>
+          <textarea value={plan.notes} onChange={e => updatePlan({ notes: e.target.value })}
+            rows={2} dir={ar ? 'rtl' : 'ltr'}
+            placeholder={t('مثال: استخدم مصطلحات قطاع المقاولات وأضِف مصفوفة RACI لكل إجراء.', 'e.g. Use construction-sector terms and add a RACI matrix per procedure.')}
+            className="hw-input w-full text-sm resize-y py-1.5" />
+        </div>
+
+        {/* actions */}
+        <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-[var(--hw-border)]">
+          <button onClick={() => { acceptPlan().catch(() => {}); }} disabled={busy} className="hw-btn hw-btn-primary hw-btn-sm !rounded-full">
+            <GeminiSpark className="w-3.5 h-3.5" />{t('ابنِ الآن', 'Build now')}
+          </button>
+          <button onClick={() => { if (planReqRef.current) openPlan(planReqRef.current).catch(() => {}); }} disabled={busy || planBusy} className="hw-btn hw-btn-subtle hw-btn-sm !rounded-full">
+            {t('أعد اقتراح الخطة', 'Re-propose')}
+          </button>
+          <button onClick={() => { skipPlanAndBuild().catch(() => {}); }} disabled={busy} className="hw-btn hw-btn-ghost hw-btn-sm !rounded-full">
+            {t('تخطّى وابنِ مباشرة', 'Skip & build directly')}
+          </button>
+          <button onClick={() => setPlan(null)} disabled={busy} className="hw-btn hw-btn-ghost hw-btn-sm !rounded-full ms-auto">
+            {t('إلغاء', 'Cancel')}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // A reusable add/remove chip editor (axes + departments share it).
+  const renderChipEditor = (
+    label: string, items: string[],
+    draft: string, setDraft: (v: string) => void, onAdd: () => void,
+    onRemove: (v: string) => void, placeholder: string,
+  ) => (
+    <div className="space-y-1.5">
+      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wide">{label}</label>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((v, i) => (
+          <span key={`${v}-${i}`} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--hw-brand-100)] text-[color:var(--hw-brand)] border border-[color:var(--hw-brand)]/30">
+            {v}
+            <button type="button" onClick={() => onRemove(v)} title={t('إزالة', 'Remove')} aria-label={t('إزالة', 'Remove')} className="leading-none text-[13px] hover:text-rose-500">×</button>
+          </span>
+        ))}
+        {!items.length && <span className="text-[11px] text-slate-400">{t('لا شيء بعد — أضِف بالأسفل.', 'None yet — add below.')}</span>}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input value={draft} onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onAdd(); } }}
+          placeholder={placeholder} dir={ar ? 'rtl' : 'ltr'}
+          className="hw-input flex-1 min-w-0 text-sm py-1.5" />
+        <button type="button" onClick={onAdd} disabled={!draft.trim()} className="hw-btn hw-btn-subtle hw-btn-sm !rounded-full shrink-0">{t('إضافة', 'Add')}</button>
+      </div>
+    </div>
+  );
 
   if (!open) {
     return (
@@ -1096,6 +1333,34 @@ const GovCopilot: React.FC<Props> = (props) => {
                 )}
               </div>
             ))}
+
+            {/* V5/V16 — the wizard: proposing-plan skeleton, the editable plan
+                card, or the mid-build intervene strip. */}
+            {planBusy && (
+              <div className="flex items-start gap-2.5 gc-msg-in">
+                <RobotAvatar label={t('المساعد', 'Assistant')} className="w-7 h-7 mt-0.5" markClassName="w-[17px] h-[17px]" />
+                <div className="gc-msg-model flex-1 min-w-0">
+                  <div className="text-[12px] font-bold text-slate-700 dark:text-slate-200 mb-1.5">{t('أجهّز خطة بناء قابلة للتعديل…', 'Preparing an editable build plan…')}</div>
+                  <GcThinking label={t('يخطّط…', 'planning…')} />
+                </div>
+              </div>
+            )}
+            {!planBusy && !building && renderPlanCard()}
+            {building && (
+              <div className="gc-msg-in rounded-2xl border border-amber-300/50 bg-amber-50/70 dark:bg-amber-900/20 p-3 space-y-2" dir={ar ? 'rtl' : 'ltr'}>
+                <div className="text-[12px] font-bold text-amber-800 dark:text-amber-200">{t('يبني حسب خطتك المعتمدة…', 'Building from your confirmed plan…')}</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('يمكنك التدخّل: أضِف ملاحظة وأوقف البناء لتعديل الخطة ثم أعد البناء.', 'You can intervene: add a note, stop to adjust the plan, then rebuild.')}</div>
+                <div className="flex items-center gap-1.5">
+                  <input value={interjectNote} onChange={e => setInterjectNote(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); interveneAndAdjust(); } }}
+                    placeholder={t('ملاحظة سريعة (اختياري)…', 'Quick note (optional)…')} dir={ar ? 'rtl' : 'ltr'}
+                    className="hw-input flex-1 min-w-0 text-sm py-1.5" />
+                  <button onClick={interveneAndAdjust} className="hw-btn hw-btn-subtle hw-btn-sm !rounded-full shrink-0">
+                    {t('إيقاف وتعديل', 'Stop & adjust')}
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
 
@@ -1207,6 +1472,13 @@ const GovCopilot: React.FC<Props> = (props) => {
                 ? <button onClick={stop} className="gc-send gc-send-stop" title={t('إيقاف', 'Stop')} aria-label={t('إيقاف', 'Stop')}><IconStop /></button>
                 : <button onClick={() => send(input).catch(() => {})} disabled={!input.trim() && !attachments.length} className="gc-send" title={t('إرسال', 'Send')} aria-label={t('إرسال', 'Send')}><IconSend /></button>}
             </div>
+            {/* V5/V16 — wizard opt-out. ON: a build request first proposes an
+                editable plan. OFF: requests go straight to one-shot generation. */}
+            <label className="flex items-center gap-1.5 mt-1.5 text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer select-none w-fit"
+              title={t('قبل البناء الطويل، يقترح المساعد خطة قابلة للتعديل (الطول، المحاور، الإدارات، الأقسام).', 'Before a long build, the assistant proposes an editable plan (length, axes, departments, sections).')}>
+              <input type="checkbox" checked={wizardOn} onChange={e => setWizardOn(e.target.checked)} className="accent-[color:var(--hw-brand,#11a8bc)] rounded-sm" />
+              {t('معالج البناء (يسأل قبل التوليد)', 'Build wizard (asks before generating)')}
+            </label>
           </>
         )}
         {mode === 'edit' && (
