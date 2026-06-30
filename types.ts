@@ -885,11 +885,28 @@ export interface GovDocumentRecord {
   canvasHtml?: string;
 }
 
+// V21: a TextQuoteSelector anchor for an inline review comment — the exact
+// selected span plus a short prefix/suffix of surrounding text (NOT character
+// offsets), so a comment survives the Markdown-vs-canvas render difference.
+export interface GovCommentAnchor {
+  quote: string;          // exact selected sentence/span
+  prefix?: string;        // ~40 chars before (disambiguate repeated quotes)
+  suffix?: string;        // ~40 chars after
+  sectionId?: string;     // the section the quote lives in, if known
+}
+
 export interface GovComment {
   id: string;
   at: string;
   author: string;
   text: string;
+  // V21 inline highlight-and-comment review. All optional → back-compatible with
+  // the legacy free-text comments already stored on gov_documents.
+  anchor?: GovCommentAnchor;
+  status?: 'open' | 'implemented';
+  appliedInVersion?: number;     // the doc version the comment was applied into
+  appliedAt?: string;            // ISO — when the AI applied it
+  changeSummary?: string;        // short AR summary of the applied edit
 }
 
 // ---- Version snapshots (merge-on-rebuild / rollback) ----

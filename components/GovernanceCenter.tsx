@@ -9,6 +9,7 @@ import type {
   GovDiagram, GovDiagramKind, GovGap, GovDocumentRecord, GovModelSnapshot,
   IntegrityIssue, MaturityReport, CoverageRow, FrameworkAlignment, GovAction,
   TraceChain, GovAgentStep, DocChunk, GeneratedArtifact, GovOrgUnit, DocComment,
+  GovComment,
 } from '../types';
 import { ingestDocument, summarizeSentiment } from '../services/ingestionService';
 import { extractFileText } from '../services/fileExtraction';
@@ -27,7 +28,6 @@ import {
 } from '../services/governanceService';
 import { createReviewerToken } from '../services/reviewerTokenService';
 import { createSharedDoc, loadTenantDocComments, snapshotByteLength } from '../services/sharedDocService';
-import { composeReviewerInviteMailto } from '../services/notifyService';
 import { artifactToMarkdown } from '../services/canvasDocument';
 import DocumentCanvas from './DocumentCanvas';
 import {
@@ -497,8 +497,9 @@ ${content.slice(0, 8000)}`;
   const [modelCanvasNodes, setModelCanvasNodes] = useState<any[]>([]);
   const [modelCanvasEdges, setModelCanvasEdges] = useState<any[]>([]);
   // HWK-D2: in-app comment composer (replaces window.prompt); tracks which doc's box is open + its draft.
-  const [commentFor, setCommentFor] = useState<string | null>(null);
-  const [commentText, setCommentText] = useState('');
+  // V21: when the canvas is opened from the read-only «تعليق (N)» count, open it
+  // straight to the review-comments panel.
+  const [canvasPanelOpen, setCanvasPanelOpen] = useState(false);
 
   // rebuild merge toggle (#9)
   const [mergeOnRebuild, setMergeOnRebuild] = useState(true);
@@ -1680,12 +1681,14 @@ ${content.slice(0, 8000)}`;
   // prior version (preserves history + its comments), AI-revise the content by applying the comments
   // (HWK-D5 follow-up), bump the live doc to v+1, clear the addressed comments, and set it back to
   // in_review to re-share. If the AI revision fails, fall back to a content-unchanged bump.
-  const newDocVersion = async (d: GovDocumentRecord) => {
+  const newDocVersion = async (d: GovDocumentRecord): Promise<GovDocumentRecord> => {
     const now = new Date().toISOString();
-    const comments = d.comments || [];
+    const allComments = d.comments || [];
+    const openComments = allComments.filter(c => c.status !== 'implemented');   // legacy (no status) = open
+    const nextVersion = (d.version || 1) + 1;
     const prior: GovDocumentRecord = { ...d, id: uid('govdoc'), title: `${d.title} — ${t('نسخة', 'v')}${d.version || 1}`, updatedAt: now };
     let sections = d.sections, executiveSummary = d.executiveSummary, diagrams = d.diagrams, revised = false;
-    if (model && comments.length) {
+    if (model && openComments.length) {
       setBusy(t('تطبيق التعليقات وتنقيح النسخة…', 'Applying comments & revising…'));
       try {
         const artifact: GeneratedArtifact = {
@@ -1693,9 +1696,16 @@ ${content.slice(0, 8000)}`;
           sections: d.sections, executiveSummary: d.executiveSummary, diagrams: d.diagrams,
           createdAt: new Date(d.createdAt), complete: true,
         };
+        // V21: an anchor-aware instruction per OPEN comment — quoting the
+        // highlighted span pins the edit to the right paragraph and helps the
+        // section matcher (pickEditTargets) lock onto the target.
+        const lines = openComments.map(c => c.anchor?.quote
+          ? t(`- في الفقرة التي تحتوي على: "${c.anchor.quote}" — طبّق هذه الملاحظة: "${c.text}"`,
+              `- In the paragraph containing: "${c.anchor.quote}" — apply this comment: "${c.text}"`)
+          : `- ${c.text}`).join('\n');
         const instruction = t(
-          `طبّق ملاحظات المراجعين التالية على الوثيقة بدقة، دون تغيير ما لم تُطلب مراجعته:\n${comments.map(c => `- ${c.text}`).join('\n')}`,
-          `Apply the following reviewer comments to the document precisely, leaving untouched anything they don't mention:\n${comments.map(c => `- ${c.text}`).join('\n')}`,
+          `طبّق ملاحظات المراجعين التالية على الوثيقة بدقة، دون تغيير ما لم تُطلب مراجعته:\n${lines}`,
+          `Apply the following reviewer comments to the document precisely, leaving untouched anything they don't mention:\n${lines}`,
         );
         const chunks = await loadChunks(tenantId).catch(() => [] as DocChunk[]);
         const out = await editArtifact({ artifact, instruction, model, chunks, language: ar ? 'ar' : 'en', sector, referenceProjects: refProjects });
@@ -1704,45 +1714,35 @@ ${content.slice(0, 8000)}`;
         alertMsg(t('تعذّر التنقيح التلقائي؛ صدر إصدار جديد بالمحتوى الحالي.', 'Auto-revision failed; released a new version with the current content.') + (e?.message ? ` (${e.message})` : ''));
       } finally { setBusy(''); }
     }
-    const next: GovDocumentRecord = { ...d, version: (d.version || 1) + 1, status: 'in_review', comments: [], sections, executiveSummary, diagrams, updatedAt: now };
+    // V21: on a successful apply, mark the open comments `implemented` and KEEP
+    // them on the new version as a per-comment history (status + appliedInVersion
+    // + appliedAt + changeSummary). Revert = the frozen "— vN" snapshot above.
+    const appliedSummary = t('طُبّقت بالذكاء الاصطناعي في هذا الإصدار.', 'AI-applied in this version.');
+    const nextComments: GovComment[] = revised
+      ? allComments.map(c => c.status === 'implemented' ? c : { ...c, status: 'implemented', appliedInVersion: nextVersion, appliedAt: now, changeSummary: appliedSummary })
+      : allComments;
+    const next: GovDocumentRecord = { ...d, version: nextVersion, status: 'in_review', comments: nextComments, sections, executiveSummary, diagrams, updatedAt: now };
+    // The revised content replaces any previously-saved canvas HTML, so the canvas
+    // rebuilds from the new sections instead of showing the stale edited snapshot.
+    if (revised) delete (next as { canvasHtml?: string }).canvasHtml;
     await saveGovDocument(prior);
     await saveGovDocument(next);
     if (model) {
-      const m = appendAudit(model, auth.currentUser?.email || ADMIN_ACTOR, 'doc_version', `${d.title} → v${next.version} (${revised ? t('نُقِّحت بـ', 'revised from') : t('طبّق', 'applied')} ${comments.length} ${t('تعليق', 'comments')})`);
+      const m = appendAudit(model, auth.currentUser?.email || ADMIN_ACTOR, 'doc_version', `${d.title} → v${next.version} (${revised ? t('نُقِّحت بـ', 'revised from') : t('طبّق', 'applied')} ${openComments.length} ${t('تعليق', 'comments')})`);
       await saveModel(m); setModel(m);
     }
     await loadAll();
     alertMsg(revised
       ? t(`أُصدرت النسخة v${next.version} بعد تطبيق التعليقات بالذكاء الاصطناعي وأُعيدت للمراجعة؛ حُفظت النسخة السابقة.`, `Released v${next.version} with the comments AI-applied and re-shared; the prior version is kept.`)
       : t(`أُصدرت النسخة v${next.version} وأُعيدت للمراجعة؛ حُفظت النسخة السابقة.`, `Released v${next.version} and re-shared; the prior version is kept.`));
+    return next;
   };
-  const addDocComment = async (d: GovDocumentRecord, text: string) => {
-    if (!text.trim()) return;
-    // HWK-D2: attribute the comment to the actually signed-in reviewer (was hardcoded ADMIN_ACTOR).
-    const author = auth.currentUser?.email || ADMIN_ACTOR;
-    const rec: GovDocumentRecord = { ...d, updatedAt: new Date().toISOString(), comments: [...(d.comments || []), { id: uid('cmt'), at: new Date().toISOString(), author, text: text.trim() }] };
-    await saveGovDocument(rec); await loadAll();
-  };
-  const submitDocComment = async (d: GovDocumentRecord) => {
-    const txt = commentText.trim(); if (!txt) return;
-    await addDocComment(d, txt); setCommentText(''); setCommentFor(null);
-  };
-  // HWK-D3: mint a /?r= reviewer link for this document, copy it to the clipboard,
-  // and surface it so the owner can send it to a reviewer (who signs in to read &
-  // comment; comments land back on this document).
-  const shareForReview = async (d: GovDocumentRecord) => {
-    try {
-      const { url } = await createReviewerToken(tenantId, d.id, d.title, auth.currentUser?.email || undefined);
-      try { await navigator.clipboard.writeText(url); } catch { /* clipboard blocked — link still shown below */ }
-      // HWK-D4: best-effort — also open a pre-filled mail draft so the owner can
-      // send the invite by email (client mail handler — no server send / no
-      // credentials). May be blocked by the browser; the link is on the clipboard
-      // regardless, so the owner can always paste it into their own email.
-      try { window.open(composeReviewerInviteMailto({ reviewerUrl: url, docTitle: d.title, language: ar ? 'ar' : 'en' }), '_blank'); } catch { /* mail handler unavailable */ }
-      alertMsg(t(`نُسخ رابط المراجعة إلى الحافظة (وفُتحت مسودّة بريد إن سمح المتصفّح):\n${url}`, `Review link copied to clipboard (a mail draft opened, if the browser allowed it):\n${url}`));
-    } catch {
-      alertMsg(t('تعذّر إنشاء رابط المراجعة.', 'Could not create the review link.'));
-    }
+  // V21: mint a /?r= reviewer link for a document (used by the canvas's
+  // "Share with client for review" affordance — the standalone doc-list share
+  // button was removed). The canvas copies the URL to the clipboard and shows it.
+  const mintReviewLink = async (d: GovDocumentRecord): Promise<{ url: string }> => {
+    const { url } = await createReviewerToken(tenantId, d.id, d.title, auth.currentUser?.email || undefined);
+    return { url };
   };
 
   // ---- V14: open a stored document in the FUNCTIONAL editable canvas ----
@@ -4180,31 +4180,17 @@ ${content.slice(0, 8000)}`;
                               </div>
                               <div className="flex flex-wrap gap-1 mt-2">
                                 <button onClick={() => reopenDoc(d)} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>{t('استعراض/تحرير', 'Preview/edit')}</button>
-                                <button onClick={() => setCanvasRec(d)} title={t('افتح المستند في الكانفس: حرّر، احفظ، وشارك رابطاً للعميل', 'Open in the canvas: edit, save, and share a client link')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('الكانفس ومشاركة العميل', 'Canvas & client share')}</button>
+                                <button onClick={() => { setCanvasPanelOpen(false); setCanvasRec(d); }} title={t('افتح المستند في الكانفس: حرّر، احفظ، وشارك رابطاً للعميل، وطبّق تعليقات المراجعة', 'Open in the canvas: edit, save, share a client link, and apply review comments')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('الكانفس ومشاركة العميل', 'Canvas & client share')}</button>
                                 <button onClick={() => handleBatchExport([d], d.title)} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('تصدير', 'Export')}</button>
                                 {d.status !== 'in_review' && <button onClick={() => setDocStatus(d, 'in_review')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('للمراجعة', 'To review')}</button>}
                                 {d.status !== 'approved' && <button onClick={() => setDocStatus(d, 'approved')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد', 'Approve')}</button>}
-                                <button onClick={() => { setCommentText(''); setCommentFor(commentFor === d.id ? null : d.id); }} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('تعليق', 'Comment')}{d.comments?.length ? ` (${d.comments.length})` : ''}</button>
-                                {d.comments && d.comments.length > 0 && <button onClick={() => newDocVersion(d)} title={t('طبّق التعليقات بالذكاء الاصطناعي → نسخة جديدة: تُحفظ النسخة الحالية، يُنقَّح المحتوى وفق التعليقات، ويُرفع الإصدار ويُعاد للمراجعة', 'AI-apply the comments → a new version: the current version is kept, the content is revised from the comments, the version is bumped, and it is re-shared for review')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>{t('إصدار جديد', 'New version')} <span className="opacity-70">v{(d.version || 1) + 1}</span></button>}
-                                <button onClick={() => shareForReview(d)} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>{t('مشاركة للمراجعة', 'Share for review')}</button>
+                                {d.comments && d.comments.length > 0 && <button onClick={() => { setCanvasPanelOpen(true); setCanvasRec(d); }} title={t('استعراض تعليقات المراجعة في الكانفس', 'View the review comments in the canvas')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('التعليقات', 'Comments')} ({d.comments.length})</button>}
+                                {d.comments && d.comments.some(c => c.status !== 'implemented') && <button onClick={() => newDocVersion(d)} title={t('طبّق التعليقات بالذكاء الاصطناعي → نسخة جديدة: تُحفظ النسخة الحالية، يُنقَّح المحتوى وفق التعليقات، ويُرفع الإصدار ويُعاد للمراجعة', 'AI-apply the comments → a new version: the current version is kept, the content is revised from the comments, the version is bumped, and it is re-shared for review')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>{t('إصدار جديد', 'New version')} <span className="opacity-70">v{(d.version || 1) + 1}</span></button>}
                                 <button onClick={() => removeDoc(d.id)} className="hw-btn hw-btn-sm hw-btn-danger flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                               </div>
-                              {commentFor === d.id && (
-                                <div className="mt-2 flex items-start gap-2">
-                                  <textarea value={commentText} onChange={e => setCommentText(e.target.value)} rows={2} autoFocus placeholder={t('اكتب تعليقاً للمراجعة... (⌘/Ctrl+Enter للإرسال)', 'Write a review comment... (⌘/Ctrl+Enter to send)')} className="hw-input flex-1 text-xs resize-y" onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitDocComment(d); }} />
-                                  <div className="flex flex-col gap-1 shrink-0">
-                                    <button onClick={() => submitDocComment(d)} disabled={!commentText.trim()} className="hw-btn hw-btn-xs hw-btn-primary">{t('إرسال', 'Send')}</button>
-                                    <button onClick={() => { setCommentFor(null); setCommentText(''); }} className="hw-btn hw-btn-xs hw-btn-ghost">{t('إلغاء', 'Cancel')}</button>
-                                  </div>
-                                </div>
-                              )}
-                              {d.comments && d.comments.length > 0 && (
-                                <div className="mt-2 space-y-1">
-                                  {d.comments.map(c => (
-                                    <div key={c.id} className="text-[11px] text-slate-500 border-s-2 border-slate-200 dark:border-slate-700 ps-2">{c.text} <span className="text-slate-400">· {c.author} · {new Date(c.at).toLocaleDateString()}</span></div>
-                                  ))}
-                                </div>
-                              )}
+                              {/* V21: review comments are added (highlight-and-comment) on the
+                                  /?r= client screen and read/applied in the canvas panel — the
+                                  inline free-text box + list were removed. */}
                               {/* V14/V20: client/reviewer feedback from /?doc= shares */}
                               {clientComments[d.id] && clientComments[d.id].length > 0 && (
                                 <div className="mt-2 space-y-1">
@@ -4337,6 +4323,10 @@ ${content.slice(0, 8000)}`;
           onClose={() => setCanvasRec(null)}
           onSave={saveCanvasHtml}
           onShare={shareRecord(canvasRec)}
+          comments={canvasRec.comments || []}
+          commentsOpenByDefault={canvasPanelOpen}
+          onShareReview={() => mintReviewLink(canvasRec)}
+          onApplyComments={async () => { const nx = await newDocVersion(canvasRec); setCanvasRec(nx); }}
         />
       )}
     </div>

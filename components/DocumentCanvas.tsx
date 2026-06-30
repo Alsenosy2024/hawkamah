@@ -13,7 +13,7 @@
 //  app's design system (hw-btn, Thmanyah, teal) and inline t(ar,en) i18n.
 // ===========================================================================
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Language } from '../types';
+import type { Language, GovComment } from '../types';
 import { mermaidToSvg, makeSvgResponsive, diagramFallbackHtml } from '../services/diagramService';
 import {
   buildCanvasHtml, extractDocSpec, markdownToDocSpec, canvasHtmlToMarkdown,
@@ -22,6 +22,7 @@ import {
 import { exportMessageDocx, exportMessageXlsx } from '../services/exportService';
 import { exportMessagePptx } from '../services/pptxExport';
 import { rewriteSelection, type SmartEditAction } from '../services/governanceChat';
+import { highlightComments, scrollToComment } from '../services/commentAnchor';
 
 // A Mermaid diagram queued for PROGRESSIVE rendering (PRD V2/V3): the document
 // text shows within a beat, then each diagram fills into its placeholder.
@@ -126,6 +127,16 @@ const IcTrash = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none
 // ── share popover icons (V14) ──
 const IcShare = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98" /></svg>;
 const IcCopy = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>;
+// ── inline comments icons (V21) ──
+const IcComment = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>;
+const IcCheckDone = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>;
+
+// Highlight CSS injected into the canvas iframe for the anchored comment spans.
+const COMMENT_HL_CSS =
+  'mark.cmt-hl{background:#fde68a;color:inherit;border-radius:2px;padding:0 1px;box-shadow:inset 0 -2px 0 rgba(245,158,11,.45)}'
+  + 'mark.cmt-hl-done{background:#bbf7d0;box-shadow:inset 0 -2px 0 rgba(22,163,74,.45)}'
+  + 'mark.cmt-flash{animation:dccmtflash 1.1s ease}'
+  + '@keyframes dccmtflash{0%{filter:brightness(1.12)}40%{filter:brightness(1.4)}100%{filter:brightness(1)}}';
 
 // ── restyle presets (Ailigent-led) ─────────────────────────────────────────
 const COVER_GRADIENTS: { name: string; css: string }[] = [
@@ -171,11 +182,21 @@ export interface DocumentCanvasProps {
   // "Share" button opens a popover (optional access code + view-only) and the
   // host persists the snapshot, returning the ready-to-send URL.
   onShare?: (html: string, opts: { accessCode?: string; allowComments: boolean }) => Promise<{ url: string }>;
+  // V21 — anchored review comments left by the client on the /?r= review screen.
+  // When supplied, the canvas highlights them in the iframe body and shows a
+  // comments panel; `onShareReview` mints a /?r= reviewer link (the standalone
+  // doc-list share button was removed), and `onApplyComments` AI-applies the open
+  // comments into a new version.
+  comments?: GovComment[];
+  onShareReview?: () => Promise<{ url: string }>;
+  onApplyComments?: () => void | Promise<void>;
+  commentsOpenByDefault?: boolean;
 }
 
 const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   markdown, initialHtml, title, subtitle, date, brand, language,
   rootClass = 'fixed inset-0 z-[60]', readOnly = false, onClose, onSave, onAskAi, onShare,
+  comments = [], onShareReview, onApplyComments, commentsOpenByDefault = false,
 }) => {
   const ar = (language || 'ar') === 'ar';
   const t = (a: string, e: string) => (ar ? a : e);
@@ -200,6 +221,18 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   const [shareUrl, setShareUrl] = useState('');
   const [shareErr, setShareErr] = useState('');
   const [shareCopied, setShareCopied] = useState(false);
+  // V21 inline-comments panel + reviewer-link share + AI-apply.
+  const [panelOpen, setPanelOpen] = useState(commentsOpenByDefault);
+  const [revShareBusy, setRevShareBusy] = useState(false);
+  const [revShareUrl, setRevShareUrl] = useState('');
+  const [revShareCopied, setRevShareCopied] = useState(false);
+  const [revShareErr, setRevShareErr] = useState('');
+  const [applyBusy, setApplyBusy] = useState(false);
+  // Read the latest comments from inside the (deps-stable) iframe-load callback.
+  const commentsRef = useRef<GovComment[]>(comments);
+  commentsRef.current = comments;
+  const openCount = comments.filter(c => c.status !== 'implemented').length;
+  const doneCount = comments.length - openCount;
 
   const docTitle = useMemo(
     () => (title || (markdown.match(/^#{1,2}\s+(.+)$/m)?.[1] || t('وثيقة', 'Document'))).slice(0, 80).trim(),
@@ -241,6 +274,21 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markdown, initialHtml, reloadKey]);
 
+  // V21 — highlight the client's anchored review comments inside the iframe body
+  // (the iframe is a non-React srcDoc, so it's safe to mutate directly). Reads the
+  // latest comments via the ref so it stays correct from the deps-stable load
+  // callback below; a separate effect re-runs it when the comments prop changes.
+  const applyCommentHighlights = useCallback((doc: Document | null | undefined) => {
+    if (!doc?.body) return;
+    if (!doc.getElementById('dc-comment-hl')) {
+      const st = doc.createElement('style');
+      st.id = 'dc-comment-hl';
+      st.textContent = COMMENT_HL_CSS;
+      (doc.head || doc.documentElement).appendChild(st);
+    }
+    try { highlightComments(doc.body, (commentsRef.current || []).filter(c => c.anchor)); } catch { /* noop */ }
+  }, []);
+
   // Enable in-place editing once the iframe document is ready.
   const handleIframeLoad = useCallback(() => {
     const doc = iframeRef.current?.contentDocument;
@@ -277,6 +325,8 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       void renderPendingDiagrams(doc, pending, ar ? 'ar' : 'en',
         () => run === renderRunRef.current && !!iframeRef.current);
     }
+    // V21: paint the anchored review-comment highlights (both modes).
+    applyCommentHighlights(doc);
     if (readOnly) return;   // share view: no restyle / selection editing
 
     // Clicking the cover opens the restyle modal (instead of editing its text).
@@ -306,7 +356,43 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     doc.addEventListener('mouseup', updateAsk);
     doc.addEventListener('keyup', updateAsk);
     doc.addEventListener('scroll', () => setAskSel(null), true);
-  }, [onAskAi, ar, readOnly]);
+  }, [onAskAi, ar, readOnly, applyCommentHighlights]);
+
+  // Re-highlight when the comments prop changes (e.g. after an AI apply) without a
+  // full iframe reload.
+  useEffect(() => {
+    applyCommentHighlights(iframeRef.current?.contentDocument);
+  }, [comments, applyCommentHighlights]);
+
+  // Mint a /?r= reviewer link for this document and copy it to the clipboard.
+  const runShareReview = useCallback(async () => {
+    if (!onShareReview || revShareBusy) return;
+    setRevShareBusy(true); setRevShareErr(''); setRevShareCopied(false);
+    try {
+      const { url } = await onShareReview();
+      setRevShareUrl(url);
+      try { await navigator.clipboard.writeText(url); setRevShareCopied(true); } catch { /* clipboard blocked — link still shown */ }
+    } catch {
+      setRevShareErr(t('تعذّر إنشاء رابط المراجعة.', 'Could not create the review link.'));
+    } finally {
+      setRevShareBusy(false);
+    }
+  }, [onShareReview, revShareBusy, ar]);
+
+  // AI-apply the open comments → a new version (host owns the version/history).
+  const runApplyComments = useCallback(async () => {
+    if (!onApplyComments || applyBusy) return;
+    setApplyBusy(true);
+    try { await onApplyComments(); } finally { setApplyBusy(false); }
+  }, [onApplyComments, applyBusy]);
+
+  // Scroll to (and flash) a comment's highlight inside the iframe.
+  const focusComment = useCallback((id: string) => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc?.body) return;
+    const el = scrollToComment(doc.body, id);
+    if (el) { el.classList.add('cmt-flash'); window.setTimeout(() => el.classList.remove('cmt-flash'), 1200); }
+  }, []);
 
   const exec = useCallback((cmd: string, val?: string) => {
     const win = iframeRef.current?.contentWindow;
@@ -534,6 +620,12 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          {(comments.length > 0 || onShareReview || onApplyComments) && (
+            <button type="button" onClick={() => setPanelOpen(o => !o)} aria-pressed={panelOpen}
+              className={`hw-btn hw-btn-sm !rounded-full ${panelOpen ? 'hw-btn-primary' : 'hw-btn-subtle'}`}>
+              <IcComment />{t('التعليقات', 'Comments')}{comments.length ? ` (${comments.length})` : ''}
+            </button>
+          )}
           {onSave && (
             <button type="button" onClick={handleSave} className="hw-btn hw-btn-subtle hw-btn-sm !rounded-full">
               {saved ? <span className="text-emerald-600">✓</span> : <IcSave />}{saved ? t('حُفظ', 'Saved') : t('حفظ', 'Save')}
@@ -785,6 +877,73 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
             </div>
 
             <p className="mt-4 text-[11px] text-slate-400">{t('يُطبَّق التغيير فوراً. أغلِق لمتابعة التحرير.', 'Changes apply immediately. Close to keep editing.')}</p>
+          </div>
+        </div>
+      )}
+
+      {/* V21 — review-comments panel: client's anchored comments (highlighted in
+          the iframe), a "share with client" reviewer link, and the AI-apply action. */}
+      {panelOpen && (
+        <div dir={ar ? 'rtl' : 'ltr'} className="absolute inset-y-0 end-0 z-[57] w-[330px] max-w-[88vw] bg-white dark:bg-slate-900 border-s border-[var(--hw-border)] shadow-2xl flex flex-col">
+          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--hw-border)]">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[var(--hw-brand,#11a8bc)]"><IcComment /></span>
+              <span className="text-[13.5px] font-bold text-slate-800 dark:text-slate-100">{t('تعليقات المراجعة', 'Review comments')}</span>
+            </div>
+            <button type="button" onClick={() => setPanelOpen(false)} title={t('إغلاق', 'Close')} aria-label={t('إغلاق', 'Close')} className="gc-icon-btn"><IcClose /></button>
+          </div>
+
+          <div className="px-4 py-2 flex items-center gap-2 text-[11px] border-b border-[var(--hw-border)]">
+            <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 font-bold">{t('مفتوحة', 'Open')} {openCount}</span>
+            <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 font-bold">{t('مطبّقة', 'Implemented')} {doneCount}</span>
+          </div>
+
+          {(onShareReview || onApplyComments) && (
+            <div className="px-4 py-3 space-y-2 border-b border-[var(--hw-border)]">
+              {onShareReview && (
+                <div>
+                  <button type="button" onClick={runShareReview} disabled={revShareBusy} className="hw-btn hw-btn-subtle hw-btn-sm !rounded-full w-full justify-center">
+                    {revShareBusy ? <IcSpin /> : <IcShare />}{t('شارك مع العميل للمراجعة', 'Share with client for review')}
+                  </button>
+                  {revShareErr && <p className="text-[11px] text-rose-600 mt-1.5">{revShareErr}</p>}
+                  {revShareUrl && (
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <input readOnly value={revShareUrl} onFocus={e => e.currentTarget.select()}
+                        className="flex-1 min-w-0 text-[11px] rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-2 py-1.5 text-slate-600 dark:text-slate-300" />
+                      <button type="button" title={t('نسخ', 'Copy')} onClick={async () => { try { await navigator.clipboard.writeText(revShareUrl); setRevShareCopied(true); } catch { /* noop */ } }} className="gc-icon-btn shrink-0"><IcCopy /></button>
+                    </div>
+                  )}
+                  {revShareCopied && <p className="text-[11px] text-emerald-600 mt-1">{t('نُسخ الرابط ✅', 'Link copied ✅')}</p>}
+                </div>
+              )}
+              {onApplyComments && (
+                <button type="button" onClick={runApplyComments} disabled={applyBusy || openCount === 0}
+                  title={t('طبّق التعليقات المفتوحة بالذكاء الاصطناعي → إصدار جديد', 'AI-apply the open comments → a new version')}
+                  className="hw-btn hw-btn-primary hw-btn-sm !rounded-full w-full justify-center disabled:opacity-50">
+                  {applyBusy ? <IcSpin /> : <IcSpark />}{t('مراجعة وتطبيق التعليقات (AI)', 'Review & apply comments (AI)')}
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            {comments.length === 0 && (
+              <p className="text-[12px] text-slate-400 px-1">{t('لا توجد تعليقات بعد. شارك رابط المراجعة مع العميل لجمع الملاحظات.', 'No comments yet. Share the review link with the client to collect feedback.')}</p>
+            )}
+            {comments.map(c => (
+              <button key={c.id} type="button" onClick={() => c.anchor && focusComment(c.id)}
+                className={`block w-full text-start rounded-lg border p-2.5 transition-colors ${c.anchor ? 'cursor-pointer hover:border-[var(--hw-brand,#11a8bc)]' : 'cursor-default'} ${c.status === 'implemented' ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-900/10' : 'border-slate-200 dark:border-slate-700'}`}>
+                {c.anchor?.quote && <div className="text-[11px] text-slate-500 dark:text-slate-400 border-s-2 border-amber-300 dark:border-amber-700 ps-2 mb-1 line-clamp-2">«{c.anchor.quote}»</div>}
+                <div className="text-[12px] text-slate-700 dark:text-slate-200">{c.text}</div>
+                <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1 flex-wrap">
+                  {c.status === 'implemented'
+                    ? <span className="inline-flex items-center gap-0.5 text-emerald-600 font-bold"><IcCheckDone />{t('طُبّق', 'Implemented')}{c.appliedInVersion ? ` · v${c.appliedInVersion}` : ''}</span>
+                    : <span className="text-amber-600 font-bold">{t('مفتوح', 'Open')}</span>}
+                  <span>· {c.author} · {new Date(c.at).toLocaleDateString()}</span>
+                </div>
+                {c.changeSummary && <div className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-1">{c.changeSummary}</div>}
+              </button>
+            ))}
           </div>
         </div>
       )}
