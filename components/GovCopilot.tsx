@@ -13,6 +13,10 @@ import StepTimeline from './StepTimeline';
 import Markdown, { type CiteRef } from './Markdown';
 import DocumentCanvas from './DocumentCanvas';
 import { looksLikeDocument } from '../services/canvasDocument';
+// Copilot avatar art — a bundled SVG line-icon (robot/chatbot face). Imported as
+// an asset (Vite gives us its hashed URL) and painted via CSS mask so it inherits
+// the live --hw-brand teal in both RTL and dark mode (see RobotAvatar below).
+import robotAvatarUrl from '../src/assets/copilot-robot.svg';
 
 // Build ordered citation refs from the backend's labeled source list. The
 // Python copilot labels each evidence item "مصدر N" (1-indexed); we map that
@@ -117,6 +121,41 @@ const GeminiSpark: React.FC<{ className?: string }> = ({ className }) => (
     </defs>
     <path fill="url(#gcSparkGrad)" d="M12 2c.8 5.5 4.5 9.2 10 10-5.5.8-9.2 4.5-10 10-.8-5.5-4.5-9.2-10-10 5.5-.8 9.2-4.5 10-10z" />
   </svg>
+);
+
+// ── Robot copilot face — the bundled SVG asset painted with the current text
+// color via a CSS mask, so it tracks --hw-brand in light/dark and never needs a
+// second copy of the artwork. The icon is symmetric, so it is correct in RTL. ──
+const RobotMark: React.FC<{ className?: string }> = ({ className }) => (
+  <span
+    aria-hidden="true"
+    className={className}
+    style={{
+      display: 'inline-block',
+      backgroundColor: 'currentColor',
+      WebkitMaskImage: `url(${robotAvatarUrl})`,
+      maskImage: `url(${robotAvatarUrl})`,
+      WebkitMaskRepeat: 'no-repeat',
+      maskRepeat: 'no-repeat',
+      WebkitMaskPosition: 'center',
+      maskPosition: 'center',
+      WebkitMaskSize: 'contain',
+      maskSize: 'contain',
+    }}
+  />
+);
+
+// The copilot's avatar: a soft-teal brand badge framing the robot face. `label`
+// drives role="img"/aria-label so screen readers announce the assistant identity.
+const RobotAvatar: React.FC<{ className?: string; markClassName?: string; label: string }> = ({ className, markClassName, label }) => (
+  <span
+    role="img"
+    aria-label={label}
+    title={label}
+    className={`grid place-items-center shrink-0 rounded-full bg-[var(--hw-brand-100)] text-[color:var(--hw-brand)] ${className || ''}`}
+  >
+    <RobotMark className={markClassName || 'w-[64%] h-[64%]'} />
+  </span>
 );
 
 // Crisp stroke icons (replace the old unicode glyphs)
@@ -862,7 +901,11 @@ const GovCopilot: React.FC<Props> = (props) => {
       {/* header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--hw-border)] shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
-          <GeminiSpark className={`w-6 h-6 shrink-0 ${busy ? 'gc-spark-breathe' : 'gc-spark-idle'}`} />
+          <RobotAvatar
+            label={t('مساعد الحوكمة الآلي', 'Governance copilot assistant')}
+            className={`w-8 h-8 ${busy ? 'gc-spark-breathe' : ''}`}
+            markClassName="w-[19px] h-[19px]"
+          />
           <div className="flex flex-col gap-0.5 min-w-0">
           <span className="text-[15px] font-bold text-slate-900 dark:text-slate-100 truncate">{t('كوبايلوت الحوكمة', 'Governance copilot')}</span>
           <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate leading-none">
@@ -982,7 +1025,13 @@ const GovCopilot: React.FC<Props> = (props) => {
                 {m.sender === 'user' ? (
                   <div className="gc-msg-user gc-msg-in">{m.text}</div>
                 ) : (
-                  <div className="gc-msg-model gc-msg-in">
+                  <div className="flex items-start gap-2.5">
+                  <RobotAvatar
+                    label={t('المساعد', 'Assistant')}
+                    className="w-7 h-7 mt-0.5"
+                    markClassName="w-[17px] h-[17px]"
+                  />
+                  <div className="gc-msg-model gc-msg-in flex-1 min-w-0">
                     {m.text ? (
                       <>
                         <Markdown text={m.text} rtl={ar} citations={m.srcRefs} onCite={handleCite} />
@@ -1025,6 +1074,7 @@ const GovCopilot: React.FC<Props> = (props) => {
                     )}
                     {!m.streaming && looksLikeDocument(m.text) && docCanvasBtn(m.id, m.text)}
                     {!m.streaming && m.text.length > 40 && exportRow(m.text)}
+                  </div>
                   </div>
                 )}
               </div>
