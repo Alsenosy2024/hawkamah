@@ -79,14 +79,30 @@ const safeName = (s: string) => (s || 'report').replace(/[\\/:*?"<>|]+/g, '_').s
 
 // ---------- shared blob download ----------
 function downloadBlob(blob: Blob, fileName: string) {
+  // Guard the broken-blob path that surfaced as a full-page "File not found" on
+  // open (PRD V1): never hand the browser a 0-byte/empty blob to "save" — the
+  // resulting file can't be opened. Bail loudly instead of writing a dead file.
+  if (!blob || blob.size === 0) {
+    console.warn('[export] refusing to download an empty file:', fileName);
+    return;
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = fileName;
+  a.download = fileName || 'document';
+  a.rel = 'noopener';
+  a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  // Keep BOTH the anchor and the object URL alive until the browser has committed
+  // the download. Removing the <a> synchronously (the old behavior) cancels the
+  // transfer in some browsers, and revoking the blob: URL too early leaves the
+  // saved file pointing at freed memory ("File not found" on open). Defer the
+  // single cleanup well past the click instead.
+  setTimeout(() => {
+    try { a.remove(); } catch { /* noop */ }
+    URL.revokeObjectURL(url);
+  }, 10_000);
 }
 
 // ============================================================

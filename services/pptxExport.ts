@@ -47,14 +47,23 @@ function bidi(raw: string): string {
 const cell = (raw: string): string => bidi(stripMarkdown(raw || '—').trim() || '—');
 
 // ── Slide model ──────────────────────────────────────────────────────────────
-interface BulletLine { text: string; level: number; bullet: boolean; quote?: boolean }
+// `sub` marks an in-slide sub-heading line (a markdown h3–h6) — rendered bold so
+// deeper structure reads as a heading WITHOUT exploding into its own slide.
+interface BulletLine { text: string; level: number; bullet: boolean; quote?: boolean; sub?: boolean }
 type Body =
   | { kind: 'lines'; lines: BulletLine[] }
   | { kind: 'table'; headers: string[]; rows: string[][] };
 interface Section { title: string; body: Body[] }
 
-/** Group the AST into heading-rooted sections, each carrying ordered bodies. */
-function toSections(md: string, deckTitle: string): Section[] {
+/** Group the AST into heading-rooted sections, each carrying ordered bodies.
+ *  Only top-level headings (h1/h2) start a NEW section/slide group; deeper
+ *  headings (h3–h6) become bold sub-heading LINES inside the current section.
+ *  This mirrors the canvas builder (canvasDocument.markdownToDocSpec treats
+ *  `level <= 2` as sections, `> 2` as sub-headings) and is the fix for the
+ *  "two words per slide" defect — previously EVERY heading level split a new
+ *  near-empty slide, so a structured report fanned out into hundreds of slides
+ *  carrying a couple of words each. */
+export function toSections(md: string, deckTitle: string): Section[] {
   const blocks = parseMarkdown(md) as MdBlock[];
   const sections: Section[] = [];
   let cur: Section | null = null;
@@ -69,8 +78,13 @@ function toSections(md: string, deckTitle: string): Section[] {
   for (const b of blocks) {
     switch (b.type) {
       case 'heading':
-        cur = { title: stripMarkdown(b.text), body: [] };
-        sections.push(cur);
+        if ((b.level ?? 1) <= 2) {
+          cur = { title: stripMarkdown(b.text), body: [] };
+          sections.push(cur);
+        } else {
+          // h3–h6 → a bold sub-heading line within the current section, not a slide.
+          lines().push({ text: stripMarkdown(b.text), level: 0, bullet: false, sub: true });
+        }
         break;
       case 'paragraph':
         lines().push({ text: stripMarkdown(b.text), level: 0, bullet: false });
@@ -188,9 +202,11 @@ export function buildPptx(markdown: string, title: string, dateStr: string, diag
                 indentLevel: l.level,
                 align: 'right' as const,
                 fontFace: FONT,
-                fontSize: l.level > 0 ? 14 : (l.bullet ? 16 : 15),
-                bold: !!l.quote,
-                color: l.quote ? BRAND.emeraldDark : (l.level > 0 ? BRAND.slate : BRAND.ink),
+                // Sub-headings read a touch larger + bold; quotes bold; bullets 16; body 15.
+                fontSize: l.sub ? 18 : (l.level > 0 ? 14 : (l.bullet ? 16 : 15)),
+                bold: l.sub || !!l.quote,
+                color: l.sub ? BRAND.emeraldDark : (l.quote ? BRAND.emeraldDark : (l.level > 0 ? BRAND.slate : BRAND.ink)),
+                paraSpaceBefore: l.sub ? 6 : 0,
                 paraSpaceAfter: 8,
               },
             })),
