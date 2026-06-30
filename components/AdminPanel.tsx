@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Language, OrganizationDocument, AdminSettings, ClientProfile, SurveyScope, AssessmentKind, SurveyLaunchConfig, ProjectSurveySettings, GovProject, toKindArray } from '../types';
 import { deriveSurveyMinimums } from '../services/geminiService';
 import { compileChunkContext } from '../services/governanceService';
@@ -10,57 +10,19 @@ import { exportAssessmentsReport, exportEmployeeReport, type AssessmentExportFor
 import SurveyLab from './SurveyLab';
 import ResponsesCenter from './ResponsesCenter';
 import {
-  ResponsiveContainer, 
-  PieChart, 
-  Pie, 
-  Cell, 
-  Tooltip, 
-  Legend, 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  LineChart,
-  Line
-} from 'recharts';
-
-/**
- * MeasuredChart — gates ResponsiveContainer mount until the parent box has a
- * positive measured size. Recharts v3 logs `width(-1) and height(-1)` warnings
- * when ResponsiveContainer paints before its flex/grid parent has a resolved
- * size (first paint inside a `min-w-0` grid cell). Measuring first eliminates
- * the warning entirely instead of relying on minWidth/minHeight props (which
- * Recharts v3 ignores for the first-paint size check).
- */
-const MeasuredChart: React.FC<{ className?: string; children: React.ReactNode }> = ({ className, children }) => {
-  const ref = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const measure = () => {
-      const r = el.getBoundingClientRect();
-      setSize(prev => (prev.w === r.width && prev.h === r.height ? prev : { w: r.width, h: r.height }));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const ready = size.w > 0 && size.h > 0;
-  return (
-    <div ref={ref} className={className}>
-      {ready ? (
-        <ResponsiveContainer width={size.w} height={size.h}>
-          {children as React.ReactElement}
-        </ResponsiveContainer>
-      ) : null}
-    </div>
-  );
-};
+  KpiCards,
+  RiasecBarChart,
+  MatchQualityChart,
+  EngagementChart,
+  CompetencyBullets,
+} from './dashboard/DashboardCharts';
+import {
+  computeKpis,
+  computeRiasec,
+  computeScoreBuckets,
+  buildWeeklyEngagement,
+  riasecValue,
+} from './dashboard/dashboardData';
 
 const ARABIC_FONTS = [
   { id: 'Thmanyah Sans', name_ar: 'خط ثمانية (Thmanyah) — الافتراضي', name_en: 'Thmanyah Sans (default)' },
@@ -1158,97 +1120,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
         {dbActiveTab === 'analytics' && (() => {
           // Dynamic analytical variables and charts code
-          const totalCandidates = allAssessments.length;
-          
-          const completeAssessments = allAssessments.filter(item => item.reportData?.totalScore !== undefined);
-          const avgScore = completeAssessments.length > 0 
-            ? Math.round(completeAssessments.reduce((acc, curr) => acc + (curr.reportData.totalScore || 0), 0) / completeAssessments.length)
-            : 74; // Fallback default
-
-          const approvedCount = allAssessments.filter(item => item.evaluatorReview?.status === 'approved').length;
-          const approvalRatio = allAssessments.length > 0
-            ? Math.round((approvedCount / allAssessments.length) * 100)
-            : 80; // Fallback default
-            
-          const totalLoginsCount = logins.length || 18;
-
-          // 2. Holland interests aggregate
-          let rSum = 0, iSum = 0, aSum = 0, sSum = 0, eSum = 0, cSum = 0;
-          let processedRiasecCount = 0;
-          allAssessments.forEach(item => {
-            if (item.reportData?.riasec) {
-              rSum += item.reportData.riasec.R || 0;
-              iSum += item.reportData.riasec.I || 0;
-              aSum += item.reportData.riasec.A || 0;
-              sSum += item.reportData.riasec.S || 0;
-              eSum += item.reportData.riasec.E || 0;
-              cSum += item.reportData.riasec.C || 0;
-              processedRiasecCount++;
-            }
-          });
-
-          if (processedRiasecCount === 0) {
-            rSum = 45; iSum = 78; aSum = 30; sSum = 62; eSum = 85; cSum = 50;
-          }
-
-          const hollandPieData = [
-            { name: language === 'ar' ? 'مبادر (E)' : 'Enterprising (E)', value: eSum, color: '#f59e0b' },
-            { name: language === 'ar' ? 'بحثي (I)' : 'Investigative (I)', value: iSum, color: '#06b6d4' },
-            { name: language === 'ar' ? 'اجتماعي (S)' : 'Social (S)', value: sSum, color: '#10b981' },
-            { name: language === 'ar' ? 'تقليدي (C)' : 'Conventional (C)', value: cSum, color: '#6366f1' },
-            { name: language === 'ar' ? 'واقعي (R)' : 'Realistic (R)', value: rSum, color: '#ef4444' },
-            { name: language === 'ar' ? 'فني (A)' : 'Artistic (A)', value: aSum, color: '#ec4899' },
-          ];
-
-          // 3. Score ranges bar/range data
-          let highMatch = 0, optimalMatch = 0, mildMatch = 0, lowMatch = 0;
-          allAssessments.forEach(item => {
-            if (item.reportData?.totalScore !== undefined) {
-              const score = item.reportData.totalScore;
-              if (score >= 85) highMatch++;
-              else if (score >= 70) optimalMatch++;
-              else if (score >= 55) mildMatch++;
-              else lowMatch++;
-            }
-          });
-
-          const scoreBarData = [
-            { name: language === 'ar' ? 'فائقة (85%+)' : 'High (85%+)', count: highMatch, fill: '#10b981' },
-            { name: language === 'ar' ? 'جيدة (70-85%)' : 'Optimal (70-85%)', count: optimalMatch, fill: '#2563eb' },
-            { name: language === 'ar' ? 'مقبولة (55-70%)' : 'Mild (55-70%)', count: mildMatch, fill: '#f59e0b' },
-            { name: language === 'ar' ? 'تطوير (تحت 55%)' : 'Needs Dev', count: lowMatch, fill: '#ef4444' },
-          ];
-
-          // 4. Time series participation 7-days chart data
-          const last7Days: string[] = [];
-          for (let i = 6; i >= 0; i--) {
-            const d = new Date();
-            d.setDate(d.getDate() - i);
-            const dayStr = (d.getMonth() + 1) + '/' + d.getDate();
-            last7Days.push(dayStr);
-          }
-
-          const weeklyLogData = last7Days.map((dayLabel, index) => {
-            const d = new Date();
-            d.setDate(d.getDate() - (6 - index));
-            const formatKey = d.toDateString().slice(4, 10); // e.g., "Jun 06"
-
-            const assessmentsOnDay = allAssessments.filter(item => {
-              if (!item.timestamp) return false;
-              return new Date(item.timestamp).toDateString().slice(4, 10) === formatKey;
-            }).length;
-
-            const loginsOnDay = logins.filter(item => {
-              if (!item.timestamp) return false;
-              return new Date(item.timestamp).toDateString().slice(4, 10) === formatKey;
-            }).length;
-
-            return {
-              name: dayLabel,
-              assessments: assessmentsOnDay,
-              logins: loginsOnDay,
-            };
-          });
+          const kpis = computeKpis(allAssessments, logins);
+          const riasecData = computeRiasec(allAssessments);
+          const scoreBuckets = computeScoreBuckets(allAssessments);
+          const weeklyEngagement = buildWeeklyEngagement(allAssessments, logins);
 
           // Share/Clipboard generation summary for beneficiary
           const handleCopyAuditSummary = () => {
@@ -1256,15 +1131,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 📊 [تقرير حوكمة الجدارات التنفيذية للجهة المستفيدة - Ailigent.ai]
 --------------------------------------------------
 الجهة المستهدفة بالدراسة: ${settings.clientProfiles?.find(p => p.id === settings.activeClientProfileId)?.name || (settings.companyName || 'الجهة المستفيدة')}
-العدد الإجمالي للمرشحين والموظفين الذين خضعوا للتقييم: ${totalCandidates} موظف
-متوسط نسبة الملاءمة الكلية للجدارات: ${avgScore}%
-معدل اعتماد اللجان والتقييم البشري العالي: ${approvalRatio}%
-إجمالي جلسات حوكمة تسجيل الدخول المسجلة بالمنصة سحابياً: ${totalLoginsCount} جلسة
+العدد الإجمالي للمرشحين والموظفين الذين خضعوا للتقييم: ${kpis.totalCandidates} موظف
+متوسط نسبة الملاءمة الكلية للجدارات: ${kpis.avgScore}%
+معدل اعتماد اللجان والتقييم البشري العالي: ${kpis.approvalRatio}%
+إجمالي جلسات حوكمة تسجيل الدخول المسجلة بالمنصة سحابياً: ${kpis.totalLogins} جلسة
 
 تحليلات سمات الاهتمام المهني السائدة (جدارات هولاند RIASEC):
-- مبادر وعيادي (E): ${eSum} نقطة تراكمية
-- بحثي وتطويري (I): ${iSum} نقطة تراكمية
-- اجتماعي وتواصلي (S): ${sSum} نقطة تراكمية
+- مبادر وعيادي (E): ${riasecValue(riasecData, 'E')} نقطة تراكمية
+- بحثي وتطويري (I): ${riasecValue(riasecData, 'I')} نقطة تراكمية
+- اجتماعي وتواصلي (S): ${riasecValue(riasecData, 'S')} نقطة تراكمية
 
 تم استخراج وحيازة هذا الملف آلياً من سجل الحوكمة المركزي للمنصة ومشاركته مع الإدارة العليا الشريكة بنجاح.
 توقيع حوكمة النظام: Ailigent.ai Cloud Engine ${new Date().toLocaleDateString('ar-EG')}
@@ -1278,218 +1153,35 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
 
           return (
             <div className="space-y-6">
-              {/* Stats Tiles — flat hairline, no gradient */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-slate-200 border border-slate-200 rounded-lg overflow-hidden">
-                <div className="bg-white p-4 text-start">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
-                    {language === 'ar' ? 'الموظفون الخاضعون للتقييم' : 'Evaluated Employees'}
-                  </div>
-                  <div className="text-2xl font-bold text-slate-800 tabular-nums">{totalCandidates}</div>
-                </div>
-
-                <div className="bg-white p-4 text-start">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
-                    {language === 'ar' ? 'متوسط ملاءمة الجدارات' : 'Avg. Competency Match'}
-                  </div>
-                  <div className="text-2xl font-bold text-emerald-600 tabular-nums">{avgScore}%</div>
-                </div>
-
-                <div className="bg-white p-4 text-start">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
-                    {language === 'ar' ? 'معدل الاعتماد' : 'Fit Approval Ratio'}
-                  </div>
-                  <div className="text-2xl font-bold text-emerald-600 tabular-nums">{approvalRatio}%</div>
-                </div>
-
-                <div className="bg-white p-4 text-start">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">
-                    {language === 'ar' ? 'زيارات تسجيل الدخول' : 'Access Logins'}
-                  </div>
-                  <div className="text-2xl font-bold text-slate-800 tabular-nums">{totalLoginsCount}</div>
-                </div>
-              </div>
+              <KpiCards kpis={kpis} language={language} />
 
               {/* Charts grid */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Chart 1: Pie Chart - Holland Careers Prevalence */}
-                <div className="bg-white border border-slate-200 p-4 rounded-lg space-y-3">
-                  <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                    <h4 className="text-xs font-bold text-slate-700">
-                      {language === 'ar' ? 'توزيع سمات هولاند المهنية (RIASEC)' : 'RIASEC Interest Types Prevalence'}
-                    </h4>
-                    <span className="hw-badge-neutral text-[9px]">{language === 'ar' ? 'دائري' : 'Pie'}</span>
-                  </div>
-                  <MeasuredChart className="h-64 w-full min-w-0">
-                      <PieChart>
-                        <Pie
-                          data={hollandPieData}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={60}
-                          outerRadius={80}
-                          paddingAngle={3}
-                          dataKey="value"
-                        >
-                          {hollandPieData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(value) => [`${value} ${language === 'ar' ? 'نقطة' : 'Points'}`, '']} />
-                        <Legend verticalAlign="bottom" height={36} wrapperStyle={{fontSize: '9px', fontWeight: 'bold'}} />
-                      </PieChart>
-                  </MeasuredChart>
-                  <p className="text-[10px] text-slate-500 leading-relaxed text-center">
-                    {language === 'ar'
-                      ? 'تراكم نقاط جدارات RIASEC والاهتمامات المهنية للموظفين وعلاقته بملائمة الشغل.'
-                      : 'Accumulative distribution of RIASEC interests computed in real-time from active response surveys.'}
-                  </p>
-                </div>
-
-                {/* Chart 2: Bar Chart - Match Score Distributions */}
-                <div className="bg-white border border-slate-200 p-4 rounded-lg space-y-3">
-                  <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                    <h4 className="text-xs font-bold text-slate-700">
-                      {language === 'ar' ? 'تصنيف نسب كفاءة التطابق والملاءمة' : 'Competency Match Score Ranges'}
-                    </h4>
-                    <span className="hw-badge-neutral text-[9px]">{language === 'ar' ? 'أعمدة' : 'Bar'}</span>
-                  </div>
-                  <MeasuredChart className="h-64 w-full min-w-0">
-                      <BarChart data={scoreBarData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="name" tick={{ fontSize: 9, fontWeight: 'bold' }} reversed={language === 'ar'} />
-                        <YAxis tick={{ fontSize: 9, fontWeight: 'bold' }} allowDecimals={false} orientation={language === 'ar' ? 'right' : 'left'} />
-                        <Tooltip formatter={(value) => [`${value} ${language === 'ar' ? 'موظفين' : 'Candidates'}`, '']} />
-                        <Bar dataKey="count" radius={[6, 6, 0, 0]}>
-                          {scoreBarData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.fill} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                  </MeasuredChart>
-                  <p className="text-[10px] text-slate-500 leading-relaxed text-center">
-                    {language === 'ar'
-                      ? 'تصنيف المرشحين والموظفين طبقًا لجودة ملاءمة الجدارات.'
-                      : 'Segmenting talent based on overall match scores to identify skill gaps and enterprise top-talents.'}
-                  </p>
-                </div>
-
-                {/* Chart 3: Line Chart - Trend of engagement & Logins */}
-                <div className="bg-white border border-slate-200 p-4 rounded-lg space-y-3 lg:col-span-2">
-                  <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                    <h4 className="text-xs font-bold text-slate-700">
-                      {language === 'ar' ? 'وتيرة تفاعل الموظفين وعمليات الدخول — آخر 7 أيام' : '7-Day Employee Engagement & Server Logins'}
-                    </h4>
-                    <span className="hw-badge-neutral text-[9px]">{language === 'ar' ? 'خطي' : 'Line'}</span>
-                  </div>
-                  <MeasuredChart className="h-56 w-full min-w-0">
-                      <LineChart data={weeklyLogData} margin={{ top: 10, right: 15, left: -20, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="name" tick={{ fontSize: 9, fontWeight: 'bold' }} reversed={language === 'ar'} />
-                        <YAxis tick={{ fontSize: 9, fontWeight: 'bold' }} allowDecimals={false} orientation={language === 'ar' ? 'right' : 'left'} />
-                        <Tooltip />
-                        <Legend wrapperStyle={{fontSize: '9px', fontWeight: 'bold'}} />
-                        <Line 
-                          type="monotone" 
-                          dataKey="assessments" 
-                          name={language === 'ar' ? 'جلسات التقييم المنجزة' : 'Assessments Completed'} 
-                          stroke="#14b8a6" 
-                          strokeWidth={3} 
-                          activeDot={{ r: 8 }} 
-                        />
-                        <Line 
-                          type="monotone" 
-                          dataKey="logins" 
-                          name={language === 'ar' ? 'عمليات ولوج وجلسات الموظفين' : 'Employee Access Logins'} 
-                          stroke="#4f46e5" 
-                          strokeWidth={2} 
-                          strokeDasharray="5 5"
-                        />
-                      </LineChart>
-                  </MeasuredChart>
-                </div>
+                <RiasecBarChart data={riasecData} language={language} />
+                <MatchQualityChart buckets={scoreBuckets} language={language} />
+                <EngagementChart data={weeklyEngagement} language={language} />
               </div>
 
-              {/* Top Competencies Gaps & Strengths Diagnostic Panels */}
+              {/* Top Competencies — bullet charts (value + target + quality bands) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Talent Strengths Detected */}
-                <div className="bg-white p-4 rounded-lg border border-slate-200 text-start space-y-3">
-                  <div className="border-b border-slate-100 pb-2">
-                    <h4 className="text-xs font-bold text-slate-700">
-                      {language === 'ar' ? 'أقوى الجدارات المكتشفة في الكوادر' : 'Top Talent Strengths'}
-                    </h4>
-                  </div>
-                  <div className="space-y-3.5">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-700">{language === 'ar' ? 'التحول الرقمي والذكاء الاصطناعي' : 'Digital Transformation & AI'}</span>
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-black tabular-nums">92%</span>
-                      </div>
-                      <div className="hw-progress">
-                        <div className="hw-progress-bar" style={{ width: '92%' }}></div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-700">{language === 'ar' ? 'المرونة التشغيلية والتكيف مع المتغيرات' : 'Operational Agility & Adaptability'}</span>
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-black tabular-nums">88%</span>
-                      </div>
-                      <div className="hw-progress">
-                        <div className="hw-progress-bar" style={{ width: '88%' }}></div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-700">{language === 'ar' ? 'النزاهة والاتساق الأخلاقي والمثالي' : 'Corporate Integrity & Governance'}</span>
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-black tabular-nums">85%</span>
-                      </div>
-                      <div className="hw-progress">
-                        <div className="hw-progress-bar" style={{ width: '85%' }}></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Gaps and Areas for Training / Intervention */}
-                <div className="bg-white p-4 rounded-lg border border-slate-200 text-start space-y-3">
-                  <div className="border-b border-slate-100 pb-2">
-                    <h4 className="text-xs font-bold text-slate-700">
-                      {language === 'ar' ? 'الجدارات المستهدفة للتطوير والتدريب الموصى بها' : 'Development Gaps & Recommended Interventions'}
-                    </h4>
-                  </div>
-                  <div className="space-y-3.5">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-700">{language === 'ar' ? 'التعاون والموازنة الفاعلة للموارد المشتركة' : 'Cross-functional Collaboration'}</span>
-                        <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded font-black tabular-nums">64%</span>
-                      </div>
-                      <div className="hw-progress">
-                        <div className="hw-progress-bar bg-rose-400" style={{ width: '64%' }}></div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-700">{language === 'ar' ? 'مؤشرات معيار التميز الأوروبي طاقة الـ EFQM' : 'EFQM Institutional Excellence Alignment'}</span>
-                        <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded font-black tabular-nums">59%</span>
-                      </div>
-                      <div className="hw-progress">
-                        <div className="hw-progress-bar bg-rose-400" style={{ width: '59%' }}></div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-700">{language === 'ar' ? 'التمكن الإحصائي والتحليلي للممارسات والبيانات' : 'Data-driven Operational Diagnostics'}</span>
-                        <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded font-black tabular-nums">55%</span>
-                      </div>
-                      <div className="hw-progress">
-                        <div className="hw-progress-bar bg-rose-400" style={{ width: '55%' }}></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <CompetencyBullets
+                  title={language === 'ar' ? 'أقوى الجدارات المكتشفة في الكوادر' : 'Top Talent Strengths'}
+                  language={language}
+                  rows={[
+                    { ar: 'التحول الرقمي والذكاء الاصطناعي', en: 'Digital Transformation & AI', value: 92, target: 85 },
+                    { ar: 'المرونة التشغيلية والتكيف مع المتغيرات', en: 'Operational Agility & Adaptability', value: 88, target: 85 },
+                    { ar: 'النزاهة والاتساق الأخلاقي والمثالي', en: 'Corporate Integrity & Governance', value: 85, target: 85 },
+                  ]}
+                />
+                <CompetencyBullets
+                  title={language === 'ar' ? 'الجدارات المستهدفة للتطوير والتدريب الموصى بها' : 'Development Gaps & Recommended Interventions'}
+                  language={language}
+                  rows={[
+                    { ar: 'التعاون والموازنة الفاعلة للموارد المشتركة', en: 'Cross-functional Collaboration', value: 64, target: 75 },
+                    { ar: 'مؤشرات معيار التميز الأوروبي طاقة الـ EFQM', en: 'EFQM Institutional Excellence Alignment', value: 59, target: 75 },
+                    { ar: 'التمكن الإحصائي والتحليلي للممارسات والبيانات', en: 'Data-driven Operational Diagnostics', value: 55, target: 75 },
+                  ]}
+                />
               </div>
 
               {/* Bottom Executive Share Box */}
