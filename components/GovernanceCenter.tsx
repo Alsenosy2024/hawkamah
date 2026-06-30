@@ -567,6 +567,9 @@ ${content.slice(0, 8000)}`;
     return init;
   });
   const [catFilter, setCatFilter] = useState<string>('');
+  // V24: per-document AI guidance — free-text instructions keyed by doc-spec key,
+  // woven only into THAT document's generation prompt (see handleCreateBatch).
+  const [docGuidance, setDocGuidance] = useState<Record<string, string>>({});
   const [batchRunning, setBatchRunning] = useState(false);
   const [seqGen, setSeqGen] = useState(false);   // HWK-C3: sequential "training-studio" generation (watch each doc build)
   const [batchLog, setBatchLog] = useState<string[]>([]);
@@ -1128,6 +1131,7 @@ ${content.slice(0, 8000)}`;
             const doc = await generateGovernanceDoc({
               docTitle: d.title, goal: d.goal, model, chunks, referenceProjects: refsForBatch,
               sector, language, targetPages: pages, kind: d.key, signal: ac.signal,
+              guidance: docGuidance[d.key], // V24: per-doc AI guidance woven into THIS doc's prompt
               sharedFacts,
               // in parallel mode show the live preview of whichever doc reports last
               onProgress: (pr) => { activeLabel = d.ar; setGenProgress(pr as any); },
@@ -3543,7 +3547,8 @@ ${content.slice(0, 8000)}`;
                         const sel = createSel[d.key] || { on: false, pages: d.defaultPages };
                         const isRec = recs.some(r => r.key === d.key);
                         return (
-                          <div key={d.key} className={`flex items-center gap-2.5 rounded-xl border p-2.5 transition-all ${sel.on ? 'border-emerald-400 bg-white dark:bg-slate-800 shadow-sm' : 'border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/40'}`}>
+                          <div key={d.key} className={`rounded-xl border p-2.5 transition-all ${sel.on ? 'border-emerald-400 bg-white dark:bg-slate-800 shadow-sm' : 'border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/40'}`}>
+                            <div className="flex items-center gap-2.5">
                             <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
                               <input type="checkbox" checked={sel.on}
                                 onChange={e => setCreateSel(prev => ({ ...prev, [d.key]: { ...sel, on: e.target.checked } }))}
@@ -3558,6 +3563,16 @@ ${content.slice(0, 8000)}`;
                                 onChange={e => setCreateSel(prev => ({ ...prev, [d.key]: { ...sel, pages: Math.max(1, Math.min(100, parseInt(e.target.value) || 1)) } }))}
                                 className="w-14 px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-sm text-center font-bold" />
                             </div>
+                            </div>
+                            {/* V24: per-document AI guidance — only for selected rows; woven into THIS doc's generation prompt */}
+                            {sel.on && (
+                              <textarea
+                                value={docGuidance[d.key] || ''}
+                                onChange={e => setDocGuidance(prev => ({ ...prev, [d.key]: e.target.value }))}
+                                rows={2}
+                                placeholder={t('إرشادات للذكاء الاصطناعي لتوليد هذه الوثيقة (اختياري)…', 'AI guidance for generating this document (optional)…')}
+                                className="mt-2 w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-[12px] resize-none" />
+                            )}
                           </div>
                         );
                       })}
