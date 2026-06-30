@@ -10,7 +10,21 @@
 // deployed app's behavior is unchanged. The corpus id == the front-end tenantId,
 // so both stacks read the same uploaded files.
 
+import { parseTargetPages } from './governanceChat';
+import { draftPacing } from './generationProgress';
+
 const BASE = (import.meta.env.VITE_COPILOT_API as string | undefined)?.replace(/\/$/, '') || '';
+
+// V4: the requested page-count is a single source of truth shared with the
+// in-app path. GovCopilot passes the raw request text but no explicit
+// target_pages, so derive it here from the request when not given. Sending it on
+// the wire lets the backend honor the SAME target (the backend must respect it
+// — see PR notes / generation.py). When no count is requested this stays
+// undefined and the request body is byte-for-byte what it was before.
+function withTargetPages<T extends { request: string; target_pages?: number }>(params: T): T {
+  const target_pages = params.target_pages ?? parseTargetPages(params.request);
+  return target_pages ? { ...params, target_pages } : params;
+}
 
 export function copilotEnabled(): boolean {
   return !!BASE;
@@ -133,7 +147,7 @@ export async function draft(
   const res = await fetch(`${BASE}/draft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
+    body: JSON.stringify(withTargetPages(params)),
     signal,
   });
   if (!res.ok) throw new Error(`copilot /draft failed: ${res.status}`);
@@ -154,12 +168,15 @@ export async function draftStream(
   onProgress: DraftProgressCb,
   signal?: AbortSignal,
 ): Promise<CopilotDoc> {
+  // Resolve the requested length ONCE so both the stream and the fallback send
+  // (and pace to) the same single-source-of-truth target (V4).
+  const resolved = withTargetPages(params);
   let streamAccepted = false;   // true once the backend returned 200 + a body (generation started)
   try {
     const res = await fetch(`${BASE}/draft/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+      body: JSON.stringify(resolved),
       signal,
     });
     if (res.ok && res.body) {
@@ -177,7 +194,7 @@ export async function draftStream(
     if (streamAccepted) throw e;
     // Pre-200 / never-connected network error → safe to fall through to heartbeat.
   }
-  return _draftWithHeartbeat(params, onProgress, signal);
+  return _draftWithHeartbeat(resolved, onProgress, signal);
 }
 
 // Parse the SSE frames from /draft/stream: 'progress' events feed onProgress,
@@ -219,23 +236,23 @@ async function _consumeDraftStream(
 // first event fires immediately (guarantees ≥1 progress event before
 // completion); the interval then advances through the stages and holds on the
 // last one. All timers are cleared when the draft resolves or the run aborts.
-const _HEARTBEAT_STAGES = ['outline', 'drafting', 'critique', 'revising'];
-const _HEARTBEAT_MS = 12_000;
+// V4/V7: cadence and total come from draftPacing(target_pages) so the heartbeat
+// reflects the (correctly-scoped) effort — a small doc advances faster.
 async function _draftWithHeartbeat(
   params: { corpus: string; request: string; language?: string; target_pages?: number },
   onProgress: DraftProgressCb,
   signal?: AbortSignal,
 ): Promise<CopilotDoc> {
-  const total = _HEARTBEAT_STAGES.length;
+  const { stages, total, intervalMs } = draftPacing(params.target_pages);
   let i = 0;
   const tick = () => {
     if (signal?.aborted) return;
-    const idx = Math.min(i, total - 1);
-    onProgress({ type: 'progress', stage: _HEARTBEAT_STAGES[idx], done: idx + 1, total });
+    const idx = Math.min(i, stages.length - 1);
+    onProgress({ type: 'progress', stage: stages[idx], done: Math.min(i + 1, total), total });
     i++;
   };
   tick();                                   // immediate first event — no startup silence
-  const handle = setInterval(tick, _HEARTBEAT_MS);
+  const handle = setInterval(tick, intervalMs);
   try {
     return await draft(params, signal);
   } finally {

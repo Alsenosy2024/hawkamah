@@ -5,6 +5,7 @@
 
 import { Type } from '@google/genai';
 import { streamChat, generateJson } from './agentOrchestrator';
+import { resolveLengthTarget } from './governanceChat';
 import type {
   GeneratedArtifact, ArtifactSection, ArtifactSectionPlan, ArtifactProgress, Language,
 } from '../types';
@@ -15,10 +16,29 @@ export interface LongArtifactParams {
   systemInstruction: string;   // persona + numbered docs knowledge base
   clientDetails: string;
   language: Language;
+  targetPages?: number;        // V4: requested length → bounds section count + per-section depth
   signal?: AbortSignal;
   onProgress?: (p: ArtifactProgress) => void;
   onThought?: (chunk: string) => void;
   onSection?: (sections: ArtifactSection[]) => void;  // partial-progress for "export what's done"
+}
+
+// V4: turn a requested page count into per-section budgets so no section runs
+// away. Returns null when no target is set (preserves the original behavior).
+function sectionBudget(targetPages?: number): {
+  pages: number; secMin: number; secMax: number; wordsPerSection: number; maxOutputTokens: number;
+} | null {
+  if (!targetPages || targetPages <= 0) return null;
+  const { pages, sections, wordsPerSection } = resolveLengthTarget(targetPages);
+  return {
+    pages,
+    secMin: Math.max(4, sections - 1),
+    secMax: sections + 2,
+    wordsPerSection,
+    // Per-section ceiling sized to the word budget (+ headroom) so a single
+    // section can't balloon past its share of the document.
+    maxOutputTokens: Math.max(2048, Math.min(12288, Math.round(wordsPerSection * 3 * 1.4))),
+  };
 }
 
 const outlineSchema = {
@@ -62,6 +82,7 @@ const isAborted = (s?: AbortSignal) => !!s?.aborted;
 
 export async function generateLongArtifact(p: LongArtifactParams): Promise<GeneratedArtifact> {
   const { signal, onProgress, onThought, onSection, language } = p;
+  const budget = sectionBudget(p.targetPages);   // null ⇒ legacy unbounded behavior
 
   const artifact: GeneratedArtifact = {
     title: p.title,
@@ -76,11 +97,15 @@ export async function generateLongArtifact(p: LongArtifactParams): Promise<Gener
   onProgress?.({ phase: 'outline', current: 0, total: 1, label: 'بناء الهيكل العام للتقرير...' });
   let plans: ArtifactSectionPlan[] = [];
   try {
+    const sectionRange = budget ? `${budget.secMin} إلى ${budget.secMax}` : '6 إلى 10';
+    const lengthNote = budget
+      ? `\nالطول المستهدف للتقرير ≈ ${budget.pages} صفحة — اجعل عدد الأقسام مناسباً لهذا الطول ولا تُفرط في التقسيم.`
+      : '';
     const outlinePrompt = `أنت تخطّط تقريراً استشارياً ضخماً بعنوان "${p.title}".
 الهدف: ${p.goal}
 الجهة محل الدراسة: ${p.clientDetails}
 
-صمّم هيكلاً من 6 إلى 10 أقسام منطقية متكاملة لتقرير حوكمة وتميّز مؤسسي (مثال: ملخص تنفيذي، الواقع الراهن، مواءمة EFQM/ISO، تحليل الفجوات، مصفوفة الجدارات، التوصيات، خارطة الطريق، الملاحق).
+صمّم هيكلاً من ${sectionRange} أقسام منطقية متكاملة لتقرير حوكمة وتميّز مؤسسي (مثال: ملخص تنفيذي، الواقع الراهن، مواءمة EFQM/ISO، تحليل الفجوات، مصفوفة الجدارات، التوصيات، خارطة الطريق، الملاحق).${lengthNote}
 لكل قسم: عنوان عربي دقيق + هدف يوضّح ما يجب أن يغطّيه. أعد JSON فقط.`;
     const res = await generateJson<{ sections: { title: string; goal: string }[] }>(
       outlinePrompt, outlineSchema, { systemInstruction: p.systemInstruction, signal },
@@ -117,7 +142,10 @@ ${outlineText}
 التزم بما يلي:
 - ابدأ بعنوان فرعي مناسب بصيغة Markdown (## للعناوين الرئيسية، ### للفرعية).
 - استند للوثائق المرقّمة واذكر [وثيقة N] عند كل رقم أو ادعاء مأخوذ منها. لا تختلق أرقاماً.
-- استخدم تعداداً وجداول Markdown عند الحاجة. اكتب بعمق استشاري واف (عدة فقرات).
+- استخدم تعداداً وجداول Markdown عند الحاجة. اكتب بعمق استشاري واف (عدة فقرات).${
+  budget
+    ? `\n- الطول المستهدف لهذا القسم ≈ ${budget.wordsPerSection} كلمة — لا تتجاوزه ولا تُضِف حشواً؛ امنح القسم عمقاً مناسباً لطوله فقط.`
+    : ''}
 - اللغة: العربية الفصحى الرصينة.`;
     artifact.sections[idx].status = 'writing';
     onSection?.([...artifact.sections]);
@@ -125,7 +153,10 @@ ${outlineText}
 
     let content = '';
     const run = () => streamChat(
-      { systemInstruction: p.systemInstruction, history: [], message: sectionPrompt, signal },
+      // V4: cap section output to its word budget so a single section can't run
+      // away. Without a target, leave maxOutputTokens at the model default.
+      { systemInstruction: p.systemInstruction, history: [], message: sectionPrompt, signal,
+        ...(budget ? { maxOutputTokens: budget.maxOutputTokens } : {}) },
       {
         onThought: t => onThought?.(t),
         onAnswer: a => {
