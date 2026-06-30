@@ -317,12 +317,21 @@ export function buildOrgChartMermaid(
   const rootUnits = units.filter(u => u && (!present(u.parentId) || u.parentId === u.id));
   const synthesizeRoot = rootUnits.length !== 1;
   const ROOT_ID = 'org_root';
-  // Root label, deterministic priority: a CEO-type role title (first match in array order, or
-  // the first unit-less role), else the company name, else the literal "الرئيس التنفيذي".
+  // Root label, deterministic priority (array order, never a deputy):
+  //  1) a STRONG chief-exec title (الرئيس التنفيذي / المدير العام / CEO / Chief Executive),
+  //  2) else the loose الرئيس match — both passes EXCLUDE نائب/deputy/vice so a VP that appears
+  //     before the CEO can never win, then 3) the first unit-less role, 4) companyName,
+  //  5) the literal "الرئيس التنفيذي".
   const rootLabel = (): string => {
     const roles = Array.isArray(model?.roles) ? model.roles : [];
-    const ceoRe = /الرئيس التنفيذي|الرئيس|المدير العام|\bCEO\b|chief executive/i;
-    const ceo = roles.find(r => r && r.title && ceoRe.test(r.title)) || roles.find(r => r && !r.unitId);
+    const deputyRe = /نائب|deputy|vice/i;
+    const strongRe = /الرئيس\s+التنفيذي|المدير العام|\bCEO\b|chief executive/i;
+    const looseRe = /الرئيس/;
+    const notDeputy = (t?: string): t is string => !!t && !deputyRe.test(t);
+    const ceo =
+      roles.find(r => r && notDeputy(r.title) && strongRe.test(r.title!)) ||
+      roles.find(r => r && notDeputy(r.title) && looseRe.test(r.title!)) ||
+      roles.find(r => r && !r.unitId);
     return (ceo && ceo.title) || model?.companyName || 'الرئيس التنفيذي';
   };
 

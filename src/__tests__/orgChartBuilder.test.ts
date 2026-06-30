@@ -151,6 +151,19 @@ describe('buildOrgChartMermaid — synthesized single root (collapses multiple p
     expect(out).toMatch(/org_root\["الرئيس التنفيذي"\]/);
   });
 
+  it('never picks a deputy: a VP listed BEFORE the CEO must not become the root label', () => {
+    const vpFirst = model(
+      [{ id: 'a', name: 'أ' }, { id: 'b', name: 'ب' }],
+      [
+        { id: 'r_vp', title: 'نائب الرئيس للتطوير والاستراتيجية', unitId: 'a' }, // VP appears first
+        { id: 'r_ceo', title: 'الرئيس التنفيذي', unitId: 'b' },
+      ],
+    );
+    const out = buildOrgChartMermaid(vpFirst, { includeRoles: false });
+    expect(out).toMatch(/org_root\["الرئيس التنفيذي"\]/);
+    expect(out).not.toContain('نائب الرئيس');
+  });
+
   it('falls back to companyName, then the literal CEO label, for the synthesized root', () => {
     const named = model([{ id: 'a', name: 'أ' }, { id: 'b', name: 'ب' }], [], 'مجموعة كلمة');
     expect(buildOrgChartMermaid(named, { includeRoles: false })).toMatch(/org_root\["مجموعة كلمة"\]/);
