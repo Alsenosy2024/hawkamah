@@ -12,6 +12,7 @@
 
 import { parseTargetPages } from './governanceChat';
 import { draftPacing } from './generationProgress';
+import { downloadBlob } from './exportService';
 
 const BASE = (import.meta.env.VITE_COPILOT_API as string | undefined)?.replace(/\/$/, '') || '';
 
@@ -290,14 +291,11 @@ export async function exportDoc(
   if (!res.ok) throw new Error(`copilot /export failed: ${res.status}`);
   const blob = await res.blob();
   const safe = title.replace(/[^\w؀-ۿ \-]+/g, '_').slice(0, 80).trim() || 'document';
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${safe}.${format}`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  // Route through exportService's hardened downloadBlob (FE-4): it refuses a
+  // 0-byte blob and keeps the anchor + object URL alive past a.click() with a
+  // single deferred cleanup. The old inline version revoked the URL synchronously
+  // right after click() — the dead-download pattern that opens as "File not found".
+  downloadBlob(blob, `${safe}.${format}`);
 }
 
 /** Upload & index files into the tenant's corpus (RAG ingestion). */
