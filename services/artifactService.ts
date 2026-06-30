@@ -17,6 +17,10 @@ export interface LongArtifactParams {
   clientDetails: string;
   language: Language;
   targetPages?: number;        // V4: requested length → bounds section count + per-section depth
+  // V17: owner-defined build criteria/recommendations (pre-formatted directive,
+  // see buildCriteriaLens). Injected into the outline + every section + the
+  // summary so a bulk run actually applies them. '' / undefined ⇒ no change.
+  recommendations?: string;
   signal?: AbortSignal;
   onProgress?: (p: ArtifactProgress) => void;
   onThought?: (chunk: string) => void;
@@ -80,9 +84,17 @@ const critiqueSchema = {
 
 const isAborted = (s?: AbortSignal) => !!s?.aborted;
 
+// V17: turn the owner's recommendations block into a prompt-tail. Pure (no I/O)
+// so it's unit-testable, and a no-op when nothing was configured.
+export function recommendationsDirective(recommendations?: string): string {
+  const r = (recommendations || '').trim();
+  return r ? `\n\n${r}` : '';
+}
+
 export async function generateLongArtifact(p: LongArtifactParams): Promise<GeneratedArtifact> {
   const { signal, onProgress, onThought, onSection, language } = p;
   const budget = sectionBudget(p.targetPages);   // null ⇒ legacy unbounded behavior
+  const recoNote = recommendationsDirective(p.recommendations);   // V17: '' when unset
 
   const artifact: GeneratedArtifact = {
     title: p.title,
@@ -105,7 +117,7 @@ export async function generateLongArtifact(p: LongArtifactParams): Promise<Gener
 الهدف: ${p.goal}
 الجهة محل الدراسة: ${p.clientDetails}
 
-صمّم هيكلاً من ${sectionRange} أقسام منطقية متكاملة لتقرير حوكمة وتميّز مؤسسي (مثال: ملخص تنفيذي، الواقع الراهن، مواءمة EFQM/ISO، تحليل الفجوات، مصفوفة الجدارات، التوصيات، خارطة الطريق، الملاحق).${lengthNote}
+صمّم هيكلاً من ${sectionRange} أقسام منطقية متكاملة لتقرير حوكمة وتميّز مؤسسي (مثال: ملخص تنفيذي، الواقع الراهن، مواءمة EFQM/ISO، تحليل الفجوات، مصفوفة الجدارات، التوصيات، خارطة الطريق، الملاحق).${lengthNote}${recoNote}
 لكل قسم: عنوان عربي دقيق + هدف يوضّح ما يجب أن يغطّيه. أعد JSON فقط.`;
     const res = await generateJson<{ sections: { title: string; goal: string }[] }>(
       outlinePrompt, outlineSchema, { systemInstruction: p.systemInstruction, signal },
@@ -146,7 +158,7 @@ ${outlineText}
   budget
     ? `\n- الطول المستهدف لهذا القسم ≈ ${budget.wordsPerSection} كلمة — لا تتجاوزه ولا تُضِف حشواً؛ امنح القسم عمقاً مناسباً لطوله فقط.`
     : ''}
-- اللغة: العربية الفصحى الرصينة.`;
+- اللغة: العربية الفصحى الرصينة.${recoNote}`;
     artifact.sections[idx].status = 'writing';
     onSection?.([...artifact.sections]);
     onProgress?.({ phase: 'section', current: idx + 1, total: plans.length, label: `كتابة القسم ${idx + 1} من ${plans.length}: ${pl.title}` });
@@ -246,7 +258,7 @@ ${artifact.sections[idx].content}`;
   onProgress?.({ phase: 'assemble', current: 0, total: 1, label: 'صياغة الملخص التنفيذي الرابط...' });
   try {
     const digest = artifact.sections.map((s, i) => `${i + 1}. ${s.title}: ${s.content.slice(0, 600)}`).join('\n');
-    const sumPrompt = `بناءً على الأقسام التالية، اكتب ملخصاً تنفيذياً موجزاً ومترابطاً (٣ إلى ٥ فقرات) يبرز أهم النتائج والتوصيات الكبرى. Markdown عربي فقط.\n\n${digest}`;
+    const sumPrompt = `بناءً على الأقسام التالية، اكتب ملخصاً تنفيذياً موجزاً ومترابطاً (٣ إلى ٥ فقرات) يبرز أهم النتائج والتوصيات الكبرى. Markdown عربي فقط.${recoNote}\n\n${digest}`;
     let summary = '';
     await streamChat(
       { systemInstruction: p.systemInstruction, history: [], message: sumPrompt, signal, maxOutputTokens: 2048 },
