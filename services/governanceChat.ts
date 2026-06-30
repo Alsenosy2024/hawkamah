@@ -3,6 +3,7 @@
 // user clarifying questions and giving guidance specific to the current stage,
 // always grounded in the live CompanyGovernanceModel (single source of truth).
 
+import { ThinkingLevel } from '@google/genai';
 import { streamChat, type ChatTurn, type StreamCallbacks } from './agentOrchestrator';
 import type { CompanyGovernanceModel, Language } from '../types';
 
@@ -319,4 +320,87 @@ export async function stageChat(p: StageChatParams, cb: StreamCallbacks): Promis
     },
     cb,
   );
+}
+
+// ---------------------------------------------------------------------------
+// V11 — inline "smart-edit" rewrite on a canvas selection.
+//
+// The document canvas (DocumentCanvas) shows a floating toolbar over any text
+// selection with one-click AI actions. The text actions (shorten / lengthen /
+// improve / rewrite) call here: a single, low-latency turn that transforms ONLY
+// the selected passage and returns plain text meant to REPLACE that selection in
+// place. (Delete + font-size are pure DOM edits handled in the canvas, no AI.)
+// The result is persisted with the document via the existing canvas save path.
+// ---------------------------------------------------------------------------
+
+export type SmartEditAction = 'shorten' | 'lengthen' | 'improve' | 'rewrite';
+
+const SMART_EDIT_BRIEF: Record<SmartEditAction, { ar: string; en: string }> = {
+  shorten: {
+    ar: 'اختصر النص التالي إلى نسخة أقصر وأكثر إيجازًا مع الحفاظ على المعنى الأساسي والمصطلحات المهمة.',
+    en: 'Shorten the following text into a more concise version while preserving its core meaning and key terms.',
+  },
+  lengthen: {
+    ar: 'وسّع النص التالي واجعله أطول قليلًا بإضافة تفصيل وإيضاح مناسبين، دون حشو أو تكرار أو اختراع حقائق غير موجودة.',
+    en: 'Expand the following text to be somewhat longer with appropriate detail and clarification — no padding, no repetition, and never invent facts.',
+  },
+  improve: {
+    ar: 'حسّن صياغة النص التالي ليصبح أوضح وأكثر احترافية ودقة لغويًا، مع الحفاظ على المعنى واللغة نفسها.',
+    en: 'Improve the wording of the following text so it is clearer, more professional and linguistically precise, keeping the same meaning and language.',
+  },
+  rewrite: {
+    ar: 'أعد صياغة النص التالي بأسلوب مختلف وأفضل، مع الحفاظ التام على المعنى والمحتوى والمصطلحات.',
+    en: 'Rewrite the following text in a different, better style while fully preserving its meaning, content and terminology.',
+  },
+};
+
+// Strip wrappers the model sometimes adds around a bare rewrite (code fences,
+// a single pair of surrounding quotes) so the output drops cleanly in place.
+function cleanRewrite(s: string): string {
+  let out = (s || '').trim();
+  out = out.replace(/^```[a-z]*\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+  const pairs: [string, string][] = [['"', '"'], ['«', '»'], ['“', '”'], ['«', '»']];
+  for (const [open, close] of pairs) {
+    if (out.length > 1 && out.startsWith(open) && out.endsWith(close)) { out = out.slice(1, -1).trim(); break; }
+  }
+  return out;
+}
+
+export interface SmartEditParams {
+  text: string;
+  action: SmartEditAction;
+  language?: Language;
+  signal?: AbortSignal;
+}
+
+/** Transform a selected passage with a one-click AI action. Resolves to the
+ *  plain-text replacement; throws when the model returns nothing usable so the
+ *  caller leaves the selection untouched (never inserts an error string). */
+export async function rewriteSelection(p: SmartEditParams): Promise<string> {
+  const ar = (p.language || 'ar') === 'ar';
+  const brief = SMART_EDIT_BRIEF[p.action][ar ? 'ar' : 'en'];
+  const sys = [
+    ar
+      ? 'أنت محرّر وثائق حوكمة محترف. تُعدّل المقطع المحدّد فقط داخل وثيقة قائمة.'
+      : 'You are a professional governance-document editor. You edit only the selected passage inside an existing document.',
+    brief,
+    ar
+      ? 'أعِد المخرجات كنص عادي صرف يحل محل المقطع المحدّد مباشرة: باللغة نفسها، دون أي مقدمات أو شروح أو علامات اقتباس أو رموز Markdown أو عناوين. حافظ على النبرة الرسمية للوثيقة.'
+      : 'Return plain text only, meant to directly replace the selected passage: same language, with no preamble, explanation, quotes, Markdown markers or headings. Keep the document’s formal tone.',
+  ].join('\n');
+
+  const answer = await streamChat({
+    systemInstruction: sys,
+    history: [],
+    message: p.text,
+    signal: p.signal,
+    temperature: p.action === 'rewrite' ? 0.6 : 0.4,
+    maxOutputTokens: 2048,
+    thinkingLevel: ThinkingLevel.LOW,
+  });
+  const out = cleanRewrite(answer);
+  // streamChat returns a fixed Arabic fallback string when the model produced no
+  // content — never drop that (or an empty result) into the user's document.
+  if (!out || out.includes('تعذّر توليد رد')) throw new Error('REWRITE_EMPTY');
+  return out;
 }
