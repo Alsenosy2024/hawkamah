@@ -576,3 +576,176 @@ export function looksLikeDocument(md: string): boolean {
   const hasTable = /\n\s*\|?[^\n]*\|[^\n]*\n\s*\|?[\s:|-]+\|/.test(s);
   return headings >= 1 || hasTable || s.length > 600;
 }
+
+// ===========================================================================
+//  Canvas HTML → Markdown — the WYSIWYG export bridge (PRD V12).
+//
+//  The in-app canvas (DocumentCanvas) edits the document in place via designMode
+//  and exports the LIVE HTML to PDF directly (browser print → perfect Arabic).
+//  Word / PowerPoint / Excel, however, are built from Markdown by the existing
+//  exporters, so to make THOSE formats match the *edited* canvas too we serialize
+//  the live canvas HTML back to Markdown here and feed it to those exporters.
+//  "What you see in the canvas is what you export", for every format.
+//
+//  PURE (string in → string out, no DOM) so it unit-tests in the node harness.
+//  Keys off the stable block structure emitted by buildCanvasHtml; the cover, the
+//  table-of-contents and purely-visual blocks (KPI cards, charts, figures) are
+//  dropped — those carry through to the PDF, while the textual content + tables
+//  flow to Word/PPTX/Excel. Resilient to the inline tags designMode introduces
+//  (<span>/<font>/<b>/<i>…): block detection ignores them and inline cleanup
+//  strips them down to plain Markdown emphasis.
+// ===========================================================================
+
+function decodeEntities(s: string): string {
+  return String(s ?? '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;|&apos;/gi, "'")
+    .replace(/&#0*38;/g, '&');
+}
+
+const stripTags = (html: string): string => String(html ?? '').replace(/<[^>]+>/g, '');
+
+// Inline HTML → Markdown-ish text: keep bold/italic/code/links, drop everything
+// else (designMode spans, font tags, the cover pattern, …), then decode + collapse.
+function inlineToText(html: string): string {
+  let s = String(html ?? '');
+  s = s.replace(/<\s*br\s*\/?>/gi, ' ');
+  s = s.replace(/<(strong|b)(\s[^>]*)?>/gi, '**').replace(/<\/(strong|b)\s*>/gi, '**');
+  s = s.replace(/<(em|i)(\s[^>]*)?>/gi, '*').replace(/<\/(em|i)\s*>/gi, '*');
+  s = s.replace(/<code(\s[^>]*)?>/gi, '`').replace(/<\/code\s*>/gi, '`');
+  s = s.replace(/<a\b[^>]*>/gi, '').replace(/<\/a\s*>/gi, ''); // keep the visible link text
+  s = stripTags(s);
+  s = decodeEntities(s);
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+// Remove a <div>…</div> subtree (and everything inside it, however deeply nested)
+// whenever its class matches `test` — used to drop KPI/chart cards that would
+// otherwise leak their inner <h3>/<ul> into the text stream.
+function dropDivsByClass(html: string, test: (cls: string) => boolean): string {
+  const re = /<div\b([^>]*)>|<\/div\s*>/gi;
+  let res = '';
+  let cursor = 0;   // copy head into `html`
+  let depth = 0;    // div nesting while inside a dropped subtree (0 = not dropping)
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const isOpen = m[0][1] !== '/';
+    if (depth === 0) {
+      if (isOpen) {
+        const clsM = /class\s*=\s*["']([^"']*)["']/i.exec(m[1] || '');
+        if (clsM && test(clsM[1])) { res += html.slice(cursor, m.index); depth = 1; }
+      }
+    } else if (isOpen) {
+      depth++;
+    } else {
+      depth--;
+      if (depth === 0) cursor = re.lastIndex;
+    }
+  }
+  res += html.slice(cursor);
+  return res;
+}
+
+function listToMd(inner: string, ordered: boolean): string {
+  const items: string[] = [];
+  const liRe = /<li\b[^>]*>([\s\S]*?)<\/li\s*>/gi;
+  let m: RegExpExecArray | null; let n = 1;
+  while ((m = liRe.exec(inner))) {
+    const text = inlineToText(m[1]);
+    if (text) items.push((ordered ? `${n++}. ` : '- ') + text);
+  }
+  return items.join('\n');
+}
+
+function tableToMd(inner: string): string {
+  const rows: string[][] = [];
+  const trRe = /<tr\b[^>]*>([\s\S]*?)<\/tr\s*>/gi;
+  let tr: RegExpExecArray | null;
+  while ((tr = trRe.exec(inner))) {
+    const cells: string[] = [];
+    const cellRe = /<(th|td)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
+    let c: RegExpExecArray | null;
+    while ((c = cellRe.exec(tr[1]))) cells.push(inlineToText(c[2]).replace(/\|/g, '\\|') || ' ');
+    if (cells.length) rows.push(cells);
+  }
+  if (!rows.length) return '';
+  const ncol = Math.max(...rows.map(r => r.length));
+  const pad = (r: string[]) => { const x = r.slice(); while (x.length < ncol) x.push(' '); return x; };
+  const line = (r: string[]) => `| ${r.join(' | ')} |`;
+  const head = pad(rows[0]);
+  const sep = Array(ncol).fill('---');
+  return [line(head), line(sep), ...rows.slice(1).map(pad).map(line)].join('\n');
+}
+
+// Strip a leading numeric badge (`<span class="n">01</span>`) from a section head.
+function headingText(h: string): string {
+  return inlineToText(h.replace(/<span\b[^>]*class=["'][^"']*\bn\b[^"']*["'][^>]*>[\s\S]*?<\/span\s*>/i, ''));
+}
+
+function sectionInnerToMd(innerRaw: string): string {
+  // Drop the purely-visual subtrees (KPI rows + chart cards) before scanning.
+  let inner = dropDivsByClass(innerRaw, c => /\b(card|kpis)\b/.test(c));
+  inner = inner.replace(/<figure\b[^>]*>[\s\S]*?<\/figure\s*>/gi, '');
+  inner = inner.replace(/<svg\b[\s\S]*?<\/svg\s*>/gi, '');
+
+  const out: string[] = [];
+  // Block-level scan in document order. Group map: 1=heading level, 2=heading
+  // content, 3=<p>, 4=list tag, 5=list content, 6=<table>, 7=<blockquote>,
+  // 8=callout <div>, 9=<pre>. Close tags are matched loosely (e.g. </h[1-6]>) so
+  // a single combined pattern needs no fragile cross-group backreferences.
+  const re = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h[1-6]\s*>|<p\b[^>]*>([\s\S]*?)<\/p\s*>|<(ul|ol)\b[^>]*>([\s\S]*?)<\/(?:ul|ol)\s*>|<table\b[^>]*>([\s\S]*?)<\/table\s*>|<blockquote\b[^>]*>([\s\S]*?)<\/blockquote\s*>|<div\b[^>]*class="[^"]*\bcallout\b[^"]*"[^>]*>([\s\S]*?)<\/div\s*>|<pre\b[^>]*>([\s\S]*?)<\/pre\s*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(inner))) {
+    if (m[1]) {                                    // h1–h6
+      const text = headingText(m[2]);
+      if (text) out.push('#'.repeat(Math.min(6, Number(m[1]))) + ' ' + text);
+    } else if (m[3] != null) {                     // p
+      const text = inlineToText(m[3]);
+      if (text) out.push(text);
+    } else if (m[4]) {                             // ul / ol
+      const md = listToMd(m[5] || '', m[4].toLowerCase() === 'ol');
+      if (md) out.push(md);
+    } else if (m[6] != null) {                     // table
+      const md = tableToMd(m[6]);
+      if (md) out.push(md);
+    } else if (m[7] != null || m[8] != null) {     // blockquote / callout
+      const text = inlineToText(m[7] != null ? m[7] : m[8]);
+      if (text) out.push('> ' + text);
+    } else if (m[9] != null) {                      // pre / code
+      const code = decodeEntities(stripTags(m[9])).replace(/\s+$/, '');
+      if (code.trim()) out.push('```\n' + code + '\n```');
+    }
+  }
+  return out.join('\n\n');
+}
+
+/** Serialize the live canvas HTML (DocumentCanvas.liveHtml()) back to Markdown,
+ *  capturing the user's in-canvas edits. Cover + TOC + visual-only blocks are
+ *  omitted (they ride the PDF); headings, paragraphs, lists, tables, callouts
+ *  and code carry through to the Word/PPTX/Excel exporters. */
+export function canvasHtmlToMarkdown(html: string): string {
+  const input = String(html || '');
+  const bodyM = input.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/i);
+  const scope = bodyM ? bodyM[1] : input;
+
+  // Canvas <section>s don't nest, so a non-greedy split is safe.
+  const sectionRe = /<section\b([^>]*)>([\s\S]*?)<\/section\s*>/gi;
+  const parts: string[] = [];
+  let sawSection = false;
+  let sm: RegExpExecArray | null;
+  while ((sm = sectionRe.exec(scope))) {
+    sawSection = true;
+    const attrs = sm[1] || '';
+    const inner = sm[2] || '';
+    if (/\bcover\b/.test(attrs)) continue;                                     // skip the cover page
+    if (/class=["'][^"']*\btoc(-title)?\b/i.test(inner)) continue;            // skip the TOC page
+    const md = sectionInnerToMd(inner);
+    if (md.trim()) parts.push(md.trim());
+  }
+  const body = sawSection ? parts.join('\n\n') : sectionInnerToMd(scope);
+  return body.replace(/\n{3,}/g, '\n\n').trim() + '\n';
+}

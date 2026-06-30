@@ -16,9 +16,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Language } from '../types';
 import { mermaidToSvg } from '../services/diagramService';
 import {
-  buildCanvasHtml, extractDocSpec, markdownToDocSpec,
+  buildCanvasHtml, extractDocSpec, markdownToDocSpec, canvasHtmlToMarkdown,
   type DocSpec, type DocBlock, type MdToSpecOptions,
 } from '../services/canvasDocument';
+import { exportMessageDocx, exportMessageXlsx } from '../services/exportService';
+import { exportMessagePptx } from '../services/pptxExport';
 
 // ── prepare: markdown/spec → canvas HTML, with Mermaid pre-rendered to SVG ──
 // Diagrams are rendered to brand-themed INLINE SVG (htmlLabels on) so Arabic
@@ -118,6 +120,8 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   const [coverOpen, setCoverOpen] = useState(false);
   const [askSel, setAskSel] = useState<{ text: string; top: number; left: number } | null>(null);
   const [saved, setSaved] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);                     // export-format menu
+  const [exporting, setExporting] = useState<'docx' | 'pptx' | 'xlsx' | ''>('');
 
   const docTitle = useMemo(
     () => (title || (markdown.match(/^#{1,2}\s+(.+)$/m)?.[1] || t('وثيقة', 'Document'))).slice(0, 80).trim(),
@@ -243,6 +247,28 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     else frame.onload = fire;
   }, [liveHtml]);
 
+  // WYSIWYG export (PRD V12): Word / PowerPoint / Excel are built from the LIVE
+  // edited canvas — we serialize its HTML back to Markdown and feed the shared
+  // exporters, so every format matches what the user sees (PDF prints the HTML
+  // directly above). The DOCX font stays Almarai for reliable Word Arabic shaping;
+  // the canvas + PDF carry the Thmanyah brand font (V13).
+  const doExport = useCallback(async (kind: 'pdf' | 'docx' | 'pptx' | 'xlsx') => {
+    setMenuOpen(false);
+    if (kind === 'pdf') { exportPdf(); return; }
+    setExporting(kind);
+    try {
+      const md = canvasHtmlToMarkdown(liveHtml());
+      const company = (brand || '').split(/[·|]/)[0].trim() || undefined;
+      if (kind === 'docx') await exportMessageDocx(md, docTitle, { language, companyName: company });
+      else if (kind === 'pptx') await exportMessagePptx(md, docTitle, { companyName: company });
+      else exportMessageXlsx(md, docTitle);
+    } catch (e) {
+      console.warn('[canvas export] failed', e);
+    } finally {
+      setExporting('');
+    }
+  }, [liveHtml, exportPdf, brand, docTitle, language]);
+
   const handleSave = useCallback(() => {
     onSave?.(liveHtml());
     setSaved(true);
@@ -276,9 +302,32 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
               {saved ? <span className="text-emerald-600">✓</span> : <IcSave />}{saved ? t('حُفظ', 'Saved') : t('حفظ', 'Save')}
             </button>
           )}
-          <button type="button" onClick={exportPdf} disabled={loading} className="hw-btn hw-btn-primary hw-btn-sm !rounded-full">
-            <IcDownload />{t('تصدير PDF', 'Export PDF')}
-          </button>
+          <div className="relative">
+            <button type="button" onClick={() => setMenuOpen(o => !o)} disabled={loading || !!exporting}
+              aria-haspopup="menu" aria-expanded={menuOpen} className="hw-btn hw-btn-primary hw-btn-sm !rounded-full">
+              {exporting ? <IcSpin /> : <IcDownload />}{t('تصدير', 'Export')}
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" className={menuOpen ? 'rotate-180 transition-transform' : 'transition-transform'}><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+            {menuOpen && (
+              <>
+                <div className="fixed inset-0 z-[10000]" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+                <div role="menu" dir={ar ? 'rtl' : 'ltr'}
+                  className="absolute z-[10001] mt-1.5 end-0 min-w-[200px] rounded-xl border border-[var(--hw-border)] bg-white dark:bg-slate-800 p-1.5 shadow-2xl dc-pop">
+                  {([
+                    ['pdf', t('PDF — مطابق للكانفس', 'PDF — matches canvas')],
+                    ['docx', t('Word (.docx)', 'Word (.docx)')],
+                    ['pptx', t('PowerPoint (.pptx)', 'PowerPoint (.pptx)')],
+                    ['xlsx', t('Excel (.xlsx)', 'Excel (.xlsx)')],
+                  ] as const).map(([k, label]) => (
+                    <button key={k} type="button" role="menuitem" onClick={() => doExport(k)}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-[var(--hw-brand-50,#eef8fa)] hover:text-[var(--hw-brand,#11a8bc)] transition-colors text-start">
+                      {exporting === k ? <IcSpin /> : <IcDownload />}{label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           <button type="button" onClick={onClose} title={t('إغلاق', 'Close')} aria-label={t('إغلاق', 'Close')} className="gc-icon-btn">
             <IcClose />
           </button>
