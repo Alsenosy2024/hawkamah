@@ -50,3 +50,25 @@ export function toAskCallbacks(h: GenerationProgressHandler): AskCallbacks {
     onError: err => h({ type: 'error', err }),
   };
 }
+
+// V4/V7 — scope the long-run progress to the (correctly-sized) target so the
+// timeline reflects real effort instead of a flat, fixed set of stages. Used by
+// the /draft heartbeat fallback (when the backend can't stream per-section
+// events): a 10-page doc advances faster and reports a smaller total than a
+// 100-page one. `stages` are the canonical, truthful stage names in order.
+export interface DraftPacing {
+  stages: string[];   // ordered stage names (outline → drafting → critique → revising)
+  total: number;      // realistic step count: outline + N sections + critique + revise
+  intervalMs: number; // fallback cadence, proportional to the scoped target
+}
+
+export function draftPacing(targetPages?: number): DraftPacing {
+  const pages = targetPages && targetPages > 0 ? Math.min(120, Math.round(targetPages)) : 0;
+  const sections = pages ? Math.max(4, Math.min(16, Math.round(pages / 2) + 2)) : 8;
+  const total = sections + 3; // outline + sections + critique + revise
+  // Proportional to scope but bounded so the bar neither sprints nor stalls.
+  const intervalMs = pages
+    ? Math.max(4000, Math.min(15000, Math.round((pages / 10) * 9000)))
+    : 12000;
+  return { stages: ['outline', 'drafting', 'critique', 'revising'], total, intervalMs };
+}

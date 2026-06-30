@@ -129,6 +129,7 @@ export interface StageChatParams {
   fileContext?: string;      // retrieved actual content from uploaded files (RAG)
   fileCount?: number;        // how many source files are bound to the tenant
   longForm?: boolean;        // request thorough, document-grade output
+  targetPages?: number;      // V4: explicit requested length (overrides parsing message)
   stateSnapshot?: GovStateSnapshot; // P0-2: live page state, authoritative
 }
 
@@ -145,10 +146,120 @@ const FORMAT_AR =
 const FORMAT_EN =
   'Formatting: clean structured Markdown — headings (#, ##), lists, tables (| ... |), rules (---), **bold**. Never emit stray hashtags or raw symbols. Sequence the content in clear sections.';
 
+// Fallback density bands — used ONLY when the user gives NO explicit page count
+// (a vague "اكتب سياسة كاملة"). When a count IS stated it wins (see
+// resolveLengthTarget / buildLengthDirective below), which is the V4 fix.
 const LONG_AR =
-  'عندما يطلب المستخدم صياغة كاملة (استراتيجية / سياسة / لائحة / دليل): أعطِ إجابة طويلة دقيقة ومكتملة الأقسام (مقدمة، نطاق، تعريفات، بنود تفصيلية مرقّمة، أدوار ومسؤوليات بجدول، مؤشرات أداء، ملاحق) — لا تختصر. ضبط الدسامة حسب الحجم: وثيقة بسيطة ≈ 8–12 صفحة، متوسطة ≈ 15–20، شاملة ≈ 25–30 صفحة. وزّع الأقسام والجداول لتعكس هذا الحجم.';
+  'عندما يطلب المستخدم صياغة كاملة (استراتيجية / سياسة / لائحة / دليل) دون تحديد عدد صفحات: أعطِ إجابة طويلة دقيقة ومكتملة الأقسام (مقدمة، نطاق، تعريفات، بنود تفصيلية مرقّمة، أدوار ومسؤوليات بجدول، مؤشرات أداء، ملاحق) — لا تختصر. ضبط الدسامة حسب الحجم: وثيقة بسيطة ≈ 8–12 صفحة، متوسطة ≈ 15–20، شاملة ≈ 25–30 صفحة. وزّع الأقسام والجداول لتعكس هذا الحجم.';
 const LONG_EN =
-  'When the user asks for a full draft (strategy/policy/regulation/manual): produce a long, accurate, fully-sectioned answer (purpose, scope, definitions, numbered detailed clauses, roles & responsibilities table, KPIs, annexes) — do not truncate. Calibrate density to scope: simple ≈ 8–12 pages, medium ≈ 15–20, comprehensive ≈ 25–30 pages. Distribute sections and tables to match.';
+  'When the user asks for a full draft (strategy/policy/regulation/manual) WITHOUT stating a page count: produce a long, accurate, fully-sectioned answer (purpose, scope, definitions, numbered detailed clauses, roles & responsibilities table, KPIs, annexes) — do not truncate. Calibrate density to scope: simple ≈ 8–12 pages, medium ≈ 15–20, comprehensive ≈ 25–30 pages. Distribute sections and tables to match.';
+
+// ---------------------------------------------------------------------------
+// V4 — the requested page-count is a single source of truth.
+//
+// The user states a length in free Arabic/English text ("اكتب 10 صفحات", "عشر
+// صفحات", "a 25-page report"). Historically that number was ignored: the draft
+// prompt hard-coded the density bands above and the copilot path passed a loose
+// target, so a "10 pages" ask ballooned to ~105. parseTargetPages extracts the
+// requested count from the request string so EVERY generation path (in-app
+// stageChat + the copilot /draft backend) honors the SAME target. It returns
+// undefined when no explicit page count is asked for — callers then keep their
+// existing default density, so vague requests are unchanged (no regression).
+// ---------------------------------------------------------------------------
+
+// Arabic-Indic (U+0660–0669) + Extended-Arabic/Persian (U+06F0–06F9) digits → ASCII.
+function normalizeDigits(s: string): string {
+  return s.replace(/[٠-٩۰-۹]/g, d => {
+    const code = d.charCodeAt(0);
+    return String(code >= 0x06F0 ? code - 0x06F0 : code - 0x0660);
+  });
+}
+
+// Spelled Arabic cardinals that realistically precede "صفحة/صفحات" in a request.
+const AR_SPELLED: Record<string, number> = {
+  'واحدة': 1, 'واحده': 1, 'واحد': 1,
+  'اثنتين': 2, 'اثنتان': 2, 'اثنين': 2, 'اثنان': 2, 'إثنين': 2, 'إثنتين': 2,
+  'ثلاث': 3, 'ثلاثة': 3, 'ثلاثه': 3,
+  'أربع': 4, 'اربع': 4, 'أربعة': 4, 'اربعة': 4, 'اربعه': 4,
+  'خمس': 5, 'خمسة': 5, 'خمسه': 5,
+  'ست': 6, 'ستة': 6, 'سته': 6,
+  'سبع': 7, 'سبعة': 7, 'سبعه': 7,
+  'ثمان': 8, 'ثماني': 8, 'ثمانية': 8, 'ثمانيه': 8,
+  'تسع': 9, 'تسعة': 9, 'تسعه': 9,
+  'عشر': 10, 'عشرة': 10, 'عشره': 10,
+  'عشرين': 20, 'عشرون': 20, 'ثلاثين': 30, 'ثلاثون': 30,
+  'أربعين': 40, 'اربعين': 40, 'خمسين': 50, 'خمسون': 50,
+  'ستين': 60, 'سبعين': 70, 'ثمانين': 80, 'تسعين': 90,
+  'مئة': 100, 'مائة': 100, 'مية': 100, 'ميه': 100,
+};
+const AR_PAGE = 'صفحات|صفحة|صفحه';
+
+/**
+ * Extract the requested document length (in pages) from a free-text request,
+ * Arabic or English. Only matches a number/cardinal that DIRECTLY precedes a
+ * page word ("10 صفحات", "عشر صفحات", "25-page", "صفحتين") so it never picks up
+ * unrelated numbers (years, "ISO 9001", "صفحة 3 من العقد"). Returns undefined
+ * when no page count is requested. Clamped to a sane 1–300 before return.
+ */
+export function parseTargetPages(text?: string | null): number | undefined {
+  if (!text) return undefined;
+  const s = normalizeDigits(String(text));
+
+  // Number immediately before a page word, Arabic or English (the length idiom).
+  const numPatterns = [
+    new RegExp(`(\\d{1,3})\\s*(?:${AR_PAGE})`),                       // "10 صفحات"
+    new RegExp(`(\\d{1,3})\\s*[-\\u2013]?\\s*pages?`, 'i'),           // "10 pages", "10-page"
+  ];
+  for (const re of numPatterns) {
+    const m = s.match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n >= 1 && n <= 300) return n;
+    }
+  }
+
+  // Dual page word with no number → exactly two pages.
+  if (/صفحتين|صفحتان/.test(s)) return 2;
+
+  // Spelled Arabic cardinal immediately before a page word ("عشر صفحات").
+  const sm = s.match(new RegExp(`([\\u0621-\\u064A]+)\\s+(?:${AR_PAGE})`));
+  if (sm && sm[1] in AR_SPELLED) return AR_SPELLED[sm[1]];
+
+  return undefined;
+}
+
+export interface ResolvedLength {
+  pages: number;            // clamped target
+  sections: number;         // suggested section count
+  wordsPerSection: number;  // per-section word budget
+  maxOutputTokens: number;  // single-shot output ceiling (a hard runaway guard)
+}
+
+const WORDS_PER_PAGE = 340; // ~ one dense Arabic governance page
+
+/** Turn a requested page count into a concrete, shared generation budget. */
+export function resolveLengthTarget(pages: number): ResolvedLength {
+  const p = Math.max(1, Math.min(120, Math.round(pages)));
+  const sections = Math.max(3, Math.min(16, Math.round(p / 2) + 2));
+  const wordsPerSection = Math.max(80, Math.round((p * WORDS_PER_PAGE) / sections));
+  // Generous per page so we never truncate mid-document, yet far below the old
+  // flat 32k ceiling that let a "10 pages" ask balloon to ~100.
+  const maxOutputTokens = Math.max(3072, Math.min(32768, Math.round(p * 900 * 1.25)));
+  return { pages: p, sections, wordsPerSection, maxOutputTokens };
+}
+
+/** The length steering text injected into the draft system prompt. A stated
+ *  page count produces a STRICT target; otherwise the legacy density band is
+ *  used for long-form requests (and nothing for short ones). */
+function buildLengthDirective(ar: boolean, longForm: boolean, target?: number): string {
+  if (target && target > 0) {
+    const { pages, sections, wordsPerSection } = resolveLengthTarget(target);
+    return ar
+      ? `التزام صارم بالطول: اجعل الوثيقة قريبة من ${pages} صفحة (هامش ±20% فقط). لا تتجاوز هذا الطول إطلاقاً ولا تُضِف أقساماً أو حشواً لإطالتها. وزّع المحتوى على نحو ${sections} أقسام بمعدل ~${wordsPerSection} كلمة لكل قسم، وامنح كل قسم عمقاً مناسباً لطوله دون تكرار أو إطناب. الجودة قبل الكمّ: وثيقة ${pages} صفحات دقيقة أفضل من وثيقة مطوّلة.`
+      : `Strict length compliance: keep the document close to ${pages} page(s) (±20% only). Never exceed this length and do not add filler sections to pad it. Spread the content across ~${sections} sections at ~${wordsPerSection} words each, giving each section depth proportional to its budget with no repetition or padding. Quality over quantity: an accurate ${pages}-page document beats a longer one.`;
+  }
+  return longForm ? (ar ? LONG_AR : LONG_EN) : '';
+}
 
 /** Stream one assistant turn for the given stage, grounded in the model + files. */
 export async function stageChat(p: StageChatParams, cb: StreamCallbacks): Promise<string> {
@@ -158,6 +269,10 @@ export async function stageChat(p: StageChatParams, cb: StreamCallbacks): Promis
   const hasFiles = !!(p.fileContext && p.fileContext.trim());
   const snap = snapshotLine(p.stateSnapshot, ar);
   const hasDocs = (p.stateSnapshot?.documentsCount ?? 0) > 0;
+  // V4: the requested length is a single source of truth — an explicit param
+  // wins, else parse it from the user's message. A stated count is honored even
+  // for short asks; only when none is found do we fall back to legacy density.
+  const targetPages = (p.targetPages && p.targetPages > 0) ? p.targetPages : parseTargetPages(p.message);
   const sys = [
     ar
       ? 'أنت مساعد حوكمة ذكي وتفاعلي (Agentic). فكّر أولاً ثم تحاور. كن دقيقاً وعملياً. تنسيق Markdown عربي.'
@@ -166,7 +281,7 @@ export async function stageChat(p: StageChatParams, cb: StreamCallbacks): Promis
     modeBrief,
     ar ? CAPABILITY_AR : CAPABILITY_EN,
     ar ? FORMAT_AR : FORMAT_EN,
-    p.longForm ? (ar ? LONG_AR : LONG_EN) : '',
+    buildLengthDirective(ar, !!p.longForm, targetPages),
     p.extraContext ? `سياق إضافي: ${p.extraContext}` : '',
     snap, // P0-2: authoritative live page state, before model/files
     '=== نموذج حوكمة الشركة (مصدر الحقيقة الحي) ===',
@@ -189,15 +304,18 @@ export async function stageChat(p: StageChatParams, cb: StreamCallbacks): Promis
       : 'If a question needs info absent from files and model, ask the user explicitly first.',
   ].filter(Boolean).join('\n');
 
-  // Density control (not random): a full-document request lifts the output ceiling
-  // so a 10–30 page draft is not silently truncated at the default 8k tokens.
+  // Density control (not random). A stated page count drives a scoped ceiling
+  // (the V4 runaway guard); otherwise keep the legacy behavior — base 16k, full
+  // document requests get 32k — so vague/long asks are never truncated at the
+  // old 8k floor (which caused "incomplete Word" exports).
+  const maxOutputTokens = targetPages
+    ? resolveLengthTarget(targetPages).maxOutputTokens
+    : (p.longForm ? 32768 : 16384);
   return streamChat(
     {
       systemInstruction: sys, history: p.history, message: p.message, signal: p.signal,
       temperature: 0.5,
-      // Copilot is document-grade: never cap a draft at the old 8k floor (caused
-      // "incomplete Word" exports). Base 16k; full-document requests get 32k.
-      maxOutputTokens: p.longForm ? 32768 : 16384,
+      maxOutputTokens,
     },
     cb,
   );
