@@ -761,53 +761,15 @@ ${content.slice(0, 8000)}`;
       setProgress(null);
       const rawGapCount = m.gaps.length;
 
-      // ── Auto-fix open gaps silently ──────────────────────────────
-      const openGaps = (m.gaps || []).filter((g: GovGap) => !g.resolved);
-      if (openGaps.length > 0 && !ac.signal.aborted) {
-        setBusy(t(`إغلاق ${openGaps.length} فجوة تلقائياً…`, `Auto-fixing ${openGaps.length} gap(s)…`));
-        try {
-          const fixChunks = await loadChunks(tenantId);
-          let fm: CompanyGovernanceModel = JSON.parse(JSON.stringify(m));
-          let fixedCount = 0;
-          for (const gap of openGaps) {
-            if (ac.signal.aborted) break;
-            try {
-              setProgress({ phase: 'section', current: fixedCount + 1, total: openGaps.length,
-                label: t(`إغلاق: ${gap.area}`, `Fixing gap: ${gap.area}`) });
-              const res = await generateGapFix({ gap, model: fm, chunks: fixChunks, language, signal: ac.signal });
-              if (ac.signal.aborted) break;
-              fm.policies = [...(fm.policies || []), res.policy];
-              fm.procedures = [...(fm.procedures || []), res.procedure];
-              const docId = uid('govdoc');
-              fm.gaps = (fm.gaps || []).map((g: GovGap) =>
-                g.id === gap.id ? { ...g, resolved: true, resolvedByDocId: docId } : g);
-              fm = appendAudit(fm, 'system', 'auto_gapfix', `أغلق فجوة "${gap.area}" تلقائياً`);
-              const rec: GovDocumentRecord = {
-                id: docId, tenantId, kind: 'gapfix',
-                title: res.doc.title, goal: res.doc.goal, scope: gap.area,
-                status: 'draft', version: fm.version || 1,
-                createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-                sections: res.doc.sections,
-                executiveSummary: res.doc.executiveSummary,
-                citations: res.doc.citations, comments: [],
-              };
-              await saveGovDocument(rec);
-              fixedCount++;
-            } catch { /* skip unfixable — continue */ }
-          }
-          if (fixedCount > 0) {
-            await saveModel(fm);
-            setModel(fm);
-            await loadAll();
-            toast.success(t(`أُغلقت ${fixedCount} من ${openGaps.length} فجوة تلقائياً وحُفظت في المكتبة.`,
-                            `${fixedCount} of ${openGaps.length} gap(s) auto-fixed and saved to library.`));
-          }
-        } catch { /* non-critical */ }
-        setProgress(null);
-      }
-
-      alertMsg(t(`اكتمل النموذج: ${m.orgUnits.length} وحدة، ${m.roles.length} دور، ${m.policies.length} سياسة، ${(m.authorities||[]).length} صلاحية، ${(m.kpis||[]).length} مؤشر، ${rawGapCount} فجوة → أُغلقت تلقائياً.${mergeMsg}`,
-              `Model built: ${m.orgUnits.length} units, ${m.roles.length} roles, ${m.policies.length} policies, ${(m.authorities||[]).length} authorities, ${(m.kpis||[]).length} KPIs, ${rawGapCount} gaps → auto-fixed.${mergeMsg}`));
+      // V8 — the build action BUILDS; it no longer silently re-runs the gap
+      // assessment/remediation. Closing gaps (generate a policy + procedure per gap,
+      // re-estimating severities) is current-state/assurance work, so it now lives as
+      // an explicit step in the model's "Gaps & risks" panel (handleAutoFixGaps /
+      // per-gap handleGapFix). This way "configure units → build" produces the
+      // structure/policies/procedures from the already-analyzed model instead of
+      // re-counting and re-estimating the gaps the user just asked it to build past.
+      alertMsg(t(`اكتمل النموذج: ${m.orgUnits.length} وحدة، ${m.roles.length} دور، ${m.policies.length} سياسة، ${(m.authorities||[]).length} صلاحية، ${(m.kpis||[]).length} مؤشر، ${rawGapCount} فجوة مرصودة${rawGapCount ? ' (أغلِقها من لوحة الفجوات)' : ''}.${mergeMsg}`,
+              `Model built: ${m.orgUnits.length} units, ${m.roles.length} roles, ${m.policies.length} policies, ${(m.authorities||[]).length} authorities, ${(m.kpis||[]).length} KPIs, ${rawGapCount} gap(s) detected${rawGapCount ? ' (fix them from the Gaps panel)' : ''}.${mergeMsg}`));
       gotoStage(1); // navigate to Model stage automatically after build
     } catch (e: any) {
       surfaceError(e, t('فشل بناء النموذج: ', 'Build failed: '));
@@ -826,6 +788,64 @@ ${content.slice(0, 8000)}`;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showProjects, stage, chunkCount, model, busy, permissionError]);
+
+  // ---- Gap remediation (explicit, NOT part of build) ----
+  // V8: closing the detected gaps — generating a policy + procedure for each and
+  // re-estimating their severities — is current-state/assurance work. It used to run
+  // implicitly inside handleBuild, which made "configure units → build" re-run the
+  // gap assessment instead of building. It now lives here as an explicit step the
+  // user triggers from the model's "Gaps & risks" panel, so build stays a pure build.
+  const [autoFixingGaps, setAutoFixingGaps] = useState(false);
+  const handleAutoFixGaps = async () => {
+    if (!model) return;
+    const openGaps = (model.gaps || []).filter((g: GovGap) => !g.resolved);
+    if (!openGaps.length) { alertMsg(t('لا توجد فجوات مفتوحة لإغلاقها.', 'No open gaps to fix.')); return; }
+    abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
+    setAutoFixingGaps(true);
+    setBusy(t(`إغلاق ${openGaps.length} فجوة تلقائياً…`, `Auto-fixing ${openGaps.length} gap(s)…`));
+    try {
+      const fixChunks = await loadChunks(tenantId);
+      let fm: CompanyGovernanceModel = JSON.parse(JSON.stringify(model));
+      let fixedCount = 0;
+      for (const gap of openGaps) {
+        if (ac.signal.aborted) break;
+        try {
+          setProgress({ phase: 'section', current: fixedCount + 1, total: openGaps.length,
+            label: t(`إغلاق: ${gap.area}`, `Fixing gap: ${gap.area}`) });
+          const res = await generateGapFix({ gap, model: fm, chunks: fixChunks, language, signal: ac.signal });
+          if (ac.signal.aborted) break;
+          fm.policies = [...(fm.policies || []), res.policy];
+          fm.procedures = [...(fm.procedures || []), res.procedure];
+          const docId = uid('govdoc');
+          fm.gaps = (fm.gaps || []).map((g: GovGap) =>
+            g.id === gap.id ? { ...g, resolved: true, resolvedByDocId: docId } : g);
+          fm = appendAudit(fm, 'system', 'auto_gapfix', `أغلق فجوة "${gap.area}" تلقائياً`);
+          const rec: GovDocumentRecord = {
+            id: docId, tenantId, kind: 'gapfix',
+            title: res.doc.title, goal: res.doc.goal, scope: gap.area,
+            status: 'draft', version: fm.version || 1,
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+            sections: res.doc.sections,
+            executiveSummary: res.doc.executiveSummary,
+            citations: res.doc.citations, comments: [],
+          };
+          await saveGovDocument(rec);
+          fixedCount++;
+        } catch { /* skip unfixable — continue */ }
+      }
+      if (fixedCount > 0) {
+        await saveModel(fm);
+        setModel(fm);
+        await loadAll();
+        toast.success(t(`أُغلقت ${fixedCount} من ${openGaps.length} فجوة تلقائياً وحُفظت في المكتبة.`,
+                        `${fixedCount} of ${openGaps.length} gap(s) auto-fixed and saved to library.`));
+      } else if (!ac.signal.aborted) {
+        alertMsg(t('تعذّر إغلاق الفجوات تلقائياً.', 'Could not auto-fix the gaps.'));
+      }
+    } catch (e: any) {
+      surfaceError(e, t('فشل إغلاق الفجوات: ', 'Gap auto-fix failed: '));
+    } finally { setAutoFixingGaps(false); setBusy(''); setProgress(null); }
+  };
 
   // ---- Diagrams ----
   const handleGenDiagram = async (kind: GovDiagramKind, focus?: string) => {
@@ -2930,6 +2950,16 @@ ${content.slice(0, 8000)}`;
                   {model.gaps.length > 0 && (
                     <details open className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
                       <summary className="font-bold text-slate-700 dark:text-slate-200 cursor-pointer text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> {t('الفجوات والمخاطر', 'Gaps & risks')}</summary>
+                      {/* V8: closing gaps is its own explicit step, decoupled from build. */}
+                      {model.gaps.some(g => !g.resolved) && (
+                        <div className="mt-2 flex items-center justify-between gap-2 flex-wrap rounded-lg bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 p-2">
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 flex-1 min-w-[12rem]">{t('إغلاق الفجوات خطوة مستقلة عن البناء — يولّد سياسة + إجراءً لكل فجوة ويحفظها بالمكتبة.', 'Closing gaps is a separate step from building — generates a policy + procedure per gap and saves them to the library.')}</span>
+                          <button onClick={handleAutoFixGaps} disabled={autoFixingGaps || generating || !!busy}
+                            className="hw-btn hw-btn-sm hw-btn-primary shrink-0">
+                            {autoFixingGaps ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('جارٍ الإغلاق…', 'Fixing…')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>{t('أغلق كل الفجوات تلقائياً', 'Auto-fix all gaps')}</>}
+                          </button>
+                        </div>
+                      )}
                       <div className="mt-2 space-y-2">
                         {model.gaps.map(g => (
                           <div key={g.id} className={`rounded-lg border p-2 text-sm ${g.resolved ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : SEV_COLOR[g.severity] || SEV_COLOR.medium}`}>

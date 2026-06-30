@@ -26,8 +26,8 @@ const STAGE_BRIEF: Record<GovStageKey, { ar: string; en: string }> = {
     en: 'Stage: Diagrams & canvas. Suggest the best diagram types and review the linking logic.',
   },
   generation: {
-    ar: 'المرحلة: توليد الوثائق. ساعد المستخدم على تحديد نطاق التوليد (سياسات كاملة، إجراءات كاملة، إدارات بالكامل) والهدف والجمهور قبل التشغيل.',
-    en: 'Stage: Document generation. Help define generation scope (full policies/procedures/departments), goal and audience.',
+    ar: 'المرحلة: البناء وتوليد الوثائق. ابنِ المخرجات (الهيكل، السياسات، الإجراءات، الوثائق) من النموذج المُحلَّل بالفعل ومن تعديلات المستخدم على الوحدات (مثل: «هذا مكتب مشاريع، احذف المالية وأضف كذا»). عندما يطلب المستخدم «ابنِ» فابدأ البناء فعليًّا — لا تُعِد تحليل الواقع الراهن ولا حصر/تقدير الفجوات هنا، فذلك مرحلته الخاصة (الواقع الراهن/التحقق). ساعد المستخدم على تحديد نطاق التوليد (سياسات كاملة، إجراءات كاملة، إدارات بالكامل) والهدف والجمهور قبل التشغيل.',
+    en: 'Stage: Build & document generation. Build the outputs (structure, policies, procedures, documents) FROM the already-analyzed model and the user’s unit edits (e.g. “this is a projects office, remove finance, add X”). When the user says “build”, actually build — do NOT re-run the current-state analysis or re-count/re-estimate gaps here; that has its own stage (current-state/assurance). Help define generation scope (full policies/procedures/departments), goal and audience.',
   },
   assurance: {
     ar: 'المرحلة: الضمان والتحقق. راجع تماسك النموذج وسلامته (فجوات، تعارضات، تغطية الأدوار والسياسات والإجراءات). اقترح إصلاحات الفجوات وتحقق من اكتمال الحوكمة قبل الاعتماد النهائي.',
