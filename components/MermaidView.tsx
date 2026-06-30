@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 import type { Language } from '../types';
-import { prepareMermaidForRender, ensureMermaidFont } from '../services/diagramService';
+import { prepareMermaidForRender, ensureMermaidFont, makeSvgResponsive } from '../services/diagramService';
 import { MERMAID_THEME_VARIABLES, MERMAID_THEME_CSS, MERMAID_FONT } from '../services/mermaidTheme';
 
 // Brand-themed Mermaid (refined teal) so EVERY diagram type — flowchart,
@@ -112,8 +112,9 @@ const MermaidView: React.FC<Props> = ({ mermaid: code, title, language }) => {
             </pre>
           </div>
         ) : svg ? (
-          <div ref={hostRef} style={{ transform: `scale(${zoom})`, transformOrigin: ar ? 'top right' : 'top left', transition: 'transform .15s' }}
-               dangerouslySetInnerHTML={{ __html: svg }} />
+          // PRD V15: render full-width (ratio preserved); zoom multiplies on top.
+          <div ref={hostRef} style={{ width: '100%', transform: `scale(${zoom})`, transformOrigin: ar ? 'top right' : 'top left', transition: 'transform .15s' }}
+               dangerouslySetInnerHTML={{ __html: makeSvgResponsive(svg) }} />
         ) : (
           <div className="text-slate-400 text-sm text-center py-10">{t('لا يوجد مخطط بعد', 'No diagram yet')}</div>
         )}
