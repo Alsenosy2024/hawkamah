@@ -307,13 +307,36 @@ export function buildOrgChartMermaid(
   units.forEach((u, i) => { if (u && u.id != null && !uId.has(u.id)) uId.set(u.id, `u${i}`); });
   const present = (id?: string): id is string => !!id && uId.has(id);
 
+  // Root units = units with NO real parent inside the model (parentId absent, self-referential,
+  // or pointing at an id that isn't a unit here). `present()` is false for any of those, so it
+  // captures all three cases. Real org models have MANY parentless top-level departments, so
+  // without a single head they'd each render as a DISCONNECTED mini-tree (no CEO/root). When
+  // there isn't already exactly one root, synthesize ONE deterministic top node and hang every
+  // root under it → a proper single-rooted hierarchy. Exactly one root = already single-rooted,
+  // leave untouched (no redundant node). Fully determined by array order (no Date/random).
+  const rootUnits = units.filter(u => u && (!present(u.parentId) || u.parentId === u.id));
+  const synthesizeRoot = rootUnits.length !== 1;
+  const ROOT_ID = 'org_root';
+  // Root label, deterministic priority: a CEO-type role title (first match in array order, or
+  // the first unit-less role), else the company name, else the literal "الرئيس التنفيذي".
+  const rootLabel = (): string => {
+    const roles = Array.isArray(model?.roles) ? model.roles : [];
+    const ceoRe = /الرئيس التنفيذي|الرئيس|المدير العام|\bCEO\b|chief executive/i;
+    const ceo = roles.find(r => r && r.title && ceoRe.test(r.title)) || roles.find(r => r && !r.unitId);
+    return (ceo && ceo.title) || model?.companyName || 'الرئيس التنفيذي';
+  };
+
   const lines: string[] = ['flowchart TD'];
   // 1) unit nodes, in array order
   units.forEach((u, i) => { lines.push(`  ${uId.get(u.id) ?? `u${i}`}[${esc(u?.name || u?.id)}]`); });
+  // 1b) the synthesized single head, when the model isn't already single-rooted
+  if (synthesizeRoot) lines.push(`  ${ROOT_ID}[${esc(rootLabel())}]`);
   // 2) parent → child edges, in array order; a missing/self parent = a root (no edge)
   units.forEach(u => {
     if (present(u?.parentId) && u.parentId !== u.id) lines.push(`  ${uId.get(u.parentId)} --> ${uId.get(u.id)}`);
   });
+  // 2b) hang every former root under the synthesized head, in array order
+  if (synthesizeRoot) rootUnits.forEach(u => { lines.push(`  ${ROOT_ID} --> ${uId.get(u.id)}`); });
   // 3) optional roles, attached under their unit with a dotted edge, in array order
   if (includeRoles) {
     const roles = Array.isArray(model?.roles) ? model.roles : [];
