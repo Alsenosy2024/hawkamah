@@ -820,6 +820,11 @@ export interface GenerateDocParams {
   targetPages?: number;               // desired length; scales section count + per-section depth
   kind?: string;
   signal?: AbortSignal;
+  // Per-document guidance: free-text instructions the owner attaches to THIS
+  // single document in the catalog. Unlike build-criteria (which apply to every
+  // doc in a batch), this is woven only into this document's prompt so each doc
+  // can be steered independently (e.g. "ركّز على الامتثال لـ SDAIA").
+  guidance?: string;
   // Cross-document coherence: shared fact memory across a batch of docs. Seeded
   // into this doc's working memory and appended to as new facts are distilled,
   // so sibling docs in the same batch cross-reference consistent names/numbers.
@@ -880,6 +885,18 @@ export function industryLens(sector?: string): string {
 - إن خلت المصادر من تفصيل قطاعي، اكتب ما يناسب قطاع "${s}" منطقياً دون اختلاق أرقام.`;
 }
 
+// Per-document guidance lens: the owner can attach free-text instructions to a
+// SINGLE document in the catalog (e.g. "اربط بسياسة المشتريات"). It is injected
+// only into THAT document's system prompt as a mandatory directive, so each doc
+// in a batch can be steered independently of the shared build-criteria.
+export function perDocGuidanceLens(guidance?: string): string {
+  const g = (guidance || '').trim();
+  if (!g) return '';
+  return `
+=== توجيهات خاصة بهذه الوثيقة (إلزامية — من المالك، طبّقها في كل قسم) ===
+${g}`;
+}
+
 // HIGH (reference projects): the owner uploads prior real projects as a basis,
 // but only the gap-fix path consumed them. Inject a ranked (sector-first) basis
 // block into model-build + every doc-generation path so output mirrors the
@@ -935,7 +952,7 @@ ${facts}
 === ${coherenceMemo(model)} ===
 ${industryLens(p.sector)}${referenceProjectsBlock(p.referenceProjects, p.sector)}
 
-${docStandards(p.kind)}`;
+${docStandards(p.kind)}${perDocGuidanceLens(p.guidance)}`;
 
   const artifact: GovernanceDocument = {
     title: p.docTitle, goal: p.goal, language,
