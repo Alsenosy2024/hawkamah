@@ -3,8 +3,9 @@
 ReportLab has no native Arabic shaping, so each text fragment is run through
 arabic-reshaper (contextual letter forms) then python-bidi `get_display` (the
 Unicode bidi algorithm) before it is drawn, and paragraphs are right-aligned.
-Body font is Almarai (the project's Word/PDF font); we fall back to the system
-Noto Naskh Arabic if the bundled TTF is missing.
+Body/cover font is the Thmanyah brand face (mirrors the front-end `PDF_FONT`),
+embedded from the vendored TTFs; we fall back to Almarai, then the system Noto
+Naskh Arabic, if the bundled TTFs are missing.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import os
 from io import BytesIO
 from pathlib import Path
 
-import arabic_reshaper
+from arabic_reshaper import ArabicReshaper
 from bidi.algorithm import get_display
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT, TA_CENTER
@@ -48,13 +49,19 @@ def _register_fonts() -> None:
     global _REGISTERED
     if _REGISTERED:
         return
+    # Prefer the Thmanyah brand face (matches the front-end PDF surface), then
+    # Almarai, then the system Noto Naskh/Sans Arabic.
     candidates_regular = [
+        _PKG_FONTS / "thmanyah-sans-regular.ttf",
+        _REPO_FONTS / "thmanyah-sans-regular.ttf",
         _PKG_FONTS / "Almarai-Regular.ttf",
         _REPO_FONTS / "Almarai-Regular.ttf",
         Path("/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf"),
         Path("/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf"),
     ]
     candidates_bold = [
+        _PKG_FONTS / "thmanyah-sans-bold.ttf",
+        _REPO_FONTS / "thmanyah-sans-bold.ttf",
         _PKG_FONTS / "Almarai-Bold.ttf",
         _REPO_FONTS / "Almarai-Bold.ttf",
         Path("/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf"),
@@ -63,10 +70,25 @@ def _register_fonts() -> None:
     reg = next((p for p in candidates_regular if p.is_file()), None)
     bold = next((p for p in candidates_bold if p.is_file()), reg)
     if reg is None:
-        raise RuntimeError("No Arabic-capable TTF found for PDF export (need Almarai or Noto).")
+        raise RuntimeError(
+            "No Arabic-capable TTF found for PDF export (need Thmanyah, Almarai, or Noto)."
+        )
     pdfmetrics.registerFont(TTFont(_FONT, str(reg)))
     pdfmetrics.registerFont(TTFont(_FONT_BOLD, str(bold)))
     _REGISTERED = True
+
+
+# Brand/body Arabic fonts here (Thmanyah, Almarai) omit a few ISOLATED
+# presentation-form glyphs — notably U+FE8D (alef) and U+FEA9 (dal). Reshaping a
+# word-initial alef/dal into those code points would map to .notdef and silently
+# DROP the letter on the page (e.g. «دليل الحوكمة» → «ليل لحوكمة»). Telling the
+# reshaper to emit the unshaped BASE character for isolated positions fixes this:
+# the base glyph IS the isolated form for these non-connecting letters, and the
+# base code points are present in both fonts' cmaps.
+_RESHAPER = ArabicReshaper(configuration={
+    "use_unshaped_instead_of_isolated": True,
+    "delete_harakat": False,
+})
 
 
 def _ar(text: str) -> str:
@@ -74,7 +96,7 @@ def _ar(text: str) -> str:
     if not text:
         return ""
     try:
-        return get_display(arabic_reshaper.reshape(text))
+        return get_display(_RESHAPER.reshape(text))
     except Exception:  # noqa: BLE001 — never let shaping crash export
         return text
 

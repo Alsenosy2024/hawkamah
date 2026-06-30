@@ -70,12 +70,36 @@ _OUTLINE_SCHEMA = {
 }
 
 
-def _section_token_budget(target_pages: int | None) -> int:
+def _outline_cap(target_pages: int | None) -> int | None:
+    """Section-count ceiling derived from the requested page count.
+
+    Without this the outline falls back to ``SETTINGS.gen_max_sections`` (40),
+    which is the dominant cause of "asked 10 pages → got ~100": a high section
+    count multiplied by a per-section token budget yields N× the intended length.
+    A ~2-pages-per-section heuristic (plus a small constant for cover/TOC/sources)
+    keeps the count proportional to the ask, clamped to the global ceiling.
+    Returns ``None`` (use the default cap) when no page target was given.
+    """
+    if not target_pages:
+        return None
+    return min(SETTINGS.gen_max_sections, max(3, round(target_pages / 2) + 2))
+
+
+def _section_token_budget(target_pages: int | None, num_sections: int = 1) -> int:
+    """Per-section *output*-token ceiling.
+
+    The whole-document budget (~720 output tokens per A4 page of Arabic body
+    text, i.e. ~450 words × ~1.6 tokens/word) is computed ONCE and DIVIDED across
+    the count-capped sections — never multiplied per section. This is the second
+    half of the page-count fix: total output now scales with ``target_pages``
+    instead of ``num_sections × full-doc budget``. Clamped to a sane window so a
+    section is never starved (floor) nor allowed to exceed the model ceiling.
+    """
     if not target_pages:
         return SETTINGS.gen_section_tokens
-    # Spread the page target across sections; clamp to a sane window.
-    per = int(target_pages * 450 * 1.6)  # words→tokens rough
-    return max(2048, min(per, SETTINGS.gen_max_output_tokens))
+    whole_doc = int(target_pages * 450 * 1.6)  # words→tokens, whole document
+    per = whole_doc // max(1, num_sections)
+    return max(1536, min(per, SETTINGS.gen_max_output_tokens))
 
 
 # --------------------------------------------------------------------------- #
@@ -89,6 +113,7 @@ def build_outline(
     prescribed: tuple[str, ...] | None = None,
     language: str = "ar",
     max_sections: int | None = None,
+    target_pages: int | None = None,
 ) -> list[Section]:
     max_sections = max_sections or SETTINGS.gen_max_sections
     evidence = rag.retrieve(f"{title}\n{goal}", k=10)
@@ -102,9 +127,19 @@ def build_outline(
             + "\n- ".join(prescribed)
         )
 
+    # Make the requested document size explicit so the model sizes the outline to
+    # the target instead of padding it toward the section ceiling.
+    pages_block = (
+        f"الحجم المستهدف للوثيقة: نحو {target_pages} صفحة A4؛ اجعل عدد الأقسام مناسبًا "
+        f"لهذا الحجم (لا تتجاوز {max_sections} قسمًا) دون حشو.\n\n"
+        if target_pages
+        else ""
+    )
+
     prompt = (
         f"المطلوب إعداد وثيقة بعنوان: «{title}».\n"
         f"الهدف: {goal}\n\n"
+        f"{pages_block}"
         f"{prescribed_block}\n\n"
         "اعتمادًا على الأدلة التالية المستخرجة من ملفات المنظمة، ضع خطة أقسام تفصيلية "
         "للوثيقة. لكل قسم: عنوان دقيق و«goal» يصف ما يجب أن يغطيه القسم تحديدًا مستندًا "
@@ -146,17 +181,28 @@ def _draft_section(
     *,
     section_tokens: int,
     language: str,
+    target_words: int | None = None,
 ) -> Section:
     evidence = rag.retrieve(f"{section.title}\n{section.goal}", k=8)
     section.sources = evidence
     ev_block = rag.format_evidence(evidence, max_chars=18000)
     coherence = " | ".join(outline_titles)
 
+    # The token budget is only a ceiling; an explicit length target is what makes
+    # the model size the section to the requested document length.
+    length_block = (
+        f"اجعل طول هذا القسم نحو {target_words} كلمة (لا تقل كثيرًا ولا تتجاوزها كثيرًا) "
+        "دون حشو أو تكرار.\n"
+        if target_words
+        else ""
+    )
+
     prompt = (
         f"تكتب الآن قسمًا واحدًا من وثيقة «{doc_title}».\n"
         f"عنوان القسم: {section.title}\n"
         f"هدف القسم: {section.goal}\n\n"
         f"الخطة الكاملة للوثيقة (للاتساق فقط، لا تكتب الأقسام الأخرى): {coherence}\n\n"
+        f"{length_block}"
         "اكتب محتوى القسم كاملًا ومفصّلًا واحترافيًا بصيغة Markdown:\n"
         "- ابدأ بعنوان القسم بمستوى ## ثم المحتوى.\n"
         "- استخدم جداول Markdown حيثما طلبت المهارة جداول (مصفوفات، KPIs، فجوات، RACI...).\n"
@@ -263,11 +309,22 @@ def generate_document(
             on_progress(stage, done, total)
 
     progress("outline", 0, 1)
-    sections = build_outline(title, goal, rag, prescribed=prescribed, language=language)
+    sections = build_outline(
+        title, goal, rag,
+        prescribed=prescribed, language=language,
+        max_sections=_outline_cap(target_pages), target_pages=target_pages,
+    )
     progress("outline", 1, 1)
 
     outline_titles = [s.title for s in sections]
-    section_tokens = _section_token_budget(target_pages)
+    # Per-section budget is derived AFTER the count-capped outline so the whole-doc
+    # budget is divided across the real section count, not multiplied per section.
+    section_tokens = _section_token_budget(target_pages, len(sections))
+    # Per-section word target (~450 words/page) so the model aims for the requested
+    # length rather than filling the (much larger) token ceiling.
+    target_words = (
+        max(250, round(target_pages * 450 / max(1, len(sections)))) if target_pages else None
+    )
     total = len(sections)
 
     if parallel_sections and total > 1:
@@ -277,7 +334,7 @@ def generate_document(
             futs = {
                 ex.submit(
                     _draft_section, s, title, outline_titles, rag,
-                    section_tokens=section_tokens, language=language,
+                    section_tokens=section_tokens, language=language, target_words=target_words,
                 ): idx
                 for idx, s in enumerate(sections)
             }
@@ -290,7 +347,8 @@ def generate_document(
     else:
         for i, s in enumerate(sections):
             sections[i] = _draft_section(
-                s, title, outline_titles, rag, section_tokens=section_tokens, language=language
+                s, title, outline_titles, rag, section_tokens=section_tokens,
+                language=language, target_words=target_words,
             )
             progress("drafting", i + 1, total)
 
@@ -301,7 +359,7 @@ def generate_document(
         for j, idx in enumerate(to_revise):
             sections[idx] = _draft_section(
                 sections[idx], title, outline_titles, rag,
-                section_tokens=section_tokens, language=language,
+                section_tokens=section_tokens, language=language, target_words=target_words,
             )
             progress("revising", j + 1, len(to_revise))
 

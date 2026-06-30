@@ -4,6 +4,7 @@ import io
 import zipfile
 
 import pytest
+from reportlab.pdfbase import pdfmetrics
 
 from hawkama_copilot.exporters import export
 
@@ -75,6 +76,38 @@ def test_pdf_is_valid():
     data = export(MD, "دليل الحوكمة", "pdf", company="شركة").data
     assert data[:5] == b"%PDF-"
     assert len(data) > 1000
+
+
+def test_pdf_uses_thmanyah_brand_font():
+    """BE-2: the brand Thmanyah TTFs must be vendored inside the package (so the
+    Cloud Run image has them) and be the PDF's first-choice regular/bold face."""
+    from hawkama_copilot.exporters import pdf_export
+
+    pkg = pdf_export._PKG_FONTS
+    assert (pkg / "thmanyah-sans-regular.ttf").is_file()
+    assert (pkg / "thmanyah-sans-bold.ttf").is_file()
+
+    # Registration resolves the regular face to the vendored Thmanyah TTF.
+    pdf_export._register_fonts()
+    reg = pdfmetrics.getFont(pdf_export._FONT)
+    assert "thmanyah" in str(reg.face.filename).lower()
+
+
+def test_pdf_shaping_keeps_all_letters():
+    """BE-2 RTL correctness: word-initial alef/dal must not be dropped.
+
+    The brand/body fonts lack the isolated presentation forms U+FE8D/U+FEA9, so
+    the reshaper must fall back to the base character whose glyph IS in the cmap —
+    otherwise «دليل الحوكمة» loses its leading «د»/«ا»."""
+    from hawkama_copilot.exporters.pdf_export import _ar, _register_fonts
+    from reportlab.pdfbase import pdfmetrics
+
+    _register_fonts()
+    cmap = pdfmetrics.getFont("Body").face.charToGlyph
+    for sample in ("دليل الحوكمة", "إدارة المخاطر", "الموارد البشرية"):
+        shaped = _ar(sample)
+        missing = [c for c in shaped if c != " " and ord(c) not in cmap]
+        assert not missing, f"{sample!r} dropped glyphs: {[hex(ord(c)) for c in missing]}"
 
 
 def test_unsupported_format_raises():

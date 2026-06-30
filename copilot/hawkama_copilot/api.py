@@ -236,6 +236,13 @@ def export_endpoint(body: dict[str, Any]) -> StreamingResponse:
         out = export(markdown, title, fmt, company=body.get("company", ""))
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001 — a render crash must be a clear 500,
+        # never a silent/empty 200 that the browser saves as a dead "File not found".
+        raise HTTPException(500, f"export failed for format '{fmt}': {e}")
+    # Defense-in-depth: a 0-byte download is exactly what opens as Google-Drive
+    # "File not found". Refuse to stream an empty body as a successful response.
+    if not out.data:
+        raise HTTPException(500, f"export produced an empty file for format '{fmt}'")
     # HTTP headers are latin-1; an Arabic filename must go via RFC 5987
     # (filename*=UTF-8''…) with an ASCII fallback for older clients.
     from urllib.parse import quote
