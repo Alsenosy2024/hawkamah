@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isExplicitBuild,
+  shouldOpenBuildWizard,
   fallbackBuildPlan,
   mergeProposalIntoFallback,
   planToBuildRequest,
@@ -46,6 +47,36 @@ describe('isExplicitBuild — opens the wizard on explicit build commands', () =
     expect(isExplicitBuild('hello')).toBe(false);
     expect(isExplicitBuild('')).toBe(false);
     expect(isExplicitBuild(null)).toBe(false);
+  });
+});
+
+describe('shouldOpenBuildWizard — conversational by default (V27)', () => {
+  // CONVERSATIONAL MODE (the new default): wizardOn = false. The wizard opens
+  // ONLY on a clear, explicit build command; everything else — including a
+  // long-doc ask — flows to the normal grounded conversation/draft path.
+  it('keeps conversation: a normal question never opens the wizard', () => {
+    expect(shouldOpenBuildWizard({ wizardOn: false, text: 'ما هي أفضل ممارسات الحوكمة؟', longForm: false })).toBe(false);
+  });
+  it('keeps conversation: a long-doc ask is NOT forced into a build plan', () => {
+    // "اكتب سياسة كاملة" trips the broad long-form heuristic but is not an
+    // explicit build → in conversational mode it must stay a normal reply/draft.
+    expect(shouldOpenBuildWizard({ wizardOn: false, text: 'اكتب سياسة تضارب المصالح كاملة', longForm: true })).toBe(false);
+  });
+  it('still honors explicit build intent even in conversational mode', () => {
+    expect(shouldOpenBuildWizard({ wizardOn: false, text: 'ابدأ البناء', longForm: false })).toBe(true);
+    expect(shouldOpenBuildWizard({ wizardOn: false, text: 'ابنِ الهيكل التنظيمي', longForm: false })).toBe(true);
+  });
+
+  // WIZARD MODE (opt-in): wizardOn = true restores the V5/V16 behavior — any
+  // long-form/document request OR an explicit build opens the editable plan.
+  it('wizard ON: a long-form/document request opens the plan', () => {
+    expect(shouldOpenBuildWizard({ wizardOn: true, text: 'اكتب سياسة تضارب المصالح كاملة', longForm: true })).toBe(true);
+  });
+  it('wizard ON: an explicit build still opens the plan', () => {
+    expect(shouldOpenBuildWizard({ wizardOn: true, text: 'ابدأ البناء', longForm: false })).toBe(true);
+  });
+  it('wizard ON: a plain short question is left as conversation', () => {
+    expect(shouldOpenBuildWizard({ wizardOn: true, text: 'ما هو تعريف الحوكمة؟', longForm: false })).toBe(false);
   });
 });
 

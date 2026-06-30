@@ -496,6 +496,27 @@ export function isExplicitBuild(text?: string | null): boolean {
   return EXPLICIT_BUILD_RE.test(s);
 }
 
+/**
+ * V27 — should this message open the build-wizard (propose an editable plan)
+ * versus flow straight into a normal grounded conversation?
+ *
+ * The copilot is now CONVERSATIONAL BY DEFAULT: the wizard is OPT-IN, not the
+ * forced entry. Two regimes:
+ *  • Conversational mode (`wizardOn` = false, the default): only a CLEAR,
+ *    explicit build command (`isExplicitBuild`) opens the wizard. Every other
+ *    message — including a long-doc ask like "اكتب سياسة كاملة" — flows to the
+ *    normal ask/draft path and gets a real grounded answer, never a forced plan.
+ *  • Wizard mode (`wizardOn` = true): the user opted into "ask before
+ *    generating", so any long-form/document request (`longForm`) OR an explicit
+ *    build opens the plan — the V5/V16 behavior, unchanged.
+ *
+ * Pure + tested so the default-entry behavior is pinned independently of the UI.
+ */
+export function shouldOpenBuildWizard(p: { wizardOn: boolean; text: string; longForm: boolean }): boolean {
+  const explicit = isExplicitBuild(p.text);
+  return p.wizardOn ? (p.longForm || explicit) : explicit;
+}
+
 let _planSeq = 0;
 const planUid = (): string => `cmp_${(_planSeq++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
