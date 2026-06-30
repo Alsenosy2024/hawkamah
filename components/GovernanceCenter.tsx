@@ -46,6 +46,7 @@ import { buildCharter, buildRiskRegister, buildRoadmap } from '../services/gover
 import { runGovernanceAgent } from '../services/governanceAgent';
 import { askGovernance } from '../services/governanceQa';
 import Markdown from './Markdown';
+import BackButton from './BackButton';
 import ThinkingTrace from './ThinkingTrace';
 import ArtifactProgress from './ArtifactProgress';
 import MermaidView from './MermaidView';
@@ -2294,9 +2295,7 @@ ${content.slice(0, 8000)}`;
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className={`w-4 h-4 inline-block me-1 ${ar ? '' : 'rotate-180'}`}><polyline points="9 18 15 12 9 6"/></svg>{t('رجوع', 'Back')}
               </button>
             )}
-            <button onClick={onBack} className="hw-btn hw-btn-sm hw-btn-ghost whitespace-nowrap">
-              {ar ? '→' : '←'} {t('بوابة الإدارة', 'Admin Hub')}
-            </button>
+            <BackButton onClick={onBack} ar={ar} label={t('بوابة الإدارة', 'Admin Hub')} />
           </div>
         </div>
         {/* pill stage nav */}
@@ -3003,6 +3002,12 @@ ${content.slice(0, 8000)}`;
                 <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-4">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
+                      {/* V23 — a consistent way back out of the open live-canvas sub-view, near its heading. */}
+                      {modelCanvas && (
+                        <div className="mb-2">
+                          <BackButton onClick={() => setModelCanvas(false)} ar={ar} titleLabel={t('إغلاق محرّر الهيكل', 'Close structure editor')} />
+                        </div>
+                      )}
                       <div className="font-bold text-emerald-800 dark:text-emerald-200 text-sm flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>{t('تحرير الهيكل (كانفاس حي)', 'Edit structure (live canvas)')}</div>
                       <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('أضِف وحدة/دور، أعد التسمية، احذف، اربط بالسحب، أو رتّب تلقائيًا — كل تعديل يُحفظ في النموذج فورًا.', 'Add a unit/role, rename, delete, drag-connect, or auto-layout — every edit saves to the model instantly.')}</div>
                     </div>
@@ -3350,6 +3355,8 @@ ${content.slice(0, 8000)}`;
               {activeDiag && (
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center gap-2">
+                    {/* V23 — exit the open diagram back to the diagram gallery. */}
+                    <BackButton onClick={() => setActiveDiag(null)} ar={ar} titleLabel={t('رجوع إلى المخططات', 'Back to diagrams')} />
                     <h3 className="font-black text-slate-800">{activeDiag.title}</h3>
                     {activeDiag.kind !== 'swimlane' && (
                       <div className="ms-auto flex gap-1 bg-slate-200 rounded-xl p-1">
@@ -4035,6 +4042,10 @@ ${content.slice(0, 8000)}`;
               </button>
               {showRefForm && (
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 space-y-2">
+                  {/* V23 — a clear رجوع out of the manual-reference form (besides the toggle text above). */}
+                  <div>
+                    <BackButton onClick={() => setShowRefForm(false)} ar={ar} titleLabel={t('إغلاق نموذج المرجع', 'Close reference form')} />
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <input value={rp.name} onChange={e => setRp({ ...rp, name: e.target.value })} placeholder={t('اسم المشروع/الشركة', 'Project/company name')} className="hw-input text-sm" />
                     <input value={rp.sector} onChange={e => setRp({ ...rp, sector: e.target.value })} placeholder={t('القطاع', 'Sector')} className="hw-input text-sm" />
