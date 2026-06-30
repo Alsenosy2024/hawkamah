@@ -78,7 +78,10 @@ const MONO_FONT = 'Courier New';
 const safeName = (s: string) => (s || 'report').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80);
 
 // ---------- shared blob download ----------
-function downloadBlob(blob: Blob, fileName: string) {
+// Exported so other export paths (e.g. copilotClient.exportDoc, the Python-backend
+// export route) reuse the SAME hardened download — 0-byte guard + deferred cleanup —
+// instead of re-implementing the dead-download pattern (FE-4).
+export function downloadBlob(blob: Blob, fileName: string) {
   // Guard the broken-blob path that surfaced as a full-page "File not found" on
   // open (PRD V1): never hand the browser a 0-byte/empty blob to "save" — the
   // resulting file can't be opened. Bail loudly instead of writing a dead file.
