@@ -8,7 +8,7 @@ import type {
   GovProgress, ArtifactSection, ThinkingStep, ReferenceProject, ProvenanceRef,
   GovDiagram, GovDiagramKind, GovGap, GovDocumentRecord, GovModelSnapshot,
   IntegrityIssue, MaturityReport, CoverageRow, FrameworkAlignment, GovAction,
-  TraceChain, GovAgentStep, DocChunk, GeneratedArtifact, GovOrgUnit,
+  TraceChain, GovAgentStep, DocChunk, GeneratedArtifact, GovOrgUnit, DocComment,
 } from '../types';
 import { ingestDocument, summarizeSentiment } from '../services/ingestionService';
 import { extractFileText } from '../services/fileExtraction';
@@ -26,7 +26,10 @@ import {
   saveSnapshot, loadSnapshots, deleteSnapshot,
 } from '../services/governanceService';
 import { createReviewerToken } from '../services/reviewerTokenService';
+import { createSharedDoc, loadTenantDocComments, snapshotByteLength } from '../services/sharedDocService';
 import { composeReviewerInviteMailto } from '../services/notifyService';
+import { artifactToMarkdown } from '../services/canvasDocument';
+import DocumentCanvas from './DocumentCanvas';
 import {
   buildModel, generateGovernanceDoc, generateBulkDoc, generateGapFix, editArtifact,
   industryLens, referenceProjectsBlock,
@@ -546,6 +549,12 @@ ${content.slice(0, 8000)}`;
     try { return localStorage.getItem(`gov_lib_seen:${settings.activeClientProfileId || 'default'}`) || ''; } catch { return ''; }
   });
   const [genDocKind, setGenDocKind] = useState<GovDocumentRecord['kind']>('governance');
+  // V14: a library document open in the functional editable canvas (persist + share).
+  const [canvasRec, setCanvasRec] = useState<GovDocumentRecord | null>(null);
+  // V14/V20: client/reviewer comments + visual-review checks, by source doc id.
+  // Loaded once per library refresh; empty (degrades silently) until the
+  // `doc_comments` firestore rule is deployed.
+  const [clientComments, setClientComments] = useState<Record<string, DocComment[]>>({});
 
   // creation checklist (multi-select doc kinds + per-item page counts) — covers full catalog
   const [createSel, setCreateSel] = useState<Record<string, { on: boolean; pages: number }>>(() => {
@@ -690,6 +699,10 @@ ${content.slice(0, 8000)}`;
       setGovDocs(gds); setSnapshots(snaps);
       setSentimentAvg(ch.length ? summarizeSentiment(ch).score : undefined); // ج4
       setPermissionError(false); // load succeeded — clear any stale banner
+      // V14/V20: client/reviewer feedback from /?doc= shares (one query). Best-effort
+      // — before the doc_comments rule is deployed this is permission-denied, and the
+      // library just shows no client feedback (in-doc comments are unaffected).
+      loadTenantDocComments(tenantId).then(setClientComments).catch(() => setClientComments({}));
       return ch.length;
     } catch (e) {
       console.warn('gov load failed', e);
@@ -1730,6 +1743,38 @@ ${content.slice(0, 8000)}`;
     } catch {
       alertMsg(t('تعذّر إنشاء رابط المراجعة.', 'Could not create the review link.'));
     }
+  };
+
+  // ---- V14: open a stored document in the FUNCTIONAL editable canvas ----
+  // Markdown is rebuilt from the record (diagrams ride along as images); a prior
+  // edited `canvasHtml` reopens the canvas exactly where the owner left off.
+  const canvasMarkdown = useMemo(
+    () => (canvasRec ? artifactToMarkdown(canvasRec) : ''),
+    [canvasRec],
+  );
+  // Persist the live canvas edits onto the record so they survive reload + flow
+  // into a client share. Guarded against the Firestore ~1MiB document limit (a
+  // diagram-heavy doc already carries PNGs) — over budget we keep the sections
+  // and tell the owner to export to retain the visual edits.
+  const saveCanvasHtml = async (html: string) => {
+    if (!canvasRec) return;
+    if (snapshotByteLength(html) > 700_000) {
+      alertMsg(t('التعديلات كبيرة جدًا للحفظ في المستند؛ صدّرها للاحتفاظ بها.', 'Edits are too large to store on the document; export to keep them.'));
+      return;
+    }
+    const rec: GovDocumentRecord = { ...canvasRec, canvasHtml: html, updatedAt: new Date().toISOString() };
+    try { await saveGovDocument(rec); setCanvasRec(rec); setGovDocs(ds => ds.map(d => d.id === rec.id ? rec : d)); }
+    catch (e: any) { alertMsg(t('فشل حفظ التعديلات: ', 'Failed to save edits: ') + (e?.message || e)); }
+  };
+  // Mint a /?doc= client share from the live canvas HTML (snapshot persisted in
+  // the token). docId = the record id so client comments surface in this library.
+  const shareRecord = (rec: GovDocumentRecord) => async (html: string, opts: { accessCode?: string; allowComments: boolean }) => {
+    const { url } = await createSharedDoc({
+      tenantId, docId: rec.id, docTitle: rec.title, html,
+      allowComments: opts.allowComments, accessCode: opts.accessCode,
+      createdByEmail: auth.currentUser?.email || undefined,
+    });
+    return { url };
   };
   // HWK-D4: new review comments (from others) since the owner last viewed the library.
   const newReviewComments = useMemo<number>(() => {
@@ -4135,6 +4180,7 @@ ${content.slice(0, 8000)}`;
                               </div>
                               <div className="flex flex-wrap gap-1 mt-2">
                                 <button onClick={() => reopenDoc(d)} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>{t('استعراض/تحرير', 'Preview/edit')}</button>
+                                <button onClick={() => setCanvasRec(d)} title={t('افتح المستند في الكانفس: حرّر، احفظ، وشارك رابطاً للعميل', 'Open in the canvas: edit, save, and share a client link')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('الكانفس ومشاركة العميل', 'Canvas & client share')}</button>
                                 <button onClick={() => handleBatchExport([d], d.title)} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('تصدير', 'Export')}</button>
                                 {d.status !== 'in_review' && <button onClick={() => setDocStatus(d, 'in_review')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('للمراجعة', 'To review')}</button>}
                                 {d.status !== 'approved' && <button onClick={() => setDocStatus(d, 'approved')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد', 'Approve')}</button>}
@@ -4156,6 +4202,23 @@ ${content.slice(0, 8000)}`;
                                 <div className="mt-2 space-y-1">
                                   {d.comments.map(c => (
                                     <div key={c.id} className="text-[11px] text-slate-500 border-s-2 border-slate-200 dark:border-slate-700 ps-2">{c.text} <span className="text-slate-400">· {c.author} · {new Date(c.at).toLocaleDateString()}</span></div>
+                                  ))}
+                                </div>
+                              )}
+                              {/* V14/V20: client/reviewer feedback from /?doc= shares */}
+                              {clientComments[d.id] && clientComments[d.id].length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                  <div className="text-[10px] font-bold text-teal-600 uppercase tracking-wide flex items-center gap-1">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
+                                    {t('ملاحظات العميل/المراجع', 'Client / reviewer feedback')} ({clientComments[d.id].length})
+                                  </div>
+                                  {clientComments[d.id].map(c => (
+                                    <div key={c.id} className="text-[11px] text-slate-600 dark:text-slate-300 border-s-2 border-teal-200 dark:border-teal-800 ps-2">
+                                      {c.kind === 'review_check' && c.check && (
+                                        <span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded-full me-1 ${c.check.verdict === 'pass' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{c.check.verdict === 'pass' ? t('مراجعة: مقبول', 'review: pass') : t('مراجعة: مرفوض', 'review: fail')}</span>
+                                      )}
+                                      {c.text || (c.kind === 'review_check' ? t('(بدون ملاحظات)', '(no notes)') : '')} <span className="text-slate-400">· {c.author} · {new Date(c.at).toLocaleDateString()}</span>
+                                    </div>
                                   ))}
                                 </div>
                               )}
@@ -4258,6 +4321,24 @@ ${content.slice(0, 8000)}`;
         agentAutoApply={agentAutoApply}
         setAgentAutoApply={setAgentAutoApply}
       />
+
+      {/* V14 — a stored document open in the functional editable canvas: edit in
+          place, save (persists `canvasHtml`, survives reload), and share a /?doc=
+          client link (Share button in the canvas header). */}
+      {canvasRec && (
+        <DocumentCanvas
+          markdown={canvasMarkdown}
+          initialHtml={canvasRec.canvasHtml}
+          title={canvasRec.title}
+          language={language}
+          subtitle={t('وثيقة حوكمة', 'Governance document')}
+          brand={companyName ? `${companyName} · AILIGENT` : 'AILIGENT'}
+          date={t('بتاريخ ', 'Dated ') + new Date().toLocaleDateString(ar ? 'ar-EG' : 'en-GB')}
+          onClose={() => setCanvasRec(null)}
+          onSave={saveCanvasHtml}
+          onShare={shareRecord(canvasRec)}
+        />
+      )}
     </div>
   );
 };

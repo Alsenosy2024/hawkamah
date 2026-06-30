@@ -389,6 +389,53 @@ export interface ReviewerToken {
   createdByEmail?: string;
 }
 
+// Client-facing shared document (V14 + V20). A `/?doc=` link carrying a
+// self-contained HTML snapshot of the (edited) canvas so a client — or a "visual
+// reviewer" — opens it in a read-only canvas (brand fonts + diagrams baked in)
+// and comments WITHOUT a Firebase login. Stored in the world-readable
+// `survey_tokens` collection with type:'shared_doc' (public read / admin write) —
+// no new collection and no firestore.rules change for share + read. An optional
+// access code (SHA-256, same scheme as the paper-assessment token) gates reviewer
+// access — reusing the existing access-code pattern, no new auth.
+export interface SharedDocToken {
+  id: string;                 // 16-char = the URL ?doc= value
+  type: 'shared_doc';         // discriminates from SurveyToken / ReviewerToken
+  tenantId: string;
+  docId: string;              // source gov_document id (owner correlates comments)
+  docTitle: string;
+  html: string;               // self-contained canvas HTML snapshot
+  allowComments: boolean;     // owner may share view-only
+  accessCodeHash?: string;    // optional SHA-256 gate (V20 visual reviewer)
+  createdAt: string;          // ISO
+  createdByEmail?: string;
+}
+
+// A structured visual-review check a reviewer records over a shared document (V20).
+export interface VisualReviewCheck {
+  diagrams: boolean;   // diagrams render correctly
+  fonts: boolean;      // brand font renders
+  layout: boolean;     // layout / RTL correct
+  content: boolean;    // content is accurate
+  verdict: 'pass' | 'fail';
+}
+
+// A comment (or visual-review check) on a shared document, written by a non-admin
+// client/reviewer into the create-only, size-capped `doc_comments` collection.
+// This is the ONE collection that needs a firestore.rules addition (see the PR
+// description); until that rule is live the write fails and the UI degrades
+// gracefully to a "comments not enabled yet" state.
+export interface DocComment {
+  id: string;
+  tokenId: string;
+  docId: string;
+  tenantId: string;
+  kind: 'comment' | 'review_check';
+  author: string;
+  text: string;
+  at: string;                 // ISO
+  check?: VisualReviewCheck;  // present when kind === 'review_check'
+}
+
 // One employee's public survey response (written by anonymous; read by admin).
 export interface PublicSurveyResponse {
   id: string;                       // Firestore auto-ID
@@ -831,6 +878,11 @@ export interface GovDocumentRecord {
   diagrams?: ArtifactDiagram[];
   citations?: Record<string, ProvenanceRef[]>;
   comments?: GovComment[];
+  // V14: the live edited canvas HTML (designMode output). Persisted so the
+  // canvas reopens with the owner's in-place edits and a client share carries
+  // them. Omitted when too large to fit the Firestore document limit (the
+  // sections/diagrams remain the source of truth in that case).
+  canvasHtml?: string;
 }
 
 export interface GovComment {

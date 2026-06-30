@@ -20,6 +20,7 @@ import StepTimeline from './StepTimeline';
 import Markdown, { type CiteRef } from './Markdown';
 import DocumentCanvas from './DocumentCanvas';
 import { looksLikeDocument, canvasHtmlToMarkdown } from '../services/canvasDocument';
+import { createSharedDoc } from '../services/sharedDocService';
 // Copilot avatar art — a bundled SVG line-icon (robot/chatbot face). Imported as
 // an asset (Vite gives us its hashed URL) and painted via CSS mask so it inherits
 // the live --hw-brand teal in both RTL and dark mode (see RobotAvatar below).
@@ -370,6 +371,12 @@ const GovCopilot: React.FC<Props> = (props) => {
   // can be recovered. The backend autosave only fires once a turn settles (!busy), so a
   // reload during the 7–8 min draft would otherwise lose everything.
   const lsDraftKey = (tid: string) => `gc_draft:${tid}`;
+  // V14: persist in-canvas edits (by message id) so reopening a document — even
+  // after a reload — shows the user's edits. Mirrors the conversation persistence.
+  const lsCanvasKey = (tid: string) => `gc_canvas_edits:${tid}`;
+  const persistCanvasEdits = (tid: string) => {
+    try { localStorage.setItem(lsCanvasKey(tid), JSON.stringify(canvasEditsRef.current)); } catch { /* quota — ignore */ }
+  };
   const hydrateDraftMsgs = (arr: any[]): Msg[] => (arr || []).map((m: any): Msg => ({
     id: m.id || nid(),
     sender: m.sender === 'user' ? 'user' : 'agent',
@@ -458,6 +465,8 @@ const GovCopilot: React.FC<Props> = (props) => {
   // On open: recover an interrupted run first, then load history / resume the last thread.
   useEffect(() => {
     if (!open || !tenantId) return;
+    // V14: rehydrate persisted in-canvas edits so reopening a document shows them.
+    try { const raw = localStorage.getItem(lsCanvasKey(tenantId)); if (raw) canvasEditsRef.current = JSON.parse(raw) || {}; } catch { /* ignore */ }
     if (!convIdRef.current && !msgs.length) {
       // HWK-A3: a refresh mid-generation left a draft mirror → restore it (works even when
       // the backend history is off). Not suppressing autosave, so the recovered run is then
@@ -1143,7 +1152,17 @@ const GovCopilot: React.FC<Props> = (props) => {
         subtitle={stageLabel}
         date={t('بتاريخ ', 'Dated ') + new Date().toLocaleDateString(ar ? 'ar-EG' : 'en-GB')}
         onClose={() => setCanvasDoc(null)}
-        onSave={html => { canvasEditsRef.current[canvasDoc.id] = html; }}
+        onSave={html => { canvasEditsRef.current[canvasDoc.id] = html; if (tenantId) persistCanvasEdits(tenantId); }}
+        onShare={tenantId ? async (html, opts) => {
+          // V14/V20 — mint a /?doc= client share from the live canvas HTML. The
+          // message id is the stable doc id so the owner can correlate comments.
+          const title = (canvasDoc.md.match(/^#{1,2}\s+(.+)$/m)?.[1] || model?.companyName || t('وثيقة حوكمة', 'Governance document')).slice(0, 120).trim();
+          const { url } = await createSharedDoc({
+            tenantId, docId: canvasDoc.id, docTitle: title, html,
+            allowComments: opts.allowComments, accessCode: opts.accessCode,
+          });
+          return { url };
+        } : undefined}
         onAskAi={sel => {
           setCanvasDoc(null);
           setInput(prev => `${prev ? prev + '\n' : ''}${t('بخصوص هذا المقطع: «', 'Regarding this passage: «')}${sel}»\n`);
