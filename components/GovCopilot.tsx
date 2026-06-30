@@ -3,7 +3,8 @@ import type { CompanyGovernanceModel, DocChunk, Language, ThinkingStep, Progress
 import {
   stageChat,
   // V5 + V16 — conversational build wizard (pure logic lives in governanceChat).
-  isExplicitBuild, proposeBuildPlan, planToBuildRequest,
+  // V27 — shouldOpenBuildWizard gates the wizard so conversation is the default.
+  proposeBuildPlan, planToBuildRequest, shouldOpenBuildWizard,
   addPlanItem, removePlanItem, toggleComponent, clampPlanPages,
   type BuildPlan,
   type GovStageKey, type GovCopilotMode, type GovStateSnapshot,
@@ -323,13 +324,16 @@ const GovCopilot: React.FC<Props> = (props) => {
   const [canvasDoc, setCanvasDoc] = useState<{ id: string; md: string } | null>(null);
   const canvasEditsRef = useRef<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
-  // ── V5 + V16: conversational build wizard ──
-  // Before a long autonomous build the copilot proposes an editable plan (length,
-  // axes, departments, components, notes); nothing is fixed. `plan` is that
-  // editable contract; `building` is true while a confirmed plan is generating
-  // (so the user can intervene); `wizardOn` lets a user opt out and keep the
-  // one-shot path (the fallback). See send()/openPlan()/acceptPlan() below.
-  const [wizardOn, setWizardOn] = useState(true);
+  // ── V5 + V16 + V27: conversational build wizard (now OPT-IN) ──
+  // Before a long autonomous build the copilot can propose an editable plan
+  // (length, axes, departments, components, notes); nothing is fixed. `plan` is
+  // that editable contract; `building` is true while a confirmed plan is
+  // generating (so the user can intervene). V27 — the copilot is CONVERSATIONAL
+  // BY DEFAULT: `wizardOn` now defaults OFF, so a normal message gets a real
+  // grounded reply instead of a forced build-plan. Turning it ON (the toggle in
+  // the composer) restores the "ask before generating" wizard for every doc
+  // request; an explicit build command still opens it either way (see send()).
+  const [wizardOn, setWizardOn] = useState(false);
   const [plan, setPlan] = useState<BuildPlan | null>(null);
   const [planBusy, setPlanBusy] = useState(false);     // proposing/regenerating a plan
   const [building, setBuilding] = useState(false);     // a confirmed plan is generating
@@ -652,12 +656,13 @@ const GovCopilot: React.FC<Props> = (props) => {
       }
     }
 
-    // V5 + V16 — BUILD WIZARD: a build/long-doc request first proposes an
-    // editable plan (length, axes, departments, components, notes) and asks for
-    // confirmation/edits instead of jumping straight to a 7–8 min generation.
-    // Turning the wizard off (or an already-open plan/build) keeps the old path.
-    if (raw && !att.length && wizardOn && mode === 'ask' && !plan && !planBusy && !building
-        && (LONG_RE.test(raw) || isExplicitBuild(raw))) {
+    // V27 — CONVERSATIONAL BY DEFAULT: a normal message flows straight to a real
+    // grounded reply (the ask/draft path below) and is NOT pushed into a build
+    // plan. The wizard is opt-in: shouldOpenBuildWizard() opens the editable plan
+    // only when the user turned the wizard ON (any doc request) OR clearly asked
+    // to build (an explicit build command), preserving the V5/V16 flow exactly.
+    if (raw && !att.length && mode === 'ask' && !plan && !planBusy && !building
+        && shouldOpenBuildWizard({ wizardOn, text: raw, longForm: LONG_RE.test(raw) })) {
       setInput('');
       await openPlan(q);
       return;
@@ -1129,6 +1134,21 @@ const GovCopilot: React.FC<Props> = (props) => {
     </div>
   );
 
+  // V27 — a chat bubble no longer exports directly; it opens in the canvas (the
+  // single export surface) where the user can view, edit and export to any
+  // format. Used for any substantial answer that isn't already offered as a
+  // templated document via docCanvasBtn, so no answer keeps the old direct-export
+  // buttons in the bubble.
+  const openInCanvasBtn = (id: string, md: string) => (
+    <div className="mt-2.5">
+      <button onClick={() => openCanvas(id, md)}
+        className="hw-btn hw-btn-subtle hw-btn-xs !rounded-full">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><path d="M9 13h6M9 17h4" /></svg>
+        {t('افتح في الكانفس', 'Open in canvas')}
+      </button>
+    </div>
+  );
+
   // Shell geometry: full-screen vs in-screen SIDE PANEL (docked to the edge,
   // full height — "في الجنب"، not a floating bubble). The page stays visible
   // beside it; the panel is page-aware (stageKey) and acts inline.
@@ -1345,8 +1365,13 @@ const GovCopilot: React.FC<Props> = (props) => {
                     {m.searchHtml && (
                       <div className="mt-2 overflow-x-auto" dangerouslySetInnerHTML={{ __html: m.searchHtml }} />
                     )}
+                    {/* V27 — the canvas is the single export surface. A
+                        document-grade answer opens as a templated document; any
+                        other substantial answer opens in the canvas (view / edit
+                        / export there) instead of exporting straight from the
+                        bubble. */}
                     {!m.streaming && looksLikeDocument(m.text) && docCanvasBtn(m.id, m.text)}
-                    {!m.streaming && m.text.length > 40 && exportRow(m.text, m.id)}
+                    {!m.streaming && !looksLikeDocument(m.text) && m.text.length > 40 && openInCanvasBtn(m.id, m.text)}
                   </div>
                   </div>
                 )}
@@ -1491,10 +1516,12 @@ const GovCopilot: React.FC<Props> = (props) => {
                 ? <button onClick={stop} className="gc-send gc-send-stop" title={t('إيقاف', 'Stop')} aria-label={t('إيقاف', 'Stop')}><IconStop /></button>
                 : <button onClick={() => send(input).catch(() => {})} disabled={!input.trim() && !attachments.length} className="gc-send" title={t('إرسال', 'Send')} aria-label={t('إرسال', 'Send')}><IconSend /></button>}
             </div>
-            {/* V5/V16 — wizard opt-out. ON: a build request first proposes an
-                editable plan. OFF: requests go straight to one-shot generation. */}
+            {/* V27 — wizard opt-IN (default OFF = conversational). ON: every doc
+                request first proposes an editable plan. OFF: a normal message
+                gets a real grounded reply; only an explicit build command opens
+                the plan. The toggle keeps the wizard discoverable either way. */}
             <label className="flex items-center gap-1.5 mt-1.5 text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer select-none w-fit"
-              title={t('قبل البناء الطويل، يقترح المساعد خطة قابلة للتعديل (الطول، المحاور، الإدارات، الأقسام).', 'Before a long build, the assistant proposes an editable plan (length, axes, departments, sections).')}>
+              title={t('افتراضيًا: محادثة طبيعية. فعّله ليقترح المساعد خطة قابلة للتعديل (الطول، المحاور، الإدارات، الأقسام) قبل كل بناء.', 'Default: a natural conversation. Turn it on to have the assistant propose an editable plan (length, axes, departments, sections) before every build.')}>
               <input type="checkbox" checked={wizardOn} onChange={e => setWizardOn(e.target.checked)} className="accent-[color:var(--hw-brand,#11a8bc)] rounded-sm" />
               {t('معالج البناء (يسأل قبل التوليد)', 'Build wizard (asks before generating)')}
             </label>
