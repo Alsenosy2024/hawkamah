@@ -123,6 +123,16 @@ class Settings:
     gen_section_tokens: int = int(_get("HAWKAMA_GEN_SECTION_TOKENS", "8192"))
     gen_temperature: float = float(_get("HAWKAMA_GEN_TEMP", "0.35"))
     gen_max_sections: int = int(_get("HAWKAMA_GEN_MAX_SECTIONS", "40"))
+    # V10 — chunked generation: the outline is drafted in CHUNKS of this many
+    # sections, and each chunk is critiqued/revised before the next is started,
+    # instead of one mega-pass + a single global critique. Smaller chunks keep the
+    # critique context tight so accuracy holds across a long document.
+    gen_chunk_sections: int = int(_get("HAWKAMA_GEN_CHUNK_SECTIONS", "3"))
+    # V9 — per-axis pipeline: how many governance axes to probe (the 17 dimensions,
+    # capped for cost), and the per-axis output ceiling for the structured probe.
+    gen_axis_max: int = int(_get("HAWKAMA_GEN_AXIS_MAX", "17"))
+    gen_axis_tokens: int = int(_get("HAWKAMA_GEN_AXIS_TOKENS", "2048"))
+    gen_axis_concurrency: int = int(_get("HAWKAMA_GEN_AXIS_CONCURRENCY", "4"))
 
     # --- Storage -------------------------------------------------------------
     data_dir: Path = field(default_factory=lambda: Path(_get("HAWKAMA_DATA_DIR", str(_COPILOT_ROOT / "data"))))

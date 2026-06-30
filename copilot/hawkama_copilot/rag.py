@@ -259,6 +259,38 @@ class RagEngine:
             for i, (c, s) in enumerate(kept)
         ]
 
+    def retrieve_multi(self, queries: list[str], k: int | None = None) -> list[Evidence]:
+        """Retrieve for several sub-queries and merge into one de-duplicated,
+        re-labeled evidence list (best score per chunk wins).
+
+        The per-axis pipeline (V9) needs to PROBE several angles of one axis at
+        once — the axis name, what to look for in the inputs, and the company's
+        departments — so a single embedding query underserves it. We run each
+        sub-query, keep the highest score per chunk, and re-issue stable
+        ``[مصدر N]`` labels over the merged set so citations stay contiguous."""
+        merged: dict[str, Evidence] = {}
+        for q in queries:
+            q = (q or "").strip()
+            if not q:
+                continue
+            for ev in self.retrieve(q, k=k):
+                cur = merged.get(ev.chunk_id)
+                if cur is None or ev.score > cur.score:
+                    merged[ev.chunk_id] = ev
+        ordered = sorted(merged.values(), key=lambda e: e.score, reverse=True)
+        return [
+            Evidence(
+                label=f"مصدر {i + 1}",
+                doc_name=e.doc_name,
+                heading_path=e.heading_path,
+                text=e.text,
+                score=e.score,
+                chunk_id=e.chunk_id,
+                kind=e.kind,
+            )
+            for i, e in enumerate(ordered)
+        ]
+
     def _adaptive_k(self, query: str) -> int:
         words = len([w for w in re.split(r"\s+", query.strip()) if len(w) > 2])
         corpus = len(self.store.chunks)

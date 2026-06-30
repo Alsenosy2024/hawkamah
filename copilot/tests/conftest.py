@@ -55,9 +55,23 @@ def fake_gemini(monkeypatch):
         return f"## {title}\nمحتوى تجريبي [مصدر 1].\n\n| العمود | القيمة |\n|---|---|\n| أ | ب |"
 
     def fake_generate_json(prompt, **kw):
-        # Used by build_outline and _critique.
-        if "revise" in str(kw.get("response_schema", "")) or "راجع" in str(prompt):
+        # Used by build_outline, _critique, and the per-axis pipeline (V9).
+        schema = str(kw.get("response_schema", ""))
+        p = str(prompt)
+        if "revise" in schema or "راجع" in p:
             return {"revise": []}
+        # Per-axis probe → structured AxisFinding payload (current_state → gaps →
+        # recommendations → improvements). Detect via the axis schema/prompt.
+        if "current_state" in schema or "قيّم محور" in p:
+            return {
+                "current_state": "الوضع الراهن مبني على المدخلات [مصدر 1].",
+                "maturity": 2,
+                "gaps": ["فجوة في التوثيق", "غياب مؤشرات"],
+                "impact": "أثر تشغيلي متوسط",
+                "root_cause": "ضعف الحوكمة",
+                "recommendations": ["توثيق السياسات", "اعتماد مؤشرات"],
+                "improvements": ["أتمتة المتابعة"],
+            }
         # Titles/goals reference corpus terms so retrieval hits and the
         # citations path is exercised end-to-end.
         return {"sections": [
