@@ -30,6 +30,7 @@ import { PaperAssessmentPortal } from './components/PaperAssessmentPortal';
 import { OnlineAssessmentPortal } from './components/OnlineAssessmentPortal';
 import UnifiedAssessmentPortal from './components/UnifiedAssessmentPortal';
 import PublicReviewScreen from './components/PublicReviewScreen';
+import SharedDocScreen from './components/SharedDocScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider, useToast } from './components/ToastProvider';
 import { buildFontCss } from './services/designTokens';
@@ -879,6 +880,14 @@ const App: React.FC = () => {
   const reviewToken = new URLSearchParams(window.location.search).get('r');
   if (reviewToken) {
     return <PublicReviewScreen token={reviewToken} />;
+  }
+
+  // Client-facing shared document — ?doc=TOKEN (V14/V20): a self-contained canvas
+  // snapshot opened in a read-only canvas (no sign-in), with comments + an optional
+  // access-code-gated visual-review check. Bypasses all auth/admin logic.
+  const sharedDocToken = new URLSearchParams(window.location.search).get('doc');
+  if (sharedDocToken) {
+    return <SharedDocScreen token={sharedDocToken} />;
   }
 
   return (

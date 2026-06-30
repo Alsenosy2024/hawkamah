@@ -567,6 +567,37 @@ export function extractDocSpec(md: string, opts: MdToSpecOptions = {}): DocSpec 
   } catch { return null; }
 }
 
+// ===========================================================================
+//  Stored record → Markdown (V14 share/canvas bridge).
+//
+//  A library document (GovDocumentRecord / GeneratedArtifact) stores ordered
+//  sections (Markdown) + an executive summary + diagrams already rasterized to
+//  PNG data-URLs. Serialize them to one Markdown string so the SAME canvas
+//  pipeline (markdownToDocSpec → buildCanvasHtml) renders a stored doc — diagrams
+//  ride along as Markdown images (figures), so the snapshot is faithful WITHOUT
+//  any async diagram render. PURE (string in → string out) so it unit-tests.
+// ===========================================================================
+export interface ArtifactLike {
+  title?: string;
+  executiveSummary?: string;
+  sections?: { title?: string; content?: string }[];
+  diagrams?: { title?: string; png?: string }[];
+}
+
+export function artifactToMarkdown(d: ArtifactLike): string {
+  const parts: string[] = [];
+  if (d.title && d.title.trim()) parts.push(`# ${d.title.trim()}`);
+  if (d.executiveSummary && d.executiveSummary.trim()) parts.push(d.executiveSummary.trim());
+  for (const s of d.sections || []) {
+    if (s?.title && s.title.trim()) parts.push(`## ${s.title.trim()}`);
+    if (s?.content && s.content.trim()) parts.push(s.content.trim());
+  }
+  for (const dg of d.diagrams || []) {
+    if (dg?.png) parts.push(`![${(dg.title || 'diagram').replace(/[[\]]/g, '')}](${dg.png})`);
+  }
+  return parts.join('\n\n').trim() + '\n';
+}
+
 // True when the markdown actually carries document-grade structure worth
 // rendering as a multi-page canvas (a heading, a table, or real length).
 export function looksLikeDocument(md: string): boolean {

@@ -123,6 +123,9 @@ const IcShorten = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="no
 const IcLengthen = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 10h16M4 14h16M4 18h12" /></svg>;
 const IcRewrite = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>;
 const IcTrash = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>;
+// ── share popover icons (V14) ──
+const IcShare = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98" /></svg>;
+const IcCopy = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>;
 
 // ── restyle presets (Ailigent-led) ─────────────────────────────────────────
 const COVER_GRADIENTS: { name: string; css: string }[] = [
@@ -160,14 +163,19 @@ export interface DocumentCanvasProps {
   brand?: string;
   language?: Language;
   rootClass?: string;                   // host-controlled geometry (default full-screen)
-  onClose: () => void;
+  readOnly?: boolean;                   // V14 client share view — view + export, no editing
+  onClose?: () => void;                 // optional: hidden when absent (e.g. standalone share page)
   onSave?: (html: string) => void;      // persist the edited HTML
   onAskAi?: (selectedText: string) => void;
+  // V14/V20 — mint a /?doc= share from the LIVE canvas HTML. When provided, a
+  // "Share" button opens a popover (optional access code + view-only) and the
+  // host persists the snapshot, returning the ready-to-send URL.
+  onShare?: (html: string, opts: { accessCode?: string; allowComments: boolean }) => Promise<{ url: string }>;
 }
 
 const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   markdown, initialHtml, title, subtitle, date, brand, language,
-  rootClass = 'fixed inset-0 z-[60]', onClose, onSave, onAskAi,
+  rootClass = 'fixed inset-0 z-[60]', readOnly = false, onClose, onSave, onAskAi, onShare,
 }) => {
   const ar = (language || 'ar') === 'ar';
   const t = (a: string, e: string) => (ar ? a : e);
@@ -184,6 +192,14 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   const [saved, setSaved] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);                     // export-format menu
   const [exporting, setExporting] = useState<'docx' | 'pptx' | 'xlsx' | ''>('');
+  // V14 share popover (only when onShare is provided)
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareCode, setShareCode] = useState('');
+  const [shareAllowComments, setShareAllowComments] = useState(true);
+  const [shareUrl, setShareUrl] = useState('');
+  const [shareErr, setShareErr] = useState('');
+  const [shareCopied, setShareCopied] = useState(false);
 
   const docTitle = useMemo(
     () => (title || (markdown.match(/^#{1,2}\s+(.+)$/m)?.[1] || t('وثيقة', 'Document'))).slice(0, 80).trim(),
@@ -229,7 +245,15 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   const handleIframeLoad = useCallback(() => {
     const doc = iframeRef.current?.contentDocument;
     if (!doc) return;
-    try { doc.designMode = 'on'; doc.execCommand('styleWithCSS', false, 'true'); } catch { /* noop */ }
+    // V14 read-only share view: neutralize the contenteditable the document is
+    // built with (cover/body/sections), keep designMode off, and skip the editing
+    // listeners below — the client can view + export, never edit.
+    if (readOnly) {
+      try { doc.designMode = 'off'; } catch { /* noop */ }
+      doc.querySelectorAll('[contenteditable]').forEach(el => el.setAttribute('contenteditable', 'false'));
+    } else {
+      try { doc.designMode = 'on'; doc.execCommand('styleWithCSS', false, 'true'); } catch { /* noop */ }
+    }
 
     // PRD V15: make embedded diagrams fill the page width (ratio preserved) in
     // BOTH the live canvas and the printed PDF — exportPdf serializes this same
@@ -253,6 +277,8 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       void renderPendingDiagrams(doc, pending, ar ? 'ar' : 'en',
         () => run === renderRunRef.current && !!iframeRef.current);
     }
+    if (readOnly) return;   // share view: no restyle / selection editing
+
     // Clicking the cover opens the restyle modal (instead of editing its text).
     const cover = doc.querySelector('.cover') as HTMLElement | null;
     if (cover) {
@@ -280,7 +306,7 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     doc.addEventListener('mouseup', updateAsk);
     doc.addEventListener('keyup', updateAsk);
     doc.addEventListener('scroll', () => setAskSel(null), true);
-  }, [onAskAi, ar]);
+  }, [onAskAi, ar, readOnly]);
 
   const exec = useCallback((cmd: string, val?: string) => {
     const win = iframeRef.current?.contentWindow;
@@ -462,12 +488,36 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     window.setTimeout(() => setSaved(false), 1800);
   }, [onSave, liveHtml]);
 
-  // Esc closes the canvas.
+  // V14 — mint a /?doc= share from the LIVE canvas HTML (the host persists the
+  // snapshot and returns the URL). Surfaces SNAPSHOT_TOO_LARGE / failures inline.
+  const runShare = useCallback(async () => {
+    if (!onShare || shareBusy) return;
+    setShareBusy(true); setShareErr(''); setShareUrl(''); setShareCopied(false);
+    try {
+      const { url } = await onShare(liveHtml(), {
+        accessCode: shareCode.trim() || undefined,
+        allowComments: shareAllowComments,
+      });
+      setShareUrl(url);
+      try { await navigator.clipboard.writeText(url); setShareCopied(true); } catch { /* clipboard blocked — link still shown */ }
+    } catch (e: unknown) {
+      const code = String((e as Error)?.message || e);
+      setShareErr(
+        code.includes('SNAPSHOT_TOO_LARGE')
+          ? t('المستند كبير جدًا للمشاركة المباشرة. صدّره كـ PDF بدلاً من ذلك.', 'Document is too large to share directly — export it as PDF instead.')
+          : t('تعذّر إنشاء رابط المشاركة.', 'Could not create the share link.'),
+      );
+    } finally {
+      setShareBusy(false);
+    }
+  }, [onShare, shareBusy, liveHtml, shareCode, shareAllowComments, ar]);
+
+  // Esc closes the canvas (when a close handler exists and no modal is open).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !coverOpen) onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !coverOpen && !shareOpen) onClose?.(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, coverOpen]);
+  }, [onClose, coverOpen, shareOpen]);
 
   const tbtn = 'flex items-center justify-center w-8 h-8 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-[var(--hw-brand-50,#eef8fa)] hover:text-[var(--hw-brand,#11a8bc)] transition-colors shrink-0';
   const md = (e: React.MouseEvent, cmd: string, val?: string) => { e.preventDefault(); exec(cmd, val); };
@@ -480,7 +530,7 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           <span className="dc-spark text-[var(--hw-brand,#11a8bc)]"><IcSpark /></span>
           <div className="flex flex-col min-w-0">
             <span className="text-[14.5px] font-bold text-slate-900 dark:text-slate-100 truncate">{docTitle}</span>
-            <span className="text-[11px] text-slate-400 leading-none">{t('مستند قابل للتحرير · الكانفس', 'Editable document · Canvas')}</span>
+            <span className="text-[11px] text-slate-400 leading-none">{readOnly ? t('مستند مُشارَك · للعرض والتصدير', 'Shared document · View & export') : t('مستند قابل للتحرير · الكانفس', 'Editable document · Canvas')}</span>
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
@@ -488,6 +538,48 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
             <button type="button" onClick={handleSave} className="hw-btn hw-btn-subtle hw-btn-sm !rounded-full">
               {saved ? <span className="text-emerald-600">✓</span> : <IcSave />}{saved ? t('حُفظ', 'Saved') : t('حفظ', 'Save')}
             </button>
+          )}
+          {onShare && (
+            <div className="relative">
+              <button type="button" onClick={() => { setShareOpen(o => !o); setShareErr(''); }}
+                aria-haspopup="dialog" aria-expanded={shareOpen} className="hw-btn hw-btn-subtle hw-btn-sm !rounded-full">
+                <IcShare />{t('مشاركة', 'Share')}
+              </button>
+              {shareOpen && (
+                <>
+                  <div className="fixed inset-0 z-[10000]" onClick={() => setShareOpen(false)} aria-hidden="true" />
+                  <div role="dialog" dir={ar ? 'rtl' : 'ltr'}
+                    className="absolute z-[10001] mt-1.5 end-0 w-[300px] rounded-xl border border-[var(--hw-border)] bg-white dark:bg-slate-800 p-3.5 shadow-2xl dc-pop">
+                    <div className="text-[13px] font-bold text-slate-800 dark:text-slate-100 mb-0.5">{t('مشاركة رابط للعميل', 'Share a client link')}</div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed mb-2.5">{t('رابط يفتح المستند للعرض والتعليق دون تسجيل دخول.', 'A link that opens the document for viewing and comments — no sign-in.')}</p>
+                    <label className="flex items-center gap-2 text-[12px] text-slate-600 dark:text-slate-300 mb-2 cursor-pointer">
+                      <input type="checkbox" checked={shareAllowComments} onChange={e => setShareAllowComments(e.target.checked)} className="accent-[var(--hw-brand,#11a8bc)]" />
+                      {t('السماح بالتعليقات', 'Allow comments')}
+                    </label>
+                    <input type="text" value={shareCode} onChange={e => setShareCode(e.target.value)}
+                      placeholder={t('رمز دخول للمراجع (اختياري)', 'Reviewer access code (optional)')}
+                      className="w-full text-[12px] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 mb-2.5" />
+                    <button type="button" onClick={runShare} disabled={shareBusy}
+                      className="hw-btn hw-btn-primary hw-btn-sm !rounded-full w-full justify-center">
+                      {shareBusy ? <IcSpin /> : <IcShare />}{t('إنشاء الرابط', 'Create link')}
+                    </button>
+                    {shareErr && <p className="text-[11px] text-rose-600 mt-2">{shareErr}</p>}
+                    {shareUrl && (
+                      <div className="mt-2.5">
+                        <div className="flex items-center gap-1.5">
+                          <input readOnly value={shareUrl} onFocus={e => e.currentTarget.select()}
+                            className="flex-1 min-w-0 text-[11px] rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-2 py-1.5 text-slate-600 dark:text-slate-300" />
+                          <button type="button" title={t('نسخ', 'Copy')}
+                            onClick={async () => { try { await navigator.clipboard.writeText(shareUrl); setShareCopied(true); } catch { /* noop */ } }}
+                            className="gc-icon-btn shrink-0"><IcCopy /></button>
+                        </div>
+                        <p className="text-[11px] text-emerald-600 mt-1.5">{shareCopied ? t('نُسخ الرابط ✅', 'Link copied ✅') : t('الرابط جاهز.', 'Link ready.')}</p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           )}
           <div className="relative">
             <button type="button" onClick={() => setMenuOpen(o => !o)} disabled={loading || !!exporting}
@@ -515,13 +607,17 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
               </>
             )}
           </div>
-          <button type="button" onClick={onClose} title={t('إغلاق', 'Close')} aria-label={t('إغلاق', 'Close')} className="gc-icon-btn">
-            <IcClose />
-          </button>
+          {onClose && (
+            <button type="button" onClick={onClose} title={t('إغلاق', 'Close')} aria-label={t('إغلاق', 'Close')} className="gc-icon-btn">
+              <IcClose />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Formatting toolbar (drives the iframe via execCommand) */}
+      {/* Formatting toolbar (drives the iframe via execCommand) — hidden in the
+          read-only client share view. */}
+      {!readOnly && (
       <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-[var(--hw-border)] bg-white dark:bg-slate-900 overflow-x-auto flex-nowrap">
         <span className="text-[11px] text-slate-400 me-2 shrink-0 whitespace-nowrap">{t('حدّد أي نص وعدّله ✏️', 'Select any text to edit ✏️')}</span>
         <span className="w-px h-5 bg-[var(--hw-border)] mx-1 shrink-0" />
@@ -567,6 +663,7 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           <IcPalette /> {t('المظهر', 'Appearance')}
         </button>
       </div>
+      )}
 
       {/* The document — isolated iframe, edits in place, IS what we export.
           State machine (PRD V2): loading → spinner; failure → explicit error +
