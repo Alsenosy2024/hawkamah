@@ -156,8 +156,36 @@ const GovernanceCenter: React.FC<Props> = ({ documents, settings, language, onBa
   // If the active project is cleared (e.g. deleted), bounce back to the Projects view.
   useEffect(() => { if (!projectSelected) setShowProjects(true); }, [projectSelected]);
   // A1: reset stage + show projects view when tenant changes (prevents stale UI from prev project)
-  useEffect(() => { setStage(0); setShowProjects(true); }, [tenantId]);
-  const gotoStage = (s: number) => { setShowProjects(false); setStage(s); };
+  useEffect(() => { setStage(0); setShowProjects(true); setNavStack([]); }, [tenantId]);
+
+  // V18 — navigation history + a visible Back control. The owner reported that clicking
+  // an item jumped him "somewhere else" with no way back ("مفيش أصلاً زرّ هنا"). We keep a
+  // small stack of visited locations; every stage move records the prior location and
+  // scrolls the content up to the stage tabs ("يجيب لي فوق للتبويبات"), and the header Back
+  // button pops the stack to return exactly where the user came from.
+  const mainRef = useRef<HTMLElement>(null);
+  const scrollMainTop = useCallback(() => {
+    requestAnimationFrame(() => { if (mainRef.current) mainRef.current.scrollTop = 0; });
+  }, []);
+  const [navStack, setNavStack] = useState<{ projects: boolean; stage: number }[]>([]);
+  const pushNav = useCallback((from: { projects: boolean; stage: number }) => {
+    setNavStack(prev => {
+      const top = prev[prev.length - 1];
+      if (top && top.projects === from.projects && top.stage === from.stage) return prev; // no dup
+      const next = [...prev, from];
+      return next.length > 50 ? next.slice(next.length - 50) : next;                       // bound depth
+    });
+  }, []);
+  const gotoStage = (s: number) => {
+    if (!(showProjects === false && stage === s)) pushNav({ projects: showProjects, stage });
+    setShowProjects(false); setStage(s); scrollMainTop();
+  };
+  const navBack = () => {
+    if (!navStack.length) return;
+    const dest = navStack[navStack.length - 1];
+    setNavStack(navStack.slice(0, -1));
+    setShowProjects(dest.projects); setStage(dest.stage); scrollMainTop();
+  };
 
   // Copilot citation → jump to the cited uploaded resource. Open the Sources
   // stage and flash the matching document row so the user lands right on it.
@@ -171,8 +199,12 @@ const GovernanceCenter: React.FC<Props> = ({ documents, settings, language, onBa
   const docMatch = (name: string) => !!highlight && (name === highlight.name || docNorm(name) === docNorm(highlight.name));
   const openSource = (docName: string) => {
     if (!docName) return;
+    // V18 — a citation jump lands on the Inputs stage; record where we came from so the
+    // Back control returns the user to the document/section they were reading.
+    pushNav({ projects: showProjects, stage });
     setShowProjects(false);
     setStage(0);
+    scrollMainTop();
     setHighlight({ name: docName, seq: ++highlightSeq.current });
   };
   useEffect(() => {
@@ -404,6 +436,38 @@ ${content.slice(0, 8000)}`;
   // sources exclusion + view toggle
   const [excludedDocIds, setExcludedDocIds] = useState<Set<string>>(new Set());
   const [srcView, setSrcView] = useState<'list' | 'map'>('list');
+
+  // FE-2 — normalized names of org units the owner deleted, persisted per tenant so a
+  // hard rebuild can't silently re-derive them. Loaded/reset whenever the project changes.
+  const [removedUnitNames, setRemovedUnitNames] = useState<Set<string>>(new Set());
+  const removedUnitsKey = `gov_removed_units:${tenantId}`;
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`gov_removed_units:${tenantId}`);
+      const arr = raw ? JSON.parse(raw) : [];
+      setRemovedUnitNames(new Set(Array.isArray(arr) ? arr.map((x: any) => String(x)) : []));
+    } catch { setRemovedUnitNames(new Set()); }
+  }, [tenantId]);
+  // Diff a model edit (tree rename/add/delete OR a canvas edit) by unit ID: a unit whose
+  // id disappears (and whose name isn't kept under another id) is a real deletion →
+  // tombstone its name; any name reintroduced into the model clears its tombstone. Keying
+  // on id (not name) means a rename is NOT mistaken for a delete.
+  const reconcileUnitTombstones = useCallback((prev: CompanyGovernanceModel, next: CompanyGovernanceModel) => {
+    const prevUnits = prev?.orgUnits || [], nextUnits = next?.orgUnits || [];
+    const nextIds = new Set(nextUnits.map(u => u.id));
+    const nextNames = new Set(nextUnits.map(u => normUnitName(u.name)));
+    const removed = prevUnits
+      .filter(u => !nextIds.has(u.id) && !nextNames.has(normUnitName(u.name)))
+      .map(u => normUnitName(u.name)).filter(Boolean);
+    setRemovedUnitNames(prevSet => {
+      let changed = false; const ns = new Set(prevSet);
+      for (const n of removed) if (!ns.has(n)) { ns.add(n); changed = true; }
+      for (const n of nextNames) if (n && ns.has(n)) { ns.delete(n); changed = true; } // reintroduced → forget
+      if (!changed) return prevSet;
+      try { localStorage.setItem(removedUnitsKey, JSON.stringify([...ns])); } catch { /* quota — ignore */ }
+      return ns;
+    });
+  }, [removedUnitsKey]);
 
   // gov_documents library (#3/#4/#14)
   const [govDocs, setGovDocs] = useState<GovDocumentRecord[]>([]);
@@ -755,6 +819,10 @@ ${content.slice(0, 8000)}`;
                        ` (merge: +${merged.stats.added} new, ${merged.stats.updated} updated, ${merged.stats.kept} kept)`);
         }
       }
+      // FE-2 — units the owner explicitly deleted stay deleted: drop any the rebuild/merge
+      // re-derived from the source chunks (matched by normalized name), with their
+      // descendants and now-orphaned roles/procedures/KPIs/authorities.
+      if (removedUnitNames.size) m = pruneRemovedUnits(m, removedUnitNames);
       await saveModel(m);
       setModel(m);
       await loadAll();
@@ -1296,6 +1364,7 @@ ${content.slice(0, 8000)}`;
 
   // persist model edits made from the canvas
   const handleModelCanvasChange = async (m: CompanyGovernanceModel) => {
+    if (model) reconcileUnitTombstones(model, m); // FE-2: track unit deletions / re-adds
     setModel(m);
     try { await saveModel(m); } catch (e) { console.warn('model save failed', e); }
   };
@@ -2046,9 +2115,18 @@ ${content.slice(0, 8000)}`;
               {model ? ` · ${t('نموذج v', 'model v')}${model.version}` : ` · ${t('بلا نموذج', 'no model')}`}
             </p>
           </div>
-          <button onClick={onBack} className="hw-btn hw-btn-sm hw-btn-ghost shrink-0 whitespace-nowrap">
-            {ar ? '→' : '←'} {t('بوابة الإدارة', 'Admin Hub')}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {/* V18 — return to the exact view the user came from (citation jump, detail view, …) */}
+            {navStack.length > 0 && (
+              <button onClick={navBack} title={t('رجوع للموضع السابق', 'Back to where you were')}
+                className="hw-btn hw-btn-sm hw-btn-subtle whitespace-nowrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className={`w-4 h-4 inline-block me-1 ${ar ? '' : 'rotate-180'}`}><polyline points="9 18 15 12 9 6"/></svg>{t('رجوع', 'Back')}
+              </button>
+            )}
+            <button onClick={onBack} className="hw-btn hw-btn-sm hw-btn-ghost whitespace-nowrap">
+              {ar ? '→' : '←'} {t('بوابة الإدارة', 'Admin Hub')}
+            </button>
+          </div>
         </div>
         {/* pill stage nav */}
         <nav className="px-3 sm:px-5 pb-3 overflow-x-auto">
@@ -2179,7 +2257,7 @@ ${content.slice(0, 8000)}`;
       )}
 
       {/* stage content */}
-      <main className="flex-1 overflow-auto p-4 sm:p-6 bg-[#F7FAFB] dark:bg-slate-900">
+      <main ref={mainRef} className="flex-1 overflow-auto p-4 sm:p-6 bg-[#F7FAFB] dark:bg-slate-900">
         <div className="max-w-6xl mx-auto">
 
           {/* STAGE 0 — المشاريع (project-first gate) */}
@@ -2740,7 +2818,7 @@ ${content.slice(0, 8000)}`;
                   </button>
                 )}
                 {model && (
-                  <button onClick={() => setStage(1)} className="hw-btn hw-btn-subtle">
+                  <button onClick={() => gotoStage(1)} className="hw-btn hw-btn-subtle">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>{t('تفاصيل النموذج الكامل', 'Full model details')}
                   </button>
                 )}
@@ -3022,7 +3100,7 @@ ${content.slice(0, 8000)}`;
               </button>
               {/* W7: الإدارات folded into البناء as an entry into the package builder. */}
               <button
-                onClick={() => model && setStage(5)}
+                onClick={() => model && gotoStage(5)}
                 disabled={!model}
                 title={!model ? t('ابنِ الهيكل التنظيمي أولاً.', 'Build the org structure first.') : undefined}
                 className={UI.tabIdle + ' disabled:opacity-40'}
@@ -3975,6 +4053,41 @@ const lockedOrgUnitIds = (model: any): Set<string> => new Set(
   ([...(model.roles || []), ...(model.procedures || []), ...(model.kpis || [])]
     .map((x: any) => x.unitId).filter(Boolean)) as string[]);
 const orgUnitLocked = (model: any, id: string): boolean => lockedOrgUnitIds(model).has(id);
+
+// FE-2 — removed-unit tombstones. `deleteOrgUnit` (and a canvas delete) only remove a
+// unit from the LIVE model, but a HARD rebuild re-derives it from the source chunks via
+// buildModel + mergeModels (the owner's "شيل المالية" reappears). We persist the
+// normalized NAMES the owner deleted and prune them out of every rebuilt model so a
+// removed unit STAYS removed. Name-normalization mirrors governanceValidation.norm so
+// the tombstone keys line up with the merge's own name matching.
+const normUnitName = (s: string): string => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+// Prune any unit whose normalized name is tombstoned — plus its descendants and the
+// roles/procedures/KPIs/authorities that referenced them — keeping referential
+// integrity. Pure (returns a new model); a no-op when nothing matches.
+function pruneRemovedUnits(model: CompanyGovernanceModel, removedNames: Set<string>): CompanyGovernanceModel {
+  if (!removedNames.size || !model?.orgUnits?.length) return model;
+  const removeUnitIds = new Set<string>();
+  for (const u of model.orgUnits) if (removedNames.has(normUnitName(u.name))) removeUnitIds.add(u.id);
+  if (!removeUnitIds.size) return model;
+  // cascade to descendants — removing a parent removes its sub-units too
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const u of model.orgUnits) {
+      if (u.parentId && removeUnitIds.has(u.parentId) && !removeUnitIds.has(u.id)) { removeUnitIds.add(u.id); grew = true; }
+    }
+  }
+  const removedRoleIds = new Set((model.roles || []).filter(r => r.unitId && removeUnitIds.has(r.unitId)).map(r => r.id));
+  return {
+    ...model,
+    orgUnits: model.orgUnits.filter(u => !removeUnitIds.has(u.id)),
+    roles: (model.roles || []).filter(r => !(r.unitId && removeUnitIds.has(r.unitId))),
+    procedures: (model.procedures || []).filter(p => !(p.unitId && removeUnitIds.has(p.unitId))),
+    kpis: (model.kpis || []).filter(k => !(k.unitId && removeUnitIds.has(k.unitId))),
+    authorities: (model.authorities || []).filter(a => !(a.roleId && removedRoleIds.has(a.roleId))),
+  };
+}
 
 // A single org-tree node. Hoisted to module scope (a STABLE component type) so that OrgUnitTree
 // re-rendering on each keystroke RECONCILES the rename <input> instead of remounting it (which

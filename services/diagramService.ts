@@ -267,6 +267,67 @@ function modelDigest(model: CompanyGovernanceModel): string {
   ].join('\n\n');
 }
 
+/**
+ * Deterministic org-chart Mermaid, built PURELY from `model.orgUnits` (+ roles) with
+ * NO model/AI call. PRD V6: the org structure used to be AI-generated, so it came out
+ * wrong (invented units not in the model), self-contradictory across sections, and
+ * different on every run ("بزرميط — مختلف كل مرة"). This builds a `flowchart TD`
+ * straight from the real units (`parentId` → tree edges), so the SAME model always
+ * yields byte-identical Mermaid: grounded in the actual inputs (invents nothing),
+ * stable across runs, and identical everywhere the chart is drawn. PURE (no DOM,
+ * no async) → unit-testable.
+ *
+ * Determinism comes from one rule: node ids are assigned by the unit's position in
+ * `model.orgUnits` (`u0, u1, …`), so identical input arrays → identical output. Roles
+ * (when included) hang off their unit by `unitId` with a dotted edge, in array order.
+ */
+export function buildOrgChartMermaid(
+  model: {
+    orgUnits: { id: string; name?: string; parentId?: string }[];
+    roles?: { id: string; title?: string; unitId?: string }[];
+    companyName?: string;
+  },
+  opts: { includeRoles?: boolean } = {},
+): string {
+  const includeRoles = opts.includeRoles !== false;          // default ON (mirrors KIND_GUIDE.orgchart hint)
+  const units = Array.isArray(model?.orgUnits) ? model.orgUnits : [];
+  // square-bracket `[..]` labels accept inner parens, but brackets/braces/pipes/quotes
+  // /breaks DO break them — strip those and collapse whitespace so the label is always
+  // a safe quoted token. (guardMermaidLabels re-wraps long labels at render time.)
+  const esc = (s?: string) =>
+    `"${String(s ?? '').replace(/<br\s*\/?>/gi, ' ').replace(/[[\]{}|"]/g, ' ').replace(/\s+/g, ' ').trim()}"`;
+
+  if (!units.length) {
+    const name = String(model?.companyName || '').replace(/[[\]{}|"]/g, ' ').replace(/\s+/g, ' ').trim() || 'الجهة';
+    return `flowchart TD\n  org_root["${name}"]`;
+  }
+
+  // stable ASCII id per unit, by array order → identical for an identical model
+  const uId = new Map<string, string>();
+  units.forEach((u, i) => { if (u && u.id != null && !uId.has(u.id)) uId.set(u.id, `u${i}`); });
+  const present = (id?: string): id is string => !!id && uId.has(id);
+
+  const lines: string[] = ['flowchart TD'];
+  // 1) unit nodes, in array order
+  units.forEach((u, i) => { lines.push(`  ${uId.get(u.id) ?? `u${i}`}[${esc(u?.name || u?.id)}]`); });
+  // 2) parent → child edges, in array order; a missing/self parent = a root (no edge)
+  units.forEach(u => {
+    if (present(u?.parentId) && u.parentId !== u.id) lines.push(`  ${uId.get(u.parentId)} --> ${uId.get(u.id)}`);
+  });
+  // 3) optional roles, attached under their unit with a dotted edge, in array order
+  if (includeRoles) {
+    const roles = Array.isArray(model?.roles) ? model.roles : [];
+    roles.forEach((r, ri) => {
+      if (present(r?.unitId)) {
+        const rid = `r${ri}`;
+        lines.push(`  ${rid}[${esc(r?.title || r?.id)}]`);
+        lines.push(`  ${uId.get(r.unitId)} -.-> ${rid}`);
+      }
+    });
+  }
+  return lines.join('\n');
+}
+
 /** AI generates Mermaid syntax for the requested diagram kind, grounded in the model. */
 export async function generateMermaid(
   model: CompanyGovernanceModel,
@@ -275,6 +336,14 @@ export async function generateMermaid(
 ): Promise<{ title: string; mermaid: string }> {
   const g = KIND_GUIDE[kind];
   const ar = opts.language !== 'en';
+
+  // PRD V6 — the ORG CHART is built DETERMINISTICALLY from model.orgUnits, never the
+  // AI: identical model → identical chart, grounded only in the real units (invents
+  // nothing), stable across runs, and consistent everywhere it's drawn. Every other
+  // diagram kind stays AI-generated below.
+  if (kind === 'orgchart') {
+    return { title: g[ar ? 'ar' : 'en'], mermaid: buildOrgChartMermaid(model) };
+  }
   const sys = [
     'You are a senior governance analyst that draws precise, high-quality diagrams.',
     'Output VALID Mermaid syntax only — it must render without errors.',
