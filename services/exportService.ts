@@ -517,7 +517,9 @@ function diagramsToDocx(diagrams: GeneratedArtifact['diagrams'], o?: ExportOptio
 
 /** One html block per embedded diagram (caller decides grouping/pagination). */
 function diagramItemHtml(d: NonNullable<GeneratedArtifact['diagrams']>[number], i: number): string {
-  return `<div class="no-break" style="margin:18px 0;text-align:center"><h3 style="text-align:right">${i + 1}. ${escapeHtml(d.title)}</h3><img src="${d.png}" style="max-width:100%;max-height:880px;width:auto;height:auto;border:1px solid #e2e8f0;border-radius:8px"/></div>`;
+  // PRD V15: embedded diagrams render FULL page-width (ratio preserved via height:auto),
+  // not pinned to their natural — usually small, left-shifted — size.
+  return `<div class="no-break" style="margin:18px 0;text-align:center"><h3 style="text-align:right">${i + 1}. ${escapeHtml(d.title)}</h3><img src="${d.png}" style="width:100%;max-width:100%;max-height:880px;height:auto;border:1px solid #e2e8f0;border-radius:8px"/></div>`;
 }
 
 /** Embedded diagrams → print/PDF html. */
@@ -1333,7 +1335,8 @@ const PRINT_CSS = (font: string) => `
   th { background:#${TEALD}; font-weight:800; color:#fff; }
   tr:nth-child(even) td { background:#${BRAND50}; }
   .mermaid { margin:18px auto; text-align:center; max-width:100%; background:#f7fafb; border:1px solid #${BRAND100}; border-radius:10px; padding:16px; }
-  .mermaid svg, .mermaid-img { max-width:100%; height:auto; }
+  /* PRD V15: diagrams fill the page width (ratio preserved), not their small natural size. */
+  .mermaid svg, .mermaid-img { width:100%; max-width:100%; height:auto; }
   .mermaid-fig { margin:18px auto; text-align:center; background:#f7fafb; border:1px solid #${BRAND100}; border-radius:10px; padding:14px; }
   .cover { text-align:center; padding:70px 0 50px; page-break-after:always; }
   .cover img { width:150px; height:150px; object-fit:contain; margin-bottom:26px; }
@@ -1541,7 +1544,8 @@ a{color:var(--brand);text-decoration:none}
 .hw-sec td{border:1px solid var(--line);padding:8px 11px}
 .hw-sec tr:nth-child(even) td{background:var(--mist)}
 .hw-sec pre{background:#0f172a;color:#e2e8f0;padding:12px 14px;border-radius:10px;overflow:auto;direction:ltr;text-align:left}
-.hw-sec img,.hw-sec .mermaid-img{max-width:100%;height:auto;border-radius:10px;margin:12px 0}
+.hw-sec img{max-width:100%;height:auto;border-radius:10px;margin:12px 0}
+.hw-sec .mermaid-img{width:100%;max-width:100%;height:auto;border-radius:10px;margin:12px 0}/* PRD V15: full page-width diagrams */
 mark{background:#fde68a;color:#7c2d12;border-radius:3px}
 .hw-empty{display:none;padding:40px 56px;color:var(--mut);font-weight:700}
 .hw-empty.on{display:block}

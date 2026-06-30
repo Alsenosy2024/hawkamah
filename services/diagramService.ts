@@ -79,6 +79,60 @@ export async function mermaidToSvg(src: string): Promise<string> {
   });
 }
 
+/**
+ * Make a rendered SVG fill its container full-width while preserving aspect
+ * ratio (PRD V15: diagrams were rendering small + left-shifted). PURE string
+ * transform (no DOM) so the document canvas, the standalone diagram views and
+ * the node test harness all share it:
+ *   - guarantees a `viewBox` (derived from width/height when it's missing) so the
+ *     drawing keeps its proportions once the fixed pixel size is dropped,
+ *   - strips the fixed width/height attributes and Mermaid's `max-width:Npx` cap
+ *     (the inline style that pins a diagram to its natural — usually small — size),
+ *   - forces `width:100%;height:auto` with `xMidYMid meet` so it scales cleanly.
+ */
+export function makeSvgResponsive(svg: string): string {
+  if (!svg || !/<svg\b/i.test(svg)) return svg;
+  return svg.replace(/<svg\b([^>]*)>/i, (_full, rawAttrs: string) => {
+    let attrs = rawAttrs;
+    const wAttr = attrs.match(/\bwidth="([\d.]+)(?:px)?"/i);
+    const hAttr = attrs.match(/\bheight="([\d.]+)(?:px)?"/i);
+    // derive a viewBox from explicit pixel width/height when Mermaid omits one,
+    // otherwise dropping width/height below would lose the aspect ratio.
+    if (!/\bviewBox="/i.test(attrs) && wAttr && hAttr) {
+      attrs += ` viewBox="0 0 ${wAttr[1]} ${hAttr[1]}"`;
+    }
+    // drop the fixed width/height attributes (they pin the diagram to its size)
+    attrs = attrs.replace(/\s(?:width|height)="[^"]*"/gi, '');
+    if (!/preserveAspectRatio=/i.test(attrs)) attrs += ' preserveAspectRatio="xMidYMid meet"';
+    // rebuild the inline style: remove Mermaid's max-width cap + any pinned size
+    let style = '';
+    attrs = attrs.replace(/\sstyle="([^"]*)"/i, (_m, s: string) => { style = s; return ''; });
+    style = style
+      .replace(/max-width\s*:[^;]*;?/gi, '')
+      .replace(/(?:^|;)\s*width\s*:[^;]*/gi, ';')
+      .replace(/(?:^|;)\s*height\s*:[^;]*/gi, ';')
+      .replace(/;+/g, ';').replace(/^;|;$/g, '').trim();
+    const base = 'width:100%;height:auto;max-width:100%;display:block;margin-inline:auto';
+    return `<svg${attrs} style="${style ? `${base};${style}` : base}">`;
+  });
+}
+
+/**
+ * Labelled fallback shown in place of a diagram that fails to compile (PRD V3: a
+ * broken/invalid diagram must NEVER leave an empty gap). A short "could not
+ * render" note + the raw source so the content is preserved. PURE (no DOM) and
+ * inline-styled so it needs no host-page CSS to display.
+ */
+export function diagramFallbackHtml(code: string, language: 'ar' | 'en' = 'ar'): string {
+  const ar = language !== 'en';
+  const note = ar ? 'تعذّر رسم المخطط — هذا هو الكود' : 'Could not render the diagram — showing the source';
+  const e = (s: string) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<div class="dgm-fallback" style="width:100%;border:1px solid #e3edf0;border-radius:14px;background:#f8fafc;padding:12px 14px;text-align:start">`
+    + `<div style="font-size:12px;color:#94a3b8;margin-bottom:8px">${e(note)}</div>`
+    + `<pre dir="ltr" style="margin:0;white-space:pre-wrap;word-break:break-word;overflow-x:auto;font-family:Consolas,monospace;font-size:12px;line-height:1.6;color:#475569">${e(code)}</pre>`
+    + `</div>`;
+}
+
 let _pngRid = 0;
 
 // mermaid config is GLOBAL. mermaidToPng flips htmlLabels off around its render and

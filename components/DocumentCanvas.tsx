@@ -14,7 +14,7 @@
 // ===========================================================================
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Language } from '../types';
-import { mermaidToSvg } from '../services/diagramService';
+import { mermaidToSvg, makeSvgResponsive, diagramFallbackHtml } from '../services/diagramService';
 import {
   buildCanvasHtml, extractDocSpec, markdownToDocSpec, canvasHtmlToMarkdown,
   type DocSpec, type DocBlock, type MdToSpecOptions,
@@ -22,30 +22,75 @@ import {
 import { exportMessageDocx, exportMessageXlsx } from '../services/exportService';
 import { exportMessagePptx } from '../services/pptxExport';
 
-// ── prepare: markdown/spec → canvas HTML, with Mermaid pre-rendered to SVG ──
-// Diagrams are rendered to brand-themed INLINE SVG (htmlLabels on) so Arabic
-// shapes correctly AND prints sharp — a rasterized PNG would need htmlLabels off,
-// which breaks Arabic glyph shaping.
-async function prepareCanvasDoc(markdown: string, opts: MdToSpecOptions): Promise<string> {
-  const spec: DocSpec = extractDocSpec(markdown, opts) || markdownToDocSpec(markdown, opts);
-  await replaceMermaid(spec.blocks);
-  return buildCanvasHtml(spec);
+// A Mermaid diagram queued for PROGRESSIVE rendering (PRD V2/V3): the document
+// text shows within a beat, then each diagram fills into its placeholder.
+interface PendingDiagram { id: string; code: string; }
+
+// Placeholder figure shown until a diagram finishes rendering — keeps the page
+// layout stable and tells the reader a diagram is on the way (never a blank gap).
+function pendingPlaceholder(id: string, label: string): string {
+  return `<div class="dgm-host" id="${id}" data-dgm-pending="1" style="width:100%;min-height:88px;`
+    + `display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12.5px">${label}…</div>`;
 }
 
-async function replaceMermaid(blocks: DocBlock[]): Promise<void> {
+// ── prepare: markdown/spec → canvas HTML, Mermaid swapped for placeholders ──
+// We DON'T block first paint on Mermaid (it's the slow part and a single bad/
+// huge diagram used to hang the whole canvas → "nothing shows / ~15 min"). The
+// document renders immediately with placeholder figures; the diagrams are then
+// rendered and injected progressively after the iframe loads.
+function prepareCanvasDoc(markdown: string, opts: MdToSpecOptions): { html: string; pending: PendingDiagram[] } {
+  const spec: DocSpec = extractDocSpec(markdown, opts) || markdownToDocSpec(markdown, opts);
+  const pending: PendingDiagram[] = [];
+  const label = opts.lang === 'en' ? 'Rendering diagram' : 'جارٍ رسم المخطط';
+  placeholderMermaid(spec.blocks, pending, label);
+  return { html: buildCanvasHtml(spec), pending };
+}
+
+function placeholderMermaid(blocks: DocBlock[], pending: PendingDiagram[], label: string): void {
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
     if (b.type === 'mermaid') {
-      try {
-        const svg = await mermaidToSvg(b.code);
-        blocks[i] = { type: 'figure', svg, alt: 'diagram' };
-      } catch {
-        blocks[i] = { type: 'code', code: b.code, lang: 'mermaid' };
-      }
+      const id = `dgm-${pending.length}`;
+      pending.push({ id, code: b.code });
+      blocks[i] = { type: 'figure', svg: pendingPlaceholder(id, label), alt: 'diagram' };
     } else if (b.type === 'columns') {
-      const kids = [b.left, b.right].filter(Boolean) as DocBlock[];
-      await replaceMermaid(kids);
+      // recurse into column children, writing the swapped block back into place
+      if (b.left) { const k = [b.left]; placeholderMermaid(k, pending, label); b.left = k[0]; }
+      if (b.right) { const k = [b.right]; placeholderMermaid(k, pending, label); b.right = k[0]; }
     }
+  }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const id = setTimeout(() => reject(new Error('diagram render timeout')), ms);
+    p.then(v => { clearTimeout(id); resolve(v); }, e => { clearTimeout(id); reject(e); });
+  });
+}
+
+// Render each queued diagram to full-width SVG and inject it into its placeholder
+// inside the (same-origin) canvas iframe. Sequential so the heavy Mermaid renders
+// yield to the event loop between diagrams (the tab stays responsive on large
+// docs). A diagram that fails to compile or times out shows a labelled fallback
+// with its source (PRD V3) — never an empty gap. `alive()` aborts the run when
+// the document is rebuilt or closed.
+async function renderPendingDiagrams(
+  doc: Document, pending: PendingDiagram[], lang: 'ar' | 'en', alive: () => boolean,
+): Promise<void> {
+  for (const p of pending) {
+    if (!alive()) return;
+    if (!doc.getElementById(p.id)) continue;
+    let inner: string;
+    try {
+      inner = makeSvgResponsive(await withTimeout(mermaidToSvg(p.code), 9000));
+    } catch {
+      inner = diagramFallbackHtml(p.code, lang);
+    }
+    if (!alive()) return;
+    const target = doc.getElementById(p.id);
+    if (!target) continue;
+    target.innerHTML = inner;
+    target.removeAttribute('data-dgm-pending');
   }
 }
 
@@ -66,6 +111,8 @@ const IcSave = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
 const IcClose = () => <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>;
 const IcSpark = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2c.8 5.5 4.5 9.2 10 10-5.5.8-9.2 4.5-10 10-.8-5.5-4.5-9.2-10-10 5.5-.8 9.2-4.5 10-10z" /></svg>;
 const IcSpin = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.2-8.5" /></svg>;
+const IcWarn = () => <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>;
+const IcRetry = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6M1 20v-6h6" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>;
 
 // ── restyle presets (Ailigent-led) ─────────────────────────────────────────
 const COVER_GRADIENTS: { name: string; css: string }[] = [
@@ -117,6 +164,10 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [docHtml, setDocHtml] = useState<string | null>(initialHtml || null);
   const [loading, setLoading] = useState(!initialHtml);
+  const [error, setError] = useState(false);                           // render failed → explicit retry (never an endless spinner)
+  const [reloadKey, setReloadKey] = useState(0);                       // bump to rebuild on "Retry"
+  const pendingRef = useRef<PendingDiagram[]>([]);                     // diagrams to inject after the iframe loads
+  const renderRunRef = useRef(0);                                      // cancels an in-flight diagram render pass
   const [coverOpen, setCoverOpen] = useState(false);
   const [askSel, setAskSel] = useState<{ text: string; top: number; left: number } | null>(null);
   const [saved, setSaved] = useState(false);
@@ -128,26 +179,69 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     [title, markdown, ar],
   );
 
-  // Build the canvas HTML once (markdown/spec → paginated doc, mermaid → images).
+  // Build the canvas HTML (markdown/spec → paginated doc). Mermaid is NOT pre-
+  // rendered here — diagrams inject progressively after load (see handleIframeLoad)
+  // so the document shows within a beat and a heavy diagram can't blank the canvas.
   useEffect(() => {
-    if (initialHtml) { setDocHtml(initialHtml); setLoading(false); return; }
+    if (initialHtml) { setDocHtml(initialHtml); setLoading(false); setError(false); pendingRef.current = []; return; }
     let alive = true;
-    setLoading(true);
-    prepareCanvasDoc(markdown, {
-      title, subtitle: subtitle || t('وثيقة حوكمة', 'Governance document'),
-      lang: ar ? 'ar' : 'en', date, brand,
-    })
-      .then(html => { if (alive) { setDocHtml(html); setLoading(false); } })
-      .catch(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
+    setLoading(true); setError(false); setDocHtml(null);
+    // Watchdog: never allow an indefinite blank/spinner (PRD V2). If preparing the
+    // document hasn't settled, surface an explicit error + Retry instead.
+    const watchdog = window.setTimeout(() => { if (alive) { setError(true); setLoading(false); } }, 15000);
+    // Defer one microtask so a huge synchronous parse doesn't block the spinner paint.
+    Promise.resolve().then(() => {
+      if (!alive) return;
+      try {
+        const { html, pending } = prepareCanvasDoc(markdown, {
+          title, subtitle: subtitle || t('وثيقة حوكمة', 'Governance document'),
+          lang: ar ? 'ar' : 'en', date, brand,
+        });
+        if (!alive) return;
+        pendingRef.current = pending;
+        setDocHtml(html);
+        setLoading(false);
+      } catch (e) {
+        if (!alive) return;
+        console.warn('[canvas] failed to prepare document', e);
+        setError(true);
+        setLoading(false);
+      } finally {
+        window.clearTimeout(watchdog);
+      }
+    });
+    return () => { alive = false; window.clearTimeout(watchdog); renderRunRef.current++; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [markdown, initialHtml]);
+  }, [markdown, initialHtml, reloadKey]);
 
   // Enable in-place editing once the iframe document is ready.
   const handleIframeLoad = useCallback(() => {
     const doc = iframeRef.current?.contentDocument;
     if (!doc) return;
     try { doc.designMode = 'on'; doc.execCommand('styleWithCSS', false, 'true'); } catch { /* noop */ }
+
+    // PRD V15: make embedded diagrams fill the page width (ratio preserved) in
+    // BOTH the live canvas and the printed PDF — exportPdf serializes this same
+    // DOM, so the injected rule rides along. Overrides the figure's default
+    // inline-block sizing that left diagrams small + left-shifted.
+    if (!doc.getElementById('dc-diagram-fullwidth')) {
+      const st = doc.createElement('style');
+      st.id = 'dc-diagram-fullwidth';
+      st.textContent =
+        '.fig .svgwrap{display:block!important;width:100%!important;max-width:100%!important;overflow:auto;}'
+        + '.fig .svgwrap svg{display:block!important;width:100%!important;height:auto!important;max-width:100%!important;max-height:620px;margin-inline:auto;}'
+        + '.fig .svgwrap .dgm-host,.fig .svgwrap .dgm-fallback{width:100%;}'
+        + '@media print{.fig .svgwrap{overflow:visible}.fig .svgwrap svg,.fig svg{width:100%!important;height:auto!important;max-width:100%!important;max-height:250mm!important;}}';
+      (doc.head || doc.documentElement).appendChild(st);
+    }
+
+    // PRD V2/V3: render the queued diagrams progressively into their placeholders.
+    const pending = pendingRef.current;
+    if (pending.length) {
+      const run = ++renderRunRef.current;
+      void renderPendingDiagrams(doc, pending, ar ? 'ar' : 'en',
+        () => run === renderRunRef.current && !!iframeRef.current);
+    }
     // Clicking the cover opens the restyle modal (instead of editing its text).
     const cover = doc.querySelector('.cover') as HTMLElement | null;
     if (cover) {
@@ -172,7 +266,7 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       doc.addEventListener('keyup', updateAsk);
       doc.addEventListener('scroll', () => setAskSel(null), true);
     }
-  }, [onAskAi]);
+  }, [onAskAi, ar]);
 
   const exec = useCallback((cmd: string, val?: string) => {
     const win = iframeRef.current?.contentWindow;
@@ -381,12 +475,25 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
         </button>
       </div>
 
-      {/* The document — isolated iframe, edits in place, IS what we export */}
+      {/* The document — isolated iframe, edits in place, IS what we export.
+          State machine (PRD V2): loading → spinner; failure → explicit error +
+          Retry; otherwise the iframe. NEVER an indefinite blank/spinner. */}
       <div className="flex-1 overflow-hidden bg-[#eceef1] dark:bg-[#0a121a]">
-        {loading || docHtml === null ? (
+        {loading ? (
           <div className="flex h-full items-center justify-center gap-2.5 text-slate-500 dark:text-slate-400 text-sm">
             <span className="dc-spark text-[var(--hw-brand,#11a8bc)]"><IcSpin /></span>
             {t('جارٍ تجهيز المستند…', 'Preparing the document…')}
+          </div>
+        ) : (error || docHtml === null) ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-slate-500 dark:text-slate-400">
+            <span className="text-amber-500"><IcWarn /></span>
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
+              {t('تعذّر فتح المستند', 'Could not open the document')}
+            </p>
+            <button type="button" onClick={() => setReloadKey(k => k + 1)}
+              className="hw-btn hw-btn-primary hw-btn-sm !rounded-full">
+              <IcRetry /> {t('إعادة المحاولة', 'Retry')}
+            </button>
           </div>
         ) : (
           <iframe ref={iframeRef} title={docTitle} srcDoc={docHtml} onLoad={handleIframeLoad}

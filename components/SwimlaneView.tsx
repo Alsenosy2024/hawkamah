@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import type { Language } from '../types';
 import { renderSwimlaneSvg, type SwimlaneSpec } from '../services/swimlaneService';
+import { makeSvgResponsive } from '../services/diagramService';
 
 interface Props {
   spec: SwimlaneSpec;
@@ -17,6 +18,9 @@ const SwimlaneView: React.FC<Props> = ({ spec, title, language }) => {
     try { return renderSwimlaneSvg(spec, { language: ar ? 'ar' : 'en' }); }
     catch (e) { console.warn('[swimlane] render failed', e); return ''; }
   }, [spec, ar]);
+  // PRD V15: display full-width (ratio preserved); the raw `svg` is kept for the
+  // PNG/SVG downloads below (which parse its explicit width/height).
+  const displaySvg = useMemo(() => makeSvgResponsive(svg), [svg]);
 
   const downloadSvg = () => {
     if (!svg) return;
@@ -63,8 +67,8 @@ const SwimlaneView: React.FC<Props> = ({ spec, title, language }) => {
       </div>
       <div className="overflow-auto max-h-[55vh] p-4 bg-[radial-gradient(circle,#e2e8f0_1px,transparent_1px)] [background-size:18px_18px]">
         {svg ? (
-          <div style={{ transform: `scale(${zoom})`, transformOrigin: ar ? 'top right' : 'top left', transition: 'transform .15s' }}
-               dangerouslySetInnerHTML={{ __html: svg }} />
+          <div style={{ width: '100%', transform: `scale(${zoom})`, transformOrigin: ar ? 'top right' : 'top left', transition: 'transform .15s' }}
+               dangerouslySetInnerHTML={{ __html: displaySvg }} />
         ) : (
           <div className="text-rose-600 text-xs">
             <div className="font-bold mb-1 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> {t('تعذّر رسم المخطط', 'Could not render diagram')}</div>
