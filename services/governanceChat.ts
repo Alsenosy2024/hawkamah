@@ -4,7 +4,7 @@
 // always grounded in the live CompanyGovernanceModel (single source of truth).
 
 import { ThinkingLevel } from '@google/genai';
-import { streamChat, type ChatTurn, type StreamCallbacks } from './agentOrchestrator';
+import { streamChat, generateJson, type ChatTurn, type StreamCallbacks } from './agentOrchestrator';
 import type { CompanyGovernanceModel, Language } from '../types';
 
 export type GovStageKey = 'projects' | 'sources' | 'model' | 'diagrams' | 'generation' | 'assurance' | 'library';
@@ -403,4 +403,305 @@ export async function rewriteSelection(p: SmartEditParams): Promise<string> {
   // content — never drop that (or an empty result) into the user's document.
   if (!out || out.includes('تعذّر توليد رد')) throw new Error('REWRITE_EMPTY');
   return out;
+}
+
+// ===========================================================================
+// V5 + V16 — the conversational build wizard.
+//
+// The copilot used to jump straight from a build/long-doc request into a 7–8 min
+// autonomous generation with nothing the user could review or edit (V5: "it
+// didn't ask me a single question … there should always be an option, don't
+// leave anything fixed — I can change page count, change axes"). V16 wants the
+// SAME flow to be conversational: it asks which departments/scope, lets the user
+// add/remove departments, takes notes, and only then builds.
+//
+// This module is the PURE half of that wizard — no React, no I/O beyond a single
+// optional model call. A `BuildPlan` is the editable contract: the copilot
+// proposes one, the user tweaks it in the UI (page count, axes, departments,
+// components, notes), and `planToBuildRequest` serializes the CONFIRMED plan into
+// the request string that actually drives generation. Everything here is unit
+// tested so the wizard's behavior is pinned independently of the UI.
+// ===========================================================================
+
+/** One proposed section/component of the build. The user can toggle it out. */
+export interface BuildPlanComponent {
+  id: string;
+  title: string;
+  include: boolean;
+}
+
+/** The editable build plan the copilot proposes and the user confirms (V5/V16). */
+export interface BuildPlan {
+  title: string;                    // proposed document/build title
+  targetPages: number;              // editable target length (pages) — drives V4 budget
+  axes: string[];                   // governance axes to cover (add/remove)
+  departments: string[];           // departments/units to build for (add/remove) — V16
+  components: BuildPlanComponent[]; // proposed structure/outline (toggle on/off)
+  notes: string;                    // free-text notes injected into every section
+  audience: string;                 // who the output is for (editable)
+}
+
+// Default governance axes — mirrors GovernanceCenter's DIAG_AXES so a plan made
+// without a model still proposes a sensible, fully-editable axis set.
+export const DEFAULT_GOV_AXES = [
+  'القيادة والحوكمة',
+  'الاستراتيجية والتخطيط',
+  'الهيكل التنظيمي والأدوار',
+  'السياسات واللوائح',
+  'الإجراءات والعمليات',
+  'الموارد البشرية والكفاءات',
+  'إدارة المخاطر والامتثال',
+  'الأداء والمؤشرات',
+];
+
+// The default components/structure of a governance document, used as the fallback
+// outline when no model call is made (or it fails). Kept deliberately generic so
+// the user shapes it via toggles.
+const DEFAULT_COMPONENTS_AR = [
+  'ملخص تنفيذي',
+  'النطاق والأهداف',
+  'الواقع الراهن',
+  'الهيكل التنظيمي',
+  'السياسات',
+  'الإجراءات',
+  'الأدوار والمسؤوليات (RACI)',
+  'مؤشرات الأداء',
+  'المخاطر والامتثال',
+  'خارطة التنفيذ',
+];
+const DEFAULT_COMPONENTS_EN = [
+  'Executive summary',
+  'Scope & objectives',
+  'Current state',
+  'Organizational structure',
+  'Policies',
+  'Procedures',
+  'Roles & responsibilities (RACI)',
+  'KPIs',
+  'Risk & compliance',
+  'Implementation roadmap',
+];
+
+// Explicit "build now" commands that should ALSO open the wizard even when the
+// generic long-form heuristic (LONG_RE in GovCopilot) doesn't fire — the owner's
+// exact phrasings ("ابنِ الهيكل التنظيمي", "ابدأ البناء", "ولّد الكل").
+const EXPLICIT_BUILD_RE =
+  /(ابنِ|ابن\s|ابني|ابدأ\s*البناء|ابدا\s*البناء|الهيكل\s*التنظيمي|ولّد\s*الكل|ولد\s*الكل|نبني|build\s+(it|all|the|me)|generate\s+all|start\s+building)/i;
+
+/** True when the message is an explicit "build" command (a wizard trigger that
+ *  complements the generic long-form detector). */
+export function isExplicitBuild(text?: string | null): boolean {
+  const s = (text || '').trim();
+  if (s.length < 3) return false;
+  return EXPLICIT_BUILD_RE.test(s);
+}
+
+let _planSeq = 0;
+const planUid = (): string => `cmp_${(_planSeq++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
+// Trim + de-duplicate a free list (axes / departments), preserving first-seen
+// order and dropping blanks. Comparison is case/space-insensitive so "المالية"
+// and "المالية " never both land in the list.
+const normItem = (s: string): string => (s || '').trim().replace(/\s+/g, ' ');
+function dedupeList(items: (string | undefined | null)[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of items) {
+    const v = normItem(raw || '');
+    if (!v) continue;
+    const key = v.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+  }
+  return out;
+}
+
+/** Add a value to a plan list (axes/departments), idempotent + trimmed. */
+export function addPlanItem(list: string[], value: string): string[] {
+  return dedupeList([...(list || []), value]);
+}
+
+/** Remove a value from a plan list (case/space-insensitive). */
+export function removePlanItem(list: string[], value: string): string[] {
+  const key = normItem(value).toLowerCase();
+  return (list || []).filter(v => normItem(v).toLowerCase() !== key);
+}
+
+/** Toggle a component's `include` flag, returning a new array. */
+export function toggleComponent(components: BuildPlanComponent[], id: string): BuildPlanComponent[] {
+  return (components || []).map(c => (c.id === id ? { ...c, include: !c.include } : c));
+}
+
+/** Clamp an edited page count into the supported 1–120 range (shared with V4). */
+export function clampPlanPages(pages: number): number {
+  if (!Number.isFinite(pages)) return 1;
+  return Math.max(1, Math.min(120, Math.round(pages)));
+}
+
+// Pull a sensible default title out of a free-text request (strip the leading
+// build verb), falling back to a generic governance-document title.
+function deriveTitle(request: string, ar: boolean): string {
+  const stripped = (request || '')
+    .trim()
+    .replace(/^\s*(?:من فضلك|لو سمحت|please)\s*/i, '')
+    .replace(/^\s*(?:اكتب|اكتبلي|صغ|صياغة|أنشئ|انشئ|جهّز|جهز|أعدّ|اعد|صمّم|صمم|ابنِ|ابن|ابني|ولّد|ولد|نبني|write|generate|create|draft|design|prepare|build)\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const cut = stripped.slice(0, 90).trim();
+  if (cut) return cut;
+  return ar ? 'وثيقة الحوكمة' : 'Governance document';
+}
+
+/**
+ * Build a complete, sensible plan WITHOUT any model call — from the request text
+ * and (optionally) the live governance model. Pure + deterministic, so it is the
+ * safe fallback whenever the AI proposal fails or is skipped, and it is unit
+ * tested directly. Departments seed from `model.orgUnits` (the owner's "اختر من
+ * دول أو أضِف"); axes/components seed from the defaults; the page target honors a
+ * count stated in the request (V4), else a modest default.
+ */
+export function fallbackBuildPlan(p: {
+  request: string;
+  model?: CompanyGovernanceModel | null;
+  language?: Language;
+}): BuildPlan {
+  const ar = (p.language || 'ar') === 'ar';
+  const stated = parseTargetPages(p.request);
+  const unitNames = Array.isArray(p.model?.orgUnits)
+    ? p.model!.orgUnits.map(u => u?.name).filter((n): n is string => !!n && !!n.trim())
+    : [];
+  const compNames = ar ? DEFAULT_COMPONENTS_AR : DEFAULT_COMPONENTS_EN;
+  return {
+    title: deriveTitle(p.request, ar),
+    targetPages: clampPlanPages(stated ?? 12),
+    axes: [...DEFAULT_GOV_AXES],
+    departments: dedupeList(unitNames),
+    components: compNames.map(title => ({ id: planUid(), title, include: true })),
+    notes: '',
+    audience: ar ? 'مجلس الإدارة والإدارة التنفيذية' : 'Board & executive management',
+  };
+}
+
+// JSON shape the model returns for an AI-proposed plan. Kept loose; we sanitize
+// every field before it becomes a BuildPlan, so a malformed proposal can never
+// corrupt the wizard state.
+interface RawPlanProposal {
+  title?: string;
+  targetPages?: number;
+  axes?: string[];
+  departments?: string[];
+  components?: string[];
+  audience?: string;
+}
+
+const PLAN_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: { type: 'string' },
+    targetPages: { type: 'integer' },
+    axes: { type: 'array', items: { type: 'string' } },
+    departments: { type: 'array', items: { type: 'string' } },
+    components: { type: 'array', items: { type: 'string' } },
+    audience: { type: 'string' },
+  },
+  required: ['title', 'targetPages', 'axes', 'components'],
+} as const;
+
+// Merge a raw AI proposal onto the deterministic fallback so the result is ALWAYS
+// a complete, valid BuildPlan (every list deduped/trimmed, page count clamped,
+// components carried as toggleable items). Pure + tested.
+export function mergeProposalIntoFallback(fallback: BuildPlan, raw: RawPlanProposal | null | undefined): BuildPlan {
+  if (!raw || typeof raw !== 'object') return fallback;
+  const title = normItem(raw.title || '') || fallback.title;
+  const targetPages = raw.targetPages ? clampPlanPages(raw.targetPages) : fallback.targetPages;
+  const axes = dedupeList(Array.isArray(raw.axes) && raw.axes.length ? raw.axes : fallback.axes);
+  // Departments: keep the model's units as the spine, fold in anything the AI
+  // suggested — the user prunes/edits afterwards.
+  const departments = dedupeList([...(fallback.departments || []), ...(Array.isArray(raw.departments) ? raw.departments : [])]);
+  const compTitles = dedupeList(Array.isArray(raw.components) && raw.components.length ? raw.components : fallback.components.map(c => c.title));
+  const components: BuildPlanComponent[] = compTitles.map(title => ({ id: planUid(), title, include: true }));
+  const audience = normItem(raw.audience || '') || fallback.audience;
+  return { ...fallback, title, targetPages, axes, departments, components, audience };
+}
+
+export interface ProposePlanParams {
+  request: string;
+  model?: CompanyGovernanceModel | null;
+  language?: Language;
+  fileContext?: string;   // RAG excerpts so the proposal is grounded in real files
+  signal?: AbortSignal;
+}
+
+/**
+ * Propose an editable build plan for a request (V5). Tries a single low-latency
+ * structured model call, then merges it onto the deterministic fallback so the
+ * caller ALWAYS receives a complete, valid plan — the wizard never hard-fails or
+ * blocks on the network. The returned plan is fully editable; nothing is fixed.
+ */
+export async function proposeBuildPlan(p: ProposePlanParams): Promise<BuildPlan> {
+  const ar = (p.language || 'ar') === 'ar';
+  const fallback = fallbackBuildPlan({ request: p.request, model: p.model, language: p.language });
+  try {
+    const sys = ar
+      ? 'أنت مساعد حوكمة. اقترح خطة بناء قابلة للتعديل بالكامل قبل التوليد (لا تكتب الوثيقة نفسها). أعِد JSON فقط: عنوان مقترح، عدد صفحات مستهدف واقعي يناسب حجم المنشأة، محاور الحوكمة، الإدارات المعنية، قائمة الأقسام/المكوّنات، والجمهور. كن موجزاً ودقيقاً واستند للنموذج والملفات إن وُجدت.'
+      : 'You are a governance assistant. Propose a fully-editable BUILD PLAN before any generation (do NOT write the document itself). Return JSON only: a proposed title, a realistic target page count suited to the org size, governance axes, relevant departments, a list of sections/components, and the audience. Be concise and ground it in the model/files when present.';
+    const ctxParts = [
+      `الطلب: ${p.request}`,
+      '=== النموذج ===',
+      modelSnapshot(p.model),
+      p.fileContext && p.fileContext.trim()
+        ? `=== مقتطفات من الملفات ===\n${p.fileContext.slice(0, 4000)}`
+        : '',
+    ].filter(Boolean).join('\n');
+    const raw = await generateJson<RawPlanProposal>(ctxParts, PLAN_SCHEMA as any, {
+      systemInstruction: sys,
+      signal: p.signal,
+      temperature: 0.3,
+      maxOutputTokens: 2048,
+      thinkingLevel: ThinkingLevel.LOW,
+      retries: 1,
+    });
+    return mergeProposalIntoFallback(fallback, raw);
+  } catch {
+    // Network/parse/abort → the deterministic plan still lets the user build.
+    return fallback;
+  }
+}
+
+/**
+ * Serialize a CONFIRMED (possibly user-edited) plan into the request string that
+ * drives generation (V5 acceptance: "confirmed config is what actually drives
+ * generation"). Pure + tested: only included components are listed, lists are
+ * cleaned, and the notes/axes/departments become explicit directives the
+ * generator must follow. The stated page count is embedded so parseTargetPages
+ * (and the backend's target_pages derivation) honor the SAME length (V4).
+ */
+export function planToBuildRequest(plan: BuildPlan, language?: Language): string {
+  const ar = (language || 'ar') === 'ar';
+  const pages = clampPlanPages(plan.targetPages);
+  const comps = (plan.components || []).filter(c => c.include && c.title.trim()).map(c => c.title.trim());
+  const axes = dedupeList(plan.axes);
+  const depts = dedupeList(plan.departments);
+  const notes = (plan.notes || '').trim();
+  const title = (plan.title || '').trim() || (ar ? 'وثيقة الحوكمة' : 'Governance document');
+  const lines: string[] = [];
+  if (ar) {
+    lines.push(`اكتب وثيقة حوكمة كاملة بعنوان: «${title}».`);
+    lines.push(`الطول المستهدف: ${pages} صفحة تقريباً (التزم به).`);
+    if (plan.audience?.trim()) lines.push(`الجمهور المستهدف: ${plan.audience.trim()}.`);
+    if (axes.length) lines.push(`المحاور الحوكمية المطلوب تغطيتها: ${axes.join('، ')}.`);
+    if (depts.length) lines.push(`الإدارات/الوحدات المشمولة (اربط الإجراءات والسياسات بها بالاسم): ${depts.join('، ')}.`);
+    if (comps.length) lines.push(`الأقسام/المكوّنات المطلوبة بالترتيب (التزم بها ولا تُضِف أقساماً خارجها): ${comps.join('، ')}.`);
+    if (notes) lines.push(`ملاحظات وتوجيهات إلزامية من المالك (طبّقها في كل قسم): ${notes}`);
+  } else {
+    lines.push(`Write a complete governance document titled: "${title}".`);
+    lines.push(`Target length: about ${pages} page(s) — keep to it.`);
+    if (plan.audience?.trim()) lines.push(`Intended audience: ${plan.audience.trim()}.`);
+    if (axes.length) lines.push(`Governance axes to cover: ${axes.join(', ')}.`);
+    if (depts.length) lines.push(`Departments/units in scope (name them in procedures & policies): ${depts.join(', ')}.`);
+    if (comps.length) lines.push(`Required sections/components, in order (keep to these, add nothing outside them): ${comps.join(', ')}.`);
+    if (notes) lines.push(`Mandatory owner notes (apply to every section): ${notes}`);
+  }
+  return lines.join('\n');
 }

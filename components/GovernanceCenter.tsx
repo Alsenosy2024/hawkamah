@@ -421,6 +421,21 @@ ${content.slice(0, 8000)}`;
   // bulk generation (stage 3)
   const [bulkScope, setBulkScope] = useState<BulkScope>('procedures');
 
+  // V10 — one-click "Generate all": run EVERY bulk scope as its own chunk (not one
+  // mega-prompt), with truthful per-chunk progress and a per-chunk saved doc the
+  // user can open/review. The backend chunking inside generateBulkDoc is owned by
+  // the engine lane; here we own the button + the per-chunk progress UI + wiring.
+  const GEN_ALL_SCOPES: { scope: BulkScope; ar: string; en: string }[] = [
+    { scope: 'policies', ar: 'السياسات', en: 'Policies' },
+    { scope: 'procedures', ar: 'الإجراءات', en: 'Procedures' },
+    { scope: 'departments', ar: 'الإدارات', en: 'Departments' },
+    { scope: 'authorities', ar: 'الصلاحيات', en: 'Authorities' },
+    { scope: 'kpis', ar: 'المؤشرات', en: 'KPIs' },
+  ];
+  type GenAllChunk = { scope: BulkScope; label: string; status: 'pending' | 'running' | 'done' | 'error'; note?: string };
+  const [genAllRunning, setGenAllRunning] = useState(false);
+  const [genAllChunks, setGenAllChunks] = useState<GenAllChunk[]>([]);
+
   // V17 — build-criteria/recommendations table + a general-notes box, surfaced in
   // the Build stage. The owner had "no criteria to base the build on" and wanted a
   // recommendations table plus general notes applied across a bulk run. Both are
@@ -1351,6 +1366,62 @@ ${content.slice(0, 8000)}`;
     } catch (e: any) {
       alertMsg(t('فشل التوليد الكمي: ', 'Bulk generation failed: ') + (e?.message || e));
     } finally { setGenerating(false); }
+  };
+
+  // ---- V10: one-click "Generate all" — chunked across every scope ----
+  // Each scope is generated as its own chunk (so the model never gets one
+  // mega-plan), with truthful per-chunk progress and a per-chunk saved doc the
+  // user can review. Reuses the same engine + reference/criteria channel as the
+  // single-scope bulk path, so V17 criteria/notes apply to every chunk too.
+  const handleGenerateAll = async () => {
+    if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
+    abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
+    setGenAllRunning(true); setGenerating(true);
+    setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
+    setGenAllChunks(GEN_ALL_SCOPES.map(s => ({ scope: s.scope, label: t(s.ar, s.en), status: 'pending' as const })));
+    const refs = refsWithReco();   // V17 criteria/notes apply to every chunk
+    let okCount = 0;
+    try {
+      const chunks = await loadChunks(tenantId);
+      for (let i = 0; i < GEN_ALL_SCOPES.length; i++) {
+        if (ac.signal.aborted) break;
+        const sc = GEN_ALL_SCOPES[i].scope;
+        setBulkScope(sc);   // reflect the active chunk in the scope selector
+        setGenAllChunks(cs => cs.map((c, j) => (j === i ? { ...c, status: 'running' } : c)));
+        try {
+          const doc = await generateBulkDoc({
+            scope: sc, model, chunks, language, sector, referenceProjects: refs, signal: ac.signal,
+            onProgress: setGenProgress, onThought: (txt) => pushThought(txt), onSection: (s) => pushSection(s),
+          });
+          setGenDoc(doc); setGenDocKind('governance');
+          const doneCount = (doc.sections || []).filter(s => s.status === 'done').length;
+          if (doc.complete || doneCount > 0) { try { await persistGenDocInner(doc, 'governance', sc); } catch { /* library save optional */ } }
+          setGenAllChunks(cs => cs.map((c, j) => (j === i ? { ...c, status: 'done', note: t(`${doneCount} قسم`, `${doneCount} sections`) } : c)));
+          okCount++;
+        } catch (e: any) {
+          if (ac.signal.aborted) { setGenAllChunks(cs => cs.map((c, j) => (j === i ? { ...c, status: 'error', note: t('أُلغي', 'cancelled') } : c))); break; }
+          setGenAllChunks(cs => cs.map((c, j) => (j === i ? { ...c, status: 'error', note: String(e?.message || 'error').slice(0, 60) } : c)));
+        }
+      }
+      alertMsg(ac.signal.aborted
+        ? t(`توقّف «توليد الكل» — اكتمل ${okCount}/${GEN_ALL_SCOPES.length} مجموعة وحُفظت في المكتبة.`, `Generate-all stopped — ${okCount}/${GEN_ALL_SCOPES.length} sets done and saved.`)
+        : t(`اكتمل «توليد الكل»: ${okCount}/${GEN_ALL_SCOPES.length} مجموعة وحُفظت في المكتبة.`, `Generate-all complete: ${okCount}/${GEN_ALL_SCOPES.length} sets, saved to library.`));
+    } catch (e: any) {
+      alertMsg(t('فشل توليد الكل: ', 'Generate-all failed: ') + (e?.message || e));
+    } finally { setGenAllRunning(false); setGenerating(false); }
+  };
+
+  // V16 — fold the wizard's confirmed departments into model.orgUnits. Additive +
+  // safe: it only ADDS units whose normalized name isn't already present (it never
+  // deletes, so no unitId reference can be orphaned). Destructive removal stays in
+  // the org tree, which enforces referential integrity.
+  const applyWizardDepartments = (names: string[]) => {
+    if (!model || !Array.isArray(names) || !names.length) return;
+    const existing = new Set(model.orgUnits.map(u => normUnitName(u.name)));
+    const toAdd = names.map(n => (n || '').trim()).filter(n => n && !existing.has(normUnitName(n)));
+    if (!toAdd.length) return;
+    const newUnits: GovOrgUnit[] = toAdd.map(name => ({ id: uid('unit'), name, mandate: '', parentId: undefined, provenance: [] }));
+    handleModelCanvasChange({ ...model, orgUnits: [...model.orgUnits, ...newUnits] });
   };
 
   const handleExport = async (fmt: 'docx' | 'pdf') => {
@@ -3512,6 +3583,45 @@ ${content.slice(0, 8000)}`;
                 <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20 p-4 space-y-3">
                   <div className="font-bold text-amber-800 dark:text-amber-200 text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> {t('توليد بالجملة', 'Bulk generation')}</div>
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('يولّد كل الكيانات دفعة واحدة مُسندة بالنموذج والمصادر. قد يستغرق وقتاً.', 'Generates all entities at once, grounded in the model. May take a while.')}</div>
+
+                  {/* V10 — one-click "Generate all": every scope as its own chunk, with per-chunk progress */}
+                  <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-white/70 dark:bg-slate-800/60 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="text-[12px] font-black text-amber-800 dark:text-amber-200 flex items-center gap-1.5">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                        {t('توليد الكل دفعة واحدة', 'Generate everything at once')}
+                      </div>
+                      {genAllRunning ? (
+                        <button onClick={stop} className="hw-btn hw-btn-danger hw-btn-sm flex items-center gap-1">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>{t('إيقاف', 'Stop')}
+                        </button>
+                      ) : (
+                        <button onClick={handleGenerateAll} disabled={!model || !!busy || generating}
+                          className="hw-btn hw-btn-primary hw-btn-sm">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="20 6 9 17 4 12"/></svg>{t('توليد الكل', 'Generate all')}
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('يبني كل المجموعات (سياسات، إجراءات، إدارات، صلاحيات، مؤشرات) جزءاً جزءاً مع مراجعة كل جزء — أدق من خطة واحدة ضخمة.', 'Builds every set (policies, procedures, departments, authorities, KPIs) chunk by chunk with a review of each — more accurate than one mega-plan.')}</div>
+                    {genAllChunks.length > 0 && (
+                      <div className="space-y-1">
+                        {genAllChunks.map((c) => (
+                          <div key={c.scope} className="flex items-center gap-2 text-[12px] rounded-lg bg-amber-50/70 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-2.5 py-1.5">
+                            <span className="shrink-0 w-4 text-center">
+                              {c.status === 'done' ? <span className="text-emerald-600">✓</span>
+                                : c.status === 'running' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin inline-block text-amber-600"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M22 12a10 10 0 0 1-10 10"/></svg>
+                                : c.status === 'error' ? <span className="text-rose-500">!</span>
+                                : <span className="text-slate-300">○</span>}
+                            </span>
+                            <span className={`font-bold ${c.status === 'done' ? 'text-emerald-700 dark:text-emerald-300' : c.status === 'error' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-200'}`}>{c.label}</span>
+                            {c.note && <span className="ms-auto text-[10px] text-slate-400">{c.note}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 pt-1">{t('أو ولّد مجموعة واحدة:', 'Or generate one set:')}</div>
                   <div className="flex flex-wrap gap-2">
                     {([
                       ['policies', 'السياسات', 'Policies', <svg key="pol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>],
@@ -4121,6 +4231,7 @@ ${content.slice(0, 8000)}`;
         logoUrl={settings.logoUrl}
         tenantId={tenantId}
         onOpenSource={openSource}
+        onApplyDepartments={applyWizardDepartments}
         stateSnapshot={{
           documentsCount: documents.length,
           chunkCount,
