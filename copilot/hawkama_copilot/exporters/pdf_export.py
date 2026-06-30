@@ -177,7 +177,9 @@ def _emit(b: Block, styles: dict) -> list:
         return [Paragraph(_rl(f"{b.text} {marker}"), styles["Bullet"])]
     if b.type == "quote":
         return [Paragraph(_rl(b.text), styles["Quote"])]
-    if b.type == "code":
+    if b.type in ("code", "mermaid"):
+        # No Mermaid renderer in the PDF pipeline; keep the diagram source as text so
+        # it survives the export (the HTML export renders it as a real diagram).
         return [Paragraph(_rl(b.text), styles["Body"])]
     if b.type == "rule":
         return [Spacer(1, 6 * mm)]

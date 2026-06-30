@@ -120,7 +120,9 @@ def _emit_block(doc: Document, b: Block, font: str) -> None:
         p = doc.add_paragraph(b.text, style="Intense Quote")
         _style_runs(p, font)
         _rtl_para(p)
-    elif b.type == "code":
+    elif b.type in ("code", "mermaid"):
+        # Word has no Mermaid renderer; keep the diagram source as monospace text so
+        # it is preserved rather than dropped (rich rendering lives in the HTML export).
         p = doc.add_paragraph(b.text)
         for run in p.runs:
             run.font.name = "Consolas"

@@ -48,6 +48,35 @@ def test_json_blocks():
     assert any(b["type"] == "table" for b in payload["blocks"])
 
 
+MERMAID_MD = """# دليل بمخطط
+
+## الهيكل
+نص قبل المخطط.
+
+```mermaid
+graph TD
+  A["مجلس الإدارة"] --> B["الإدارة التنفيذية"]
+```
+"""
+
+
+def test_html_renders_mermaid_block_and_injects_runtime_once():
+    html = export(MERMAID_MD, "دليل", "html").data.decode("utf-8")
+    # the diagram is wrapped for the Mermaid runtime, not dumped as raw <pre><code>
+    assert '<pre class="mermaid">' in html
+    assert "graph TD" in html
+    assert "<pre><code>graph TD" not in html
+    # the runtime is injected exactly once, in the head
+    assert html.count("mermaid.esm.min.mjs") == 1
+    assert "mermaid.initialize" in html
+    assert html.index("mermaid.esm.min.mjs") < html.index("<body")
+
+
+def test_html_without_mermaid_omits_runtime():
+    html = export(MD, "دليل", "html").data.decode("utf-8")
+    assert "mermaid.esm.min.mjs" not in html
+
+
 def test_docx_is_valid_ooxml():
     data = export(MD, "دليل الحوكمة", "docx", company="شركة").data
     assert _is_zip(data)
