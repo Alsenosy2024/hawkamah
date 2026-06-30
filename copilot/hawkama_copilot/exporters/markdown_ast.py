@@ -14,11 +14,70 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Block:
-    type: str                       # heading|paragraph|bullet|ordered|quote|code|table|rule
+    type: str                       # heading|paragraph|bullet|ordered|quote|code|mermaid|table|rule
     text: str = ""
     level: int = 0                  # heading level / bullet indent
     headers: list[str] = field(default_factory=list)
     rows: list[list[str]] = field(default_factory=list)
+    lang: str = ""                  # fenced-code language tag (code/mermaid blocks)
+
+
+# --------------------------------------------------------------------------- #
+# Mermaid detection — ported from the frontend `services/mermaidDetect.ts` so the #
+# export pipeline recognises a diagram exactly like the in-app canvas does. The   #
+# model often emits a diagram with the wrong fence (```graph, ```flow) or no lang #
+# at all; without this every such fence fell through to a raw <pre><code> block.  #
+# --------------------------------------------------------------------------- #
+# First non-empty line of a Mermaid diagram starts with one of these keywords
+# (optionally preceded by an %%{init}%% directive). Covers every Mermaid v11 type.
+_MERMAID_HEAD = re.compile(
+    r"^(?:%%\{[^}]*\}%%\s*)?"
+    r"(?:flowchart|graph|sequenceDiagram|classDiagram(?:-v2)?|stateDiagram(?:-v2)?|"
+    r"erDiagram|gantt|pie\b|journey|mindmap|timeline|quadrantChart|gitGraph|"
+    r"requirementDiagram|C4(?:Context|Container|Component|Dynamic|Deployment)|"
+    r"sankey(?:-beta)?|xychart(?:-beta)?|block(?:-beta)?|packet(?:-beta)?|"
+    r"architecture(?:-beta)?|kanban|radar|zenuml|treemap)\b",
+    re.IGNORECASE,
+)
+
+# Languages that are explicitly Mermaid (aliases the model might use).
+_MERMAID_LANGS = {"mermaid", "mmd", "mermaidjs"}
+
+# Real programming/markup languages — never sniff their content as a diagram, even
+# if it coincidentally starts with "graph" etc.
+_PROG_LANGS = re.compile(
+    r"^(js|javascript|ts|typescript|jsx|tsx|py|python|java|kotlin|c|cpp|c\+\+|cs|"
+    r"csharp|go|golang|rust|rs|rb|ruby|php|sh|bash|zsh|shell|console|sql|json|jsonc|"
+    r"yaml|yml|xml|html|htm|css|scss|sass|less|md|markdown|mdx|diff|patch|toml|ini|"
+    r"dockerfile|docker|swift|scala|r|matlab|perl|lua|dart|graphql|gql|proto|"
+    r"makefile|cmake|nginx|apache|vim|powershell|ps1|bat|tex|text|txt|plaintext|none)$",
+    re.IGNORECASE,
+)
+
+
+def looks_like_mermaid(code: str) -> bool:
+    """True when the code body itself reads like a Mermaid diagram."""
+    return bool(_MERMAID_HEAD.match((code or "").strip()))
+
+
+def is_mermaid_block(lang: str | None, code: str) -> bool:
+    """Whether a fenced code block should render as a Mermaid diagram.
+
+    Mirrors `isMermaidBlock` in `services/mermaidDetect.ts`:
+    - explicit mermaid language → yes
+    - a real programming language → no (don't sniff)
+    - empty/unknown/diagram-ish language → sniff the content
+
+    Superset of the frontend in one respect: the fence info itself is also sniffed,
+    so a bare ```graph TD / ```flowchart LR fence (diagram keyword on the fence line
+    rather than in the body) is recognised too.
+    """
+    l = (lang or "").strip().lower()
+    if l in _MERMAID_LANGS:
+        return True
+    if l and _PROG_LANGS.match(l):
+        return False
+    return looks_like_mermaid(l) or looks_like_mermaid(code)
 
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
@@ -46,16 +105,21 @@ def parse_markdown(md: str) -> list[Block]:
     while i < n:
         line = lines[i]
 
-        # fenced code
+        # fenced code — capture the language tag from the opening fence and detect
+        # Mermaid (explicit lang OR sniffed content) so it renders as a real diagram
+        # downstream instead of a raw code block (mirrors the in-app canvas).
         if line.strip().startswith("```"):
             flush_para()
+            lang = line.strip()[3:].strip()  # full fence info string (mirrors the JS)
             i += 1
             buf: list[str] = []
             while i < n and not lines[i].strip().startswith("```"):
                 buf.append(lines[i])
                 i += 1
             i += 1
-            blocks.append(Block("code", text="\n".join(buf)))
+            code = "\n".join(buf)
+            btype = "mermaid" if is_mermaid_block(lang, code) else "code"
+            blocks.append(Block(btype, text=code, lang=lang))
             continue
 
         if not line.strip():

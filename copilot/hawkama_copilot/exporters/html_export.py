@@ -17,6 +17,20 @@ NAVY = "#0f172a"
 GOLD = "#c8912a"
 CYAN = "#0e9ebb"
 
+# Mermaid runtime injected ONCE into <head> (only when the document actually has a
+# diagram). Loaded from the jsDelivr CDN and themed to the app's teal brand so the
+# exported diagrams match the in-app canvas. CAVEAT: this needs network access when
+# the HTML is opened — offline viewers will see the raw <pre class="mermaid"> source
+# rather than a rendered diagram (acceptable: the diagram text is still legible).
+_MERMAID_RUNTIME = (
+    "<script type=\"module\">"
+    "import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs'; "
+    "mermaid.initialize({startOnLoad:true, theme:'base', themeVariables:{ "
+    "primaryColor:'#def2f6', primaryBorderColor:'#11a8bc', lineColor:'#0b8090', "
+    "fontFamily:'Thmanyah Sans, Tajawal, sans-serif' }});"
+    "</script>"
+)
+
 
 @dataclass
 class ManualDoc:
@@ -56,6 +70,8 @@ blockquote {{ border-right:4px solid var(--cyan); background:#f0fbfd; margin:12p
   padding:10px 14px; border-radius:6px; }}
 code,pre {{ background:#0f172a0d; border-radius:6px; padding:2px 6px; font-family:monospace; }}
 pre {{ padding:12px; overflow:auto; }}
+pre.mermaid {{ background:transparent; border:0; padding:16px 0; text-align:center;
+  font-family:inherit; overflow:visible; }}
 .gap {{ background:#fff7ed; border-right:5px solid #f97316; padding:12px 14px;
   margin:10px 0; border-radius:6px; }}
 .rec {{ background:#ecfdf5; border-right:5px solid #10b981; padding:12px 14px;
@@ -69,9 +85,12 @@ ul,ol {{ padding-right:22px; }}
 def render_manual(docs: list[ManualDoc], *, manual_title: str, subtitle: str = "") -> str:
     nav_items: list[str] = []
     bodies: list[str] = []
+    has_mermaid = False
 
     for d in docs:
         blocks = parse_markdown(d.markdown)
+        if any(b.type == "mermaid" for b in blocks):
+            has_mermaid = True
         nav_items.append(f'<a href="#{d.doc_id}"><b>{html.escape(d.title)}</b></a>')
         for b in blocks:
             if b.type == "heading" and b.level == 2:
@@ -80,13 +99,16 @@ def render_manual(docs: list[ManualDoc], *, manual_title: str, subtitle: str = "
         bodies.append(_render_doc(d, blocks))
 
     sub = f"<p>{html.escape(subtitle)}</p>" if subtitle else ""
+    # Only pull the Mermaid runtime when a diagram is actually present, so plain
+    # documents stay fully offline/self-contained.
+    mermaid_head = f"\n{_MERMAID_RUNTIME}" if has_mermaid else ""
     return f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>{html.escape(manual_title)}</title>
-<style>{_CSS}</style>
+<style>{_CSS}</style>{mermaid_head}
 </head>
 <body>
 <header class="cover">
@@ -133,6 +155,11 @@ def _render_block(doc_id: str, b: Block) -> str:
         return f"<ol><li>{_esc(b.text)}</li></ol>"
     if b.type == "quote":
         return f"<blockquote>{_esc(b.text)}</blockquote>"
+    if b.type == "mermaid":
+        # Mermaid reads the element's textContent, so HTML-escaping is both safe and
+        # correct: the browser decodes the entities back to the original diagram
+        # source before Mermaid parses it, while keeping the surrounding HTML valid.
+        return f'<pre class="mermaid">{html.escape(b.text)}</pre>'
     if b.type == "code":
         return f"<pre><code>{html.escape(b.text)}</code></pre>"
     if b.type == "rule":

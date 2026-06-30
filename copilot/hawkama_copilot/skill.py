@@ -57,7 +57,11 @@ FORMATTING_RULE = (
     "stateDiagram-v2، erDiagram، gantt، pie، mindmap، timeline، journey، gitGraph، quadrantChart. "
     "لا تخترع أنواعاً غير مدعومة (مثل radar-chart أو أي صيغة غير قياسية) فهي لا تُرسَم؛ "
     "لإظهار تقييمٍ متعدّد المحاور استخدم graph/flowchart أو جدول Markdown. "
-    "لا ترسم المخططات بالحروف أو ASCII أبداً. قدّم البيانات الجدولية كجداول Markdown."
+    "لا ترسم المخططات بالحروف أو ASCII أبداً. قدّم البيانات الجدولية كجداول Markdown. "
+    "إلزامي: حين يلزم مخطط، أخرِج كتلة ```mermaid``` نظيفة فقط تبدأ مباشرةً بنوع المخطط "
+    "(graph TD أو flowchart أو غيرها) دون أي نصٍّ تفسيري أو تأمّلي قبل السياج أو بعده "
+    "(ممنوع مثل «سأرسم الآن…» أو «في الواقع، graph TD يوضّح…» أو «هذا المخطط يبيّن…»)، "
+    "ولا تصف أداة الرسم ولا تسرد تفكيرك؛ الكتلة وحدها هي المخرج المطلوب."
 )
 
 # V9 — the dedicated "probe inputs + criteria + current-state before drafting"
