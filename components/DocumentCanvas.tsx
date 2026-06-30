@@ -21,6 +21,7 @@ import {
 } from '../services/canvasDocument';
 import { exportMessageDocx, exportMessageXlsx } from '../services/exportService';
 import { exportMessagePptx } from '../services/pptxExport';
+import { rewriteSelection, type SmartEditAction } from '../services/governanceChat';
 
 // A Mermaid diagram queued for PROGRESSIVE rendering (PRD V2/V3): the document
 // text shows within a beat, then each diagram fills into its placeholder.
@@ -91,6 +92,10 @@ async function renderPendingDiagrams(
     if (!target) continue;
     target.innerHTML = inner;
     target.removeAttribute('data-dgm-pending');
+    // FE-3: stash the diagram source on the host so canvasHtmlToMarkdown can
+    // re-emit a ```mermaid block — that lets the Word/PPTX/Excel exporters embed
+    // the diagram as an image too (previously only the PDF carried diagrams).
+    try { target.setAttribute('data-mermaid-code', encodeURIComponent(p.code)); } catch { /* noop */ }
   }
 }
 
@@ -113,6 +118,11 @@ const IcSpark = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="curr
 const IcSpin = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.2-8.5" /></svg>;
 const IcWarn = () => <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>;
 const IcRetry = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6M1 20v-6h6" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>;
+// ── smart-edit toolbar icons (V11) ──
+const IcShorten = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M4 12h10M4 17h7" /></svg>;
+const IcLengthen = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 10h16M4 14h16M4 18h12" /></svg>;
+const IcRewrite = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>;
+const IcTrash = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>;
 
 // ── restyle presets (Ailigent-led) ─────────────────────────────────────────
 const COVER_GRADIENTS: { name: string; css: string }[] = [
@@ -170,6 +180,7 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   const renderRunRef = useRef(0);                                      // cancels an in-flight diagram render pass
   const [coverOpen, setCoverOpen] = useState(false);
   const [askSel, setAskSel] = useState<{ text: string; top: number; left: number } | null>(null);
+  const [smartBusy, setSmartBusy] = useState<SmartEditAction | ''>('');   // V11: which AI rewrite is running
   const [saved, setSaved] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);                     // export-format menu
   const [exporting, setExporting] = useState<'docx' | 'pptx' | 'xlsx' | ''>('');
@@ -249,23 +260,26 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       cover.style.cursor = 'pointer';
       cover.addEventListener('click', () => setCoverOpen(true));
     }
-    if (onAskAi) {
-      const updateAsk = () => {
-        const win = doc.defaultView;
-        const s = win?.getSelection();
-        const text = s?.toString().trim() || '';
-        const frame = iframeRef.current;
-        if (!s || s.isCollapsed || !text || !frame) { setAskSel(null); return; }
-        try {
-          const r = s.getRangeAt(0).getBoundingClientRect();
-          const f = frame.getBoundingClientRect();
-          setAskSel({ text, top: f.top + r.bottom + 6, left: f.left + r.left });
-        } catch { setAskSel(null); }
-      };
-      doc.addEventListener('mouseup', updateAsk);
-      doc.addEventListener('keyup', updateAsk);
-      doc.addEventListener('scroll', () => setAskSel(null), true);
-    }
+    // PRD V11: track the live selection so the floating smart-edit toolbar can
+    // anchor to it. Runs regardless of onAskAi (the AI rewrites are independent;
+    // the "Ask copilot" button inside the bar only appears when onAskAi is set).
+    const updateAsk = () => {
+      const win = doc.defaultView;
+      const s = win?.getSelection();
+      const text = s?.toString().trim() || '';
+      const frame = iframeRef.current;
+      if (!s || s.isCollapsed || !text || !frame) { setAskSel(null); return; }
+      try {
+        const r = s.getRangeAt(0).getBoundingClientRect();
+        const f = frame.getBoundingClientRect();
+        // Clamp X so the bar (≈380px) never runs off-screen on a narrow/docked canvas.
+        const left = Math.max(8, Math.min(f.left + r.left, window.innerWidth - 388));
+        setAskSel({ text, top: f.top + r.bottom + 6, left });
+      } catch { setAskSel(null); }
+    };
+    doc.addEventListener('mouseup', updateAsk);
+    doc.addEventListener('keyup', updateAsk);
+    doc.addEventListener('scroll', () => setAskSel(null), true);
   }, [onAskAi, ar]);
 
   const exec = useCallback((cmd: string, val?: string) => {
@@ -362,6 +376,85 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       setExporting('');
     }
   }, [liveHtml, exportPdf, brand, docTitle, language]);
+
+  // ── V11: floating smart-edit toolbar — act on the live selection IN PLACE ──
+  // The edits land in the same designMode document the canvas exports, and we
+  // persist them through the existing save path so they survive reload + flow
+  // into every export (ties to V12/V14).
+  const persist = useCallback(() => { onSave?.(liveHtml()); }, [onSave, liveHtml]);
+
+  // Replace the selected range with plain text, preferring execCommand so the
+  // change joins designMode's own undo stack; falls back to a manual DOM swap.
+  const replaceSelection = useCallback((doc: Document, win: Window, range: Range, text: string) => {
+    try {
+      const sel = win.getSelection();
+      if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+      win.focus();
+      if (!doc.execCommand('insertText', false, text)) {
+        range.deleteContents(); range.insertNode(doc.createTextNode(text));
+      }
+    } catch {
+      try { range.deleteContents(); range.insertNode(doc.createTextNode(text)); } catch { /* noop */ }
+    }
+  }, []);
+
+  const runSmartEdit = useCallback(async (action: SmartEditAction) => {
+    const win = iframeRef.current?.contentWindow;
+    const doc = iframeRef.current?.contentDocument;
+    const sel = win?.getSelection?.();
+    if (!win || !doc || !sel || sel.rangeCount === 0 || sel.isCollapsed || smartBusy) return;
+    const text = sel.toString().trim();
+    if (!text) return;
+    const range = sel.getRangeAt(0).cloneRange();   // captured now (mousedown kept the selection)
+    setSmartBusy(action);
+    try {
+      const out = await rewriteSelection({ text, action, language });
+      if (out && out.trim()) { replaceSelection(doc, win, range, out.trim()); persist(); }
+    } catch (e) {
+      console.warn('[smart-edit] rewrite failed', e);   // leave the selection untouched on failure
+    } finally {
+      setSmartBusy('');
+      setAskSel(null);
+    }
+  }, [language, smartBusy, persist, replaceSelection]);
+
+  const deleteSelection = useCallback(() => {
+    const win = iframeRef.current?.contentWindow;
+    const doc = iframeRef.current?.contentDocument;
+    const sel = win?.getSelection?.();
+    if (!win || !doc || !sel || sel.isCollapsed) return;
+    win.focus();
+    try { doc.execCommand('delete'); } catch { /* noop */ }
+    persist();
+    setAskSel(null);
+  }, [persist]);
+
+  // Relative font sizing on the selection ("shrink/enlarge font"): tag the
+  // selection with a throwaway fontSize, then convert the wrapped runs to an
+  // explicit px that steps from their current computed size — true increments.
+  const stepFont = useCallback((dir: 1 | -1) => {
+    const win = iframeRef.current?.contentWindow;
+    const doc = iframeRef.current?.contentDocument;
+    const sel = win?.getSelection?.();
+    if (!win || !doc || !sel || sel.isCollapsed) return;
+    win.focus();
+    try {
+      // Force the presentational <font size="7"> marker (the canvas runs with
+      // styleWithCSS on, which would otherwise emit a CSS span we can't target),
+      // then convert each wrapped run to an explicit px stepped from its size.
+      doc.execCommand('styleWithCSS', false, 'false');
+      doc.execCommand('fontSize', false, '7');
+      doc.execCommand('styleWithCSS', false, 'true');
+      doc.querySelectorAll('font[size="7"]').forEach(el => {
+        const f = el as HTMLElement;
+        f.removeAttribute('size');
+        const cur = parseFloat(win.getComputedStyle(f).fontSize) || 16;
+        const next = Math.max(9, Math.min(48, Math.round(cur + dir * 2)));
+        f.style.fontSize = `${next}px`;
+      });
+    } catch { /* noop */ }
+    persist();
+  }, [persist]);
 
   const handleSave = useCallback(() => {
     onSave?.(liveHtml());
@@ -501,14 +594,47 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
         )}
       </div>
 
-      {/* Floating "Ask AI" over a text selection */}
-      {askSel && onAskAi && (
-        <button type="button" onMouseDown={e => e.preventDefault()}
-          onClick={() => { onAskAi(askSel.text); setAskSel(null); }}
+      {/* PRD V11 — floating smart-edit toolbar over a text selection. One-click AI
+          actions (shorten / lengthen / improve / rewrite) edit the selection in
+          place; font-size + delete are direct DOM edits; "Ask" hands the passage
+          to the copilot. onMouseDown is prevented so the selection survives the
+          click. */}
+      {askSel && (
+        <div role="toolbar" aria-label={t('تحرير ذكي', 'Smart edit')}
+          onMouseDown={e => e.preventDefault()}
           style={{ top: askSel.top, left: askSel.left }}
-          className="fixed z-[10001] flex items-center gap-1.5 rounded-lg bg-[var(--hw-brand,#11a8bc)] px-3 py-1.5 text-xs font-semibold text-white shadow-lg transition hover:brightness-105">
-          <IcSpark /> {t('اسأل الكوبايلوت', 'Ask copilot')}
-        </button>
+          className="dc-smartbar fixed z-[10001] flex items-center gap-0.5 rounded-xl border border-[var(--hw-border)] bg-white dark:bg-slate-800 p-1 shadow-2xl dc-pop">
+          {([
+            ['shorten', <IcShorten />, t('اختصار', 'Shorten')],
+            ['lengthen', <IcLengthen />, t('إطالة', 'Lengthen')],
+            ['improve', <IcSpark />, t('تحسين', 'Improve')],
+            ['rewrite', <IcRewrite />, t('صياغة', 'Rewrite')],
+          ] as const).map(([act, icon, label]) => (
+            <button key={act} type="button" disabled={!!smartBusy}
+              onClick={() => runSmartEdit(act as SmartEditAction)} title={label}
+              className="flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-medium text-slate-600 dark:text-slate-300 hover:bg-[var(--hw-brand-50,#eef8fa)] hover:text-[var(--hw-brand,#11a8bc)] disabled:opacity-50 transition-colors">
+              {smartBusy === act ? <IcSpin /> : icon}{label}
+            </button>
+          ))}
+          <span className="w-px h-5 bg-[var(--hw-border)] mx-0.5" />
+          <button type="button" disabled={!!smartBusy} onClick={() => stepFont(-1)} title={t('تصغير الخط', 'Smaller font')}
+            className="flex items-center justify-center w-7 h-7 rounded-lg text-[12px] font-bold text-slate-600 dark:text-slate-300 hover:bg-[var(--hw-brand-50,#eef8fa)] hover:text-[var(--hw-brand,#11a8bc)] disabled:opacity-50 transition-colors">A−</button>
+          <button type="button" disabled={!!smartBusy} onClick={() => stepFont(1)} title={t('تكبير الخط', 'Larger font')}
+            className="flex items-center justify-center w-7 h-7 rounded-lg text-[15px] font-bold text-slate-600 dark:text-slate-300 hover:bg-[var(--hw-brand-50,#eef8fa)] hover:text-[var(--hw-brand,#11a8bc)] disabled:opacity-50 transition-colors">A+</button>
+          <span className="w-px h-5 bg-[var(--hw-border)] mx-0.5" />
+          <button type="button" disabled={!!smartBusy} onClick={deleteSelection} title={t('حذف', 'Delete')}
+            className="flex items-center justify-center w-7 h-7 rounded-lg text-slate-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/15 disabled:opacity-50 transition-colors"><IcTrash /></button>
+          {onAskAi && (
+            <>
+              <span className="w-px h-5 bg-[var(--hw-border)] mx-0.5" />
+              <button type="button" disabled={!!smartBusy}
+                onClick={() => { onAskAi(askSel.text); setAskSel(null); }} title={t('اسأل الكوبايلوت', 'Ask copilot')}
+                className="flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-semibold text-[var(--hw-brand,#11a8bc)] hover:bg-[var(--hw-brand-50,#eef8fa)] disabled:opacity-50 transition-colors">
+                <IcSpark />{t('اسأل', 'Ask')}
+              </button>
+            </>
+          )}
+        </div>
       )}
 
       {/* Appearance modal — cover gradient/color/image/pattern + page bg */}

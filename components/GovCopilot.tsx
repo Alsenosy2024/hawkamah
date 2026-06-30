@@ -12,7 +12,7 @@ import ThinkingTrace from './ThinkingTrace';
 import StepTimeline from './StepTimeline';
 import Markdown, { type CiteRef } from './Markdown';
 import DocumentCanvas from './DocumentCanvas';
-import { looksLikeDocument } from '../services/canvasDocument';
+import { looksLikeDocument, canvasHtmlToMarkdown } from '../services/canvasDocument';
 // Copilot avatar art — a bundled SVG line-icon (robot/chatbot face). Imported as
 // an asset (Vite gives us its hashed URL) and painted via CSS mask so it inherits
 // the live --hw-brand teal in both RTL and dark mode (see RobotAvatar below).
@@ -784,9 +784,25 @@ const GovCopilot: React.FC<Props> = (props) => {
   // fetch whose late resolution would setState on an unmounted tree.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  // Turn any answer into a real downloadable file.
-  const exportAs = async (kind: 'docx' | 'xlsx' | 'pdf' | 'pptx' | 'html', md: string) => {
-    const title = (md.match(/^#+\s*(.+)$/m)?.[1] || stageLabel || 'governance').slice(0, 60).trim();
+  // FE-1: a chat bubble's export should match the EDITED canvas (true WYSIWYG),
+  // not the raw model markdown. When a message has been opened + edited in the
+  // document canvas, its saved HTML is serialized back to Markdown through the
+  // same bridge DocumentCanvas uses; otherwise we fall back to the raw markdown.
+  const effectiveExportMd = (id: string | undefined, md: string): string => {
+    const html = id ? canvasEditsRef.current[id] : undefined;
+    if (html) {
+      try { const conv = canvasHtmlToMarkdown(html); if (conv && conv.trim()) return conv; }
+      catch { /* fall back to the raw markdown below */ }
+    }
+    return md;
+  };
+
+  // Turn any answer into a real downloadable file. `id` (when given) lets the
+  // export reflect that message's in-canvas edits (FE-1).
+  const exportAs = async (kind: 'docx' | 'xlsx' | 'pdf' | 'pptx' | 'html', md: string, id?: string) => {
+    const source = effectiveExportMd(id, md);
+    // Busy key stays keyed on the raw md so the right button shows its spinner.
+    const title = (source.match(/^#+\s*(.+)$/m)?.[1] || stageLabel || 'governance').slice(0, 60).trim();
     setExporting(kind + md.slice(0, 8));
     const o = {
       language: (language || 'ar') as Language,
@@ -797,17 +813,17 @@ const GovCopilot: React.FC<Props> = (props) => {
     try {
       // PDF always renders in-app (brand-styled: teal + Thmanyah via html2canvas),
       // even when the Python backend is enabled — it's the brand document surface.
-      if (kind === 'pdf') { await exportMessagePdfDirect(md, title, o); return; }
+      if (kind === 'pdf') { await exportMessagePdfDirect(source, title, o); return; }
       // Other formats: server-side rendering via the Python agent when enabled
       // (Arabic RTL DOCX/XLSX/PPTX/HTML), else the in-app exporters.
       if (copilotEnabled()) {
-        await copilotExport(md, title, kind, { company: model?.companyName || undefined });
+        await copilotExport(source, title, kind, { company: model?.companyName || undefined });
         return;
       }
-      if (kind === 'docx') await exportMessageDocx(md, title, o);
-      else if (kind === 'html') await exportMessageHtml(md, title, o);
-      else if (kind === 'xlsx') exportMessageXlsx(md, title);
-      else await exportMessagePptx(md, title, { companyName: model?.companyName || undefined, logoUrl: logoUrl || undefined });
+      if (kind === 'docx') await exportMessageDocx(source, title, o);
+      else if (kind === 'html') await exportMessageHtml(source, title, o);
+      else if (kind === 'xlsx') exportMessageXlsx(source, title);
+      else await exportMessagePptx(source, title, { companyName: model?.companyName || undefined, logoUrl: logoUrl || undefined });
     } catch (e) { console.error('export failed', e); }
     finally { setExporting(null); }
   };
@@ -831,21 +847,22 @@ const GovCopilot: React.FC<Props> = (props) => {
   );
 
   // Generated-content action buttons — Ailigent design language (hw-btn + Thmanyah).
-  const exportBtn = (kind: 'docx' | 'xlsx' | 'pdf' | 'pptx' | 'html', _icon: string, label: string, md: string) => (
-    <button onClick={() => exportAs(kind, md)} disabled={!!exporting}
+  // `id` ties the export to a message's in-canvas edits (FE-1).
+  const exportBtn = (kind: 'docx' | 'xlsx' | 'pdf' | 'pptx' | 'html', _icon: string, label: string, md: string, id?: string) => (
+    <button onClick={() => exportAs(kind, md, id)} disabled={!!exporting}
       className="hw-btn hw-btn-subtle hw-btn-xs !rounded-full">
       {exporting === kind + md.slice(0, 8) ? <span className="hw-spin inline-block">↻</span> : <IconDownload />}{label}
     </button>
   );
 
-  const exportRow = (md: string) => (
+  const exportRow = (md: string, id?: string) => (
     <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pt-2.5 border-t border-[var(--hw-border)]">
       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide me-0.5">{t('تصدير', 'Export')}</span>
-      {exportBtn('html', '', t('HTML', 'HTML'), md)}
-      {exportBtn('docx', '', 'Word', md)}
-      {exportBtn('pdf', '', 'PDF', md)}
-      {exportBtn('xlsx', '', 'Excel', md)}
-      {exportBtn('pptx', '', t('عرض', 'Slides'), md)}
+      {exportBtn('html', '', t('HTML', 'HTML'), md, id)}
+      {exportBtn('docx', '', 'Word', md, id)}
+      {exportBtn('pdf', '', 'PDF', md, id)}
+      {exportBtn('xlsx', '', 'Excel', md, id)}
+      {exportBtn('pptx', '', t('عرض', 'Slides'), md, id)}
     </div>
   );
 
@@ -1073,7 +1090,7 @@ const GovCopilot: React.FC<Props> = (props) => {
                       <div className="mt-2 overflow-x-auto" dangerouslySetInnerHTML={{ __html: m.searchHtml }} />
                     )}
                     {!m.streaming && looksLikeDocument(m.text) && docCanvasBtn(m.id, m.text)}
-                    {!m.streaming && m.text.length > 40 && exportRow(m.text)}
+                    {!m.streaming && m.text.length > 40 && exportRow(m.text, m.id)}
                   </div>
                   </div>
                 )}
@@ -1139,7 +1156,7 @@ const GovCopilot: React.FC<Props> = (props) => {
               <div className="rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-3 text-sm text-slate-700 dark:text-slate-200">
                 <Markdown text={props.agentAnswer} rtl={ar} onCite={handleCite} />
                 {looksLikeDocument(props.agentAnswer) && docCanvasBtn('agent-answer', props.agentAnswer)}
-                {exportRow(props.agentAnswer)}
+                {exportRow(props.agentAnswer, 'agent-answer')}
                 {props.agentTrace && (
                   <div className="flex items-center gap-2 mt-2 pt-1.5 border-t border-slate-100 dark:border-slate-700">
                     <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">{t('سجل التنفيذ', 'Run trace')}</span>

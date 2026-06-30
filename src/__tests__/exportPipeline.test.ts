@@ -121,3 +121,52 @@ describe('canvasHtmlToMarkdown — round-trips the edited canvas back to Markdow
     expect(out.endsWith('\n')).toBe(true);
   });
 });
+
+// ===========================================================================
+//  FE-3 — canvas → Markdown bridge preserves diagrams + images.
+//
+//  Previously every <figure> was stripped, so canvas-sourced Word/PPTX/Excel
+//  exports lost diagrams (only the PDF, which prints the live DOM, kept them).
+//  Now a rendered Mermaid figure (its source stashed on the host by
+//  DocumentCanvas) re-emits a ```mermaid block — which the existing exporters
+//  already turn into an embedded PNG — and a raster <img> figure becomes a
+//  Markdown image. Raw <svg> pixels never leak into the text stream.
+// ===========================================================================
+describe('canvasHtmlToMarkdown — preserves diagrams + images (FE-3)', () => {
+  const code = 'graph TD\n  A[البداية] --> B[النهاية]';
+  const html = [
+    '<!DOCTYPE html><html dir="rtl"><head></head><body><div class="doc">',
+    '<section class="page cover"><h1>غلاف</h1></section>',
+    '<section class="page"><div class="body">',
+    '<h2 class="h2"><span class="n">01</span> الهيكل التنظيمي</h2>',
+    '<p class="lead">فقرة تمهيدية قبل المخطط.</p>',
+    '<figure class="fig" contenteditable="false"><div class="svgwrap">'
+      + `<div class="dgm-host" id="dgm-0" data-mermaid-code="${encodeURIComponent(code)}">`
+      + '<svg viewBox="0 0 120 90"><text>عقدة</text></svg></div></div>'
+      + '<figcaption>الشكل 1: الهيكل</figcaption></figure>',
+    '<figure class="fig" contenteditable="false"><img src="data:image/png;base64,AAAB" alt="الشعار"/></figure>',
+    '</div></section>',
+    '</div></body></html>',
+  ].join('');
+  const out = canvasHtmlToMarkdown(html);
+
+  it('re-emits a rendered Mermaid figure as its ```mermaid source block', () => {
+    expect(out).toContain('```mermaid');
+    expect(out).toContain('graph TD');
+    expect(out).toContain('A[البداية] --> B[النهاية]');
+  });
+
+  it('keeps the heading + text around the diagram', () => {
+    expect(out).toContain('## الهيكل التنظيمي');
+    expect(out).toContain('فقرة تمهيدية قبل المخطط.');
+  });
+
+  it('never leaks raw <svg> pixels into the Markdown text', () => {
+    expect(out).not.toContain('<svg');
+    expect(out).not.toContain('عقدة'); // svg-internal label dropped with the pixels
+  });
+
+  it('preserves a raster <img> figure as a Markdown image', () => {
+    expect(out).toMatch(/!\[[^\]]*\]\(data:image\/png;base64,AAAB\)/);
+  });
+});

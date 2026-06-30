@@ -589,11 +589,12 @@ export function looksLikeDocument(md: string): boolean {
 //
 //  PURE (string in → string out, no DOM) so it unit-tests in the node harness.
 //  Keys off the stable block structure emitted by buildCanvasHtml; the cover, the
-//  table-of-contents and purely-visual blocks (KPI cards, charts, figures) are
-//  dropped — those carry through to the PDF, while the textual content + tables
-//  flow to Word/PPTX/Excel. Resilient to the inline tags designMode introduces
-//  (<span>/<font>/<b>/<i>…): block detection ignores them and inline cleanup
-//  strips them down to plain Markdown emphasis.
+//  table-of-contents and the KPI/chart cards are dropped (those carry through to
+//  the PDF), while the textual content + tables flow to Word/PPTX/Excel. Diagrams
+//  are preserved (FE-3): a rendered Mermaid figure re-emits its stored source as a
+//  ```mermaid block so the exporters embed it as an image too. Resilient to the
+//  inline tags designMode introduces (<span>/<font>/<b>/<i>…): block detection
+//  ignores them and inline cleanup strips them down to plain Markdown emphasis.
 // ===========================================================================
 
 function decodeEntities(s: string): string {
@@ -686,18 +687,44 @@ function headingText(h: string): string {
   return inlineToText(h.replace(/<span\b[^>]*class=["'][^"']*\bn\b[^"']*["'][^>]*>[\s\S]*?<\/span\s*>/i, ''));
 }
 
+// FE-3 — a canvas <figure> back to Markdown so diagrams survive the Word/PPTX/
+// Excel bridge (previously every figure was stripped, so only the PDF — which
+// serializes the live DOM — carried diagrams). A rendered Mermaid diagram stores
+// its source on the host (data-mermaid-code, set by DocumentCanvas) → re-emit a
+// ```mermaid block, which the existing exporters already render to an embedded
+// PNG. A raster figure (uploaded image) → a Markdown image. Empty placeholders
+// (a diagram that never rendered) emit nothing.
+function figureToMd(figureInner: string): string {
+  const codeM = /data-mermaid-code\s*=\s*"([^"]*)"/i.exec(figureInner);
+  if (codeM && codeM[1]) {
+    let code = '';
+    try { code = decodeURIComponent(codeM[1]); } catch { code = codeM[1]; }
+    code = code.trim();
+    if (code) return '```mermaid\n' + code + '\n```';
+  }
+  const imgM = /<img\b[^>]*\bsrc\s*=\s*"([^"]+)"[^>]*>/i.exec(figureInner);
+  if (imgM && imgM[1]) {
+    const altM = /<img\b[^>]*\balt\s*=\s*"([^"]*)"/i.exec(figureInner);
+    const capM = /<figcaption\b[^>]*>([\s\S]*?)<\/figcaption\s*>/i.exec(figureInner);
+    const alt = (altM && altM[1]) || (capM ? inlineToText(capM[1]) : '') || 'diagram';
+    return `![${alt.replace(/[[\]]/g, '')}](${imgM[1]})`;
+  }
+  return '';
+}
+
 function sectionInnerToMd(innerRaw: string): string {
-  // Drop the purely-visual subtrees (KPI rows + chart cards) before scanning.
+  // Drop the purely-visual subtrees (KPI rows + chart cards) and raw SVG pixels
+  // before scanning; the figure SHELL is kept so a diagram can be re-emitted from
+  // its stored Mermaid source (the inner <svg> itself is never needed as text).
   let inner = dropDivsByClass(innerRaw, c => /\b(card|kpis)\b/.test(c));
-  inner = inner.replace(/<figure\b[^>]*>[\s\S]*?<\/figure\s*>/gi, '');
   inner = inner.replace(/<svg\b[\s\S]*?<\/svg\s*>/gi, '');
 
   const out: string[] = [];
   // Block-level scan in document order. Group map: 1=heading level, 2=heading
   // content, 3=<p>, 4=list tag, 5=list content, 6=<table>, 7=<blockquote>,
-  // 8=callout <div>, 9=<pre>. Close tags are matched loosely (e.g. </h[1-6]>) so
-  // a single combined pattern needs no fragile cross-group backreferences.
-  const re = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h[1-6]\s*>|<p\b[^>]*>([\s\S]*?)<\/p\s*>|<(ul|ol)\b[^>]*>([\s\S]*?)<\/(?:ul|ol)\s*>|<table\b[^>]*>([\s\S]*?)<\/table\s*>|<blockquote\b[^>]*>([\s\S]*?)<\/blockquote\s*>|<div\b[^>]*class="[^"]*\bcallout\b[^"]*"[^>]*>([\s\S]*?)<\/div\s*>|<pre\b[^>]*>([\s\S]*?)<\/pre\s*>/gi;
+  // 8=callout <div>, 9=<pre>, 10=<figure>. Close tags are matched loosely (e.g.
+  // </h[1-6]>) so a single combined pattern needs no fragile cross-group refs.
+  const re = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h[1-6]\s*>|<p\b[^>]*>([\s\S]*?)<\/p\s*>|<(ul|ol)\b[^>]*>([\s\S]*?)<\/(?:ul|ol)\s*>|<table\b[^>]*>([\s\S]*?)<\/table\s*>|<blockquote\b[^>]*>([\s\S]*?)<\/blockquote\s*>|<div\b[^>]*class="[^"]*\bcallout\b[^"]*"[^>]*>([\s\S]*?)<\/div\s*>|<pre\b[^>]*>([\s\S]*?)<\/pre\s*>|<figure\b[^>]*>([\s\S]*?)<\/figure\s*>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(inner))) {
     if (m[1]) {                                    // h1–h6
@@ -718,15 +745,18 @@ function sectionInnerToMd(innerRaw: string): string {
     } else if (m[9] != null) {                      // pre / code
       const code = decodeEntities(stripTags(m[9])).replace(/\s+$/, '');
       if (code.trim()) out.push('```\n' + code + '\n```');
+    } else if (m[10] != null) {                     // figure → diagram / image (FE-3)
+      const md = figureToMd(m[10]);
+      if (md) out.push(md);
     }
   }
   return out.join('\n\n');
 }
 
 /** Serialize the live canvas HTML (DocumentCanvas.liveHtml()) back to Markdown,
- *  capturing the user's in-canvas edits. Cover + TOC + visual-only blocks are
- *  omitted (they ride the PDF); headings, paragraphs, lists, tables, callouts
- *  and code carry through to the Word/PPTX/Excel exporters. */
+ *  capturing the user's in-canvas edits. Cover + TOC + KPI/chart cards are
+ *  omitted (they ride the PDF); headings, paragraphs, lists, tables, callouts,
+ *  code and diagrams (FE-3) carry through to the Word/PPTX/Excel exporters. */
 export function canvasHtmlToMarkdown(html: string): string {
   const input = String(html || '');
   const bodyM = input.match(/<body\b[^>]*>([\s\S]*?)<\/body\s*>/i);

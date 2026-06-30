@@ -1815,8 +1815,15 @@ export function exportXlsx(sheets: SheetSpec[], title: string): void {
 export function exportMessageXlsx(markdown: string, title: string): void {
   const tables = parseMarkdown(markdown).filter(b => b.type === 'table') as Extract<MdBlock, { type: 'table' }>[];
   if (!tables.length) {
-    // No table — dump the plain text into a single column so the action never silently no-ops.
-    exportXlsx([{ name: 'المحتوى', headers: [stripMarkdown(title)], rows: markdown.split('\n').filter(Boolean).map(l => [stripMarkdown(l)]) }], title);
+    // No table — dump the plain text into a single column so the action never
+    // silently no-ops. Drop fenced blocks (e.g. ```mermaid diagram source from the
+    // canvas bridge) and standalone image lines so their raw lines aren't poured
+    // into cells; a diagram can't be embedded in a flat sheet anyway.
+    const text = markdown.replace(/```[\s\S]*?```/g, '');
+    const rows = text.split('\n')
+      .filter(l => l.trim() && !/^!\[[^\]]*\]\([^)]*\)\s*$/.test(l.trim()))
+      .map(l => [stripMarkdown(l)]);
+    exportXlsx([{ name: 'المحتوى', headers: [stripMarkdown(title)], rows }], title);
     return;
   }
   const sheets: SheetSpec[] = tables.map((t, i) => ({
