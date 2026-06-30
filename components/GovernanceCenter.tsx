@@ -36,7 +36,7 @@ import {
   GovernanceDocument, type BulkScope,
 } from '../services/governanceEngine';
 import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout } from '../services/diagramService';
-import { exportDocx, exportPdfViaPrint, exportPdfDirect, exportGovernanceManual, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual, exportArtifactsBatch, exportArtifactsZip, type BatchFormat, type BatchMode } from '../services/exportService';
+import { exportDocx, exportPdfViaPrint, exportGovernanceManual, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual, exportArtifactsBatch, exportArtifactsZip, type BatchFormat, type BatchMode } from '../services/exportService';
 import { generateJson } from '../services/agentOrchestrator';
 import { GOV_DOC_CATALOG, CATALOG_CATEGORIES, recommendDocuments, type DocCatalogEntry } from '../services/governanceDocCatalog';
 import { analyzeIntegrity, maturity as computeMaturity, coverageMatrix, mergeModels, traceEntity } from '../services/governanceValidation';
@@ -46,6 +46,7 @@ import { buildCharter, buildRiskRegister, buildRoadmap } from '../services/gover
 import { runGovernanceAgent } from '../services/governanceAgent';
 import { askGovernance } from '../services/governanceQa';
 import Markdown from './Markdown';
+import BackButton from './BackButton';
 import ThinkingTrace from './ThinkingTrace';
 import ArtifactProgress from './ArtifactProgress';
 import MermaidView from './MermaidView';
@@ -552,6 +553,11 @@ ${content.slice(0, 8000)}`;
   const [genDocKind, setGenDocKind] = useState<GovDocumentRecord['kind']>('governance');
   // V14: a library document open in the functional editable canvas (persist + share).
   const [canvasRec, setCanvasRec] = useState<GovDocumentRecord | null>(null);
+  // V25: a generated process artifact (charter / risk register / roadmap /
+  // current-state report) open in the SAME canvas — the single export surface.
+  // Unlike `canvasRec` these aren't library records (no persist/share/comments);
+  // the canvas just renders them and exposes its Word/PDF/PPTX/Excel suite.
+  const [canvasArt, setCanvasArt] = useState<GeneratedArtifact | null>(null);
   // V14/V20: client/reviewer comments + visual-review checks, by source doc id.
   // Loaded once per library refresh; empty (degrades silently) until the
   // `doc_comments` firestore rule is deployed.
@@ -566,6 +572,9 @@ ${content.slice(0, 8000)}`;
     return init;
   });
   const [catFilter, setCatFilter] = useState<string>('');
+  // V24: per-document AI guidance — free-text instructions keyed by doc-spec key,
+  // woven only into THAT document's generation prompt (see handleCreateBatch).
+  const [docGuidance, setDocGuidance] = useState<Record<string, string>>({});
   const [batchRunning, setBatchRunning] = useState(false);
   const [seqGen, setSeqGen] = useState(false);   // HWK-C3: sequential "training-studio" generation (watch each doc build)
   const [batchLog, setBatchLog] = useState<string[]>([]);
@@ -733,18 +742,12 @@ ${content.slice(0, 8000)}`;
     return lastApprove > lastChange && lastApprove !== -1;
   }, [model]);
 
-  const exportArt = async (art: GeneratedArtifact, fmt: 'docx' | 'pdf') => {
-    setBusy(t('تجهيز التصدير', 'Preparing export'));
-    try {
-      const opts = { language, companyName, logoUrl: settings.logoUrl } as any;
-      if (fmt === 'docx') await exportDocx(art, opts); else await exportPdfViaPrint(art, opts);
-    } catch (e: any) { alertMsg(t('فشل التصدير: ', 'Export failed: ') + (e?.message || e)); }
-    finally { setBusy(''); }
-  };
+  // V25: the charter/risk/roadmap artifacts no longer export directly — they open
+  // in the canvas (the single export surface). Generate the charter, then open it.
   const genCharter = async () => {
     if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
     setBusy(t('توليد الميثاق', 'Generating charter'));
-    try { setCharterArt(await buildCharter(model)); }
+    try { const art = await buildCharter(model); setCharterArt(art); openArtifactInCanvas(art); }
     catch (e: any) { alertMsg(t('فشل توليد الميثاق: ', 'Charter failed: ') + (e?.message || e)); }
     finally { setBusy(''); }
   };
@@ -1127,6 +1130,7 @@ ${content.slice(0, 8000)}`;
             const doc = await generateGovernanceDoc({
               docTitle: d.title, goal: d.goal, model, chunks, referenceProjects: refsForBatch,
               sector, language, targetPages: pages, kind: d.key, signal: ac.signal,
+              guidance: docGuidance[d.key], // V24: per-doc AI guidance woven into THIS doc's prompt
               sharedFacts,
               // in parallel mode show the live preview of whichever doc reports last
               onProgress: (pr) => { activeLabel = d.ar; setGenProgress(pr as any); },
@@ -1456,10 +1460,11 @@ ${content.slice(0, 8000)}`;
     } catch (e: any) { setBusy(''); alertMsg(t('فشل التصدير: ', 'Export failed: ') + (e?.message || e)); }
   };
 
-  // FIX 2 — branded, organized PDF of the current-state diagnostic. Builds a
-  // GeneratedArtifact AST from reportData, then routes through exportPdfDirect so
-  // the report carries the owner's identity (logo + company name) + Arabic RTL.
-  const exportDiagnosticPdf = async () => {
+  // V25 — open the current-state diagnostic in the canvas (the single export
+  // surface). Builds the SAME GeneratedArtifact AST from reportData, then opens
+  // it in DocumentCanvas where the owner edits and exports it (Word/PDF/PPTX/Excel)
+  // with the company identity. (Was: a direct branded-PDF export.)
+  const openDiagnosticInCanvas = () => {
     const rd = latestDiagnostic?.reportData;
     if (!rd) return;
     const reportTitle = docTitle || companyName;
@@ -1495,11 +1500,7 @@ ${content.slice(0, 8000)}`;
       goal: t('تشخيص مرجعي دقيق لواقع حوكمة المؤسسة', 'A precise reference diagnostic of the organization\'s governance current state'),
       language, sections, createdAt: new Date(), complete: true,
     };
-    try {
-      setBusy(t('تجهيز PDF…', 'Preparing PDF…'));
-      await exportPdfDirect(artifact, { language, companyName, logoUrl: settings.logoUrl } as any);
-    } catch (e: any) { alertMsg(t('فشل تصدير التقرير: ', 'Report export failed: ') + (e?.message || e)); }
-    finally { setBusy(''); }
+    openArtifactInCanvas(artifact);
   };
 
   // persist model edits made from the canvas
@@ -1751,6 +1752,15 @@ ${content.slice(0, 8000)}`;
   const canvasMarkdown = useMemo(
     () => (canvasRec ? artifactToMarkdown(canvasRec) : ''),
     [canvasRec],
+  );
+  // V25: open a generated process artifact in the canvas (the single export
+  // surface). A GeneratedArtifact already matches `ArtifactLike`, so the SAME
+  // artifactToMarkdown bridge feeds DocumentCanvas — no separate exporter. We
+  // clear any open library record so only one canvas overlay shows at a time.
+  const openArtifactInCanvas = (art: GeneratedArtifact) => { setCanvasRec(null); setCanvasArt(art); };
+  const canvasArtMarkdown = useMemo(
+    () => (canvasArt ? artifactToMarkdown(canvasArt) : ''),
+    [canvasArt],
   );
   // Persist the live canvas edits onto the record so they survive reload + flow
   // into a client share. Guarded against the Firestore ~1MiB document limit (a
@@ -2294,9 +2304,7 @@ ${content.slice(0, 8000)}`;
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className={`w-4 h-4 inline-block me-1 ${ar ? '' : 'rotate-180'}`}><polyline points="9 18 15 12 9 6"/></svg>{t('رجوع', 'Back')}
               </button>
             )}
-            <button onClick={onBack} className="hw-btn hw-btn-sm hw-btn-ghost whitespace-nowrap">
-              {ar ? '→' : '←'} {t('بوابة الإدارة', 'Admin Hub')}
-            </button>
+            <BackButton onClick={onBack} ar={ar} label={t('بوابة الإدارة', 'Admin Hub')} />
           </div>
         </div>
         {/* pill stage nav */}
@@ -2881,9 +2889,9 @@ ${content.slice(0, 8000)}`;
                   {surveyBusy ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin inline-block me-1"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('يولّد التقرير…', 'Generating…')}</> : latestDiagnostic ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>{t('إعادة توليد التقرير', 'Regenerate report')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>{t('توليد تقرير الواقع الراهن', 'Generate diagnostic')}</>}
                 </button>
                 {latestDiagnostic?.reportData && (
-                  <button onClick={exportDiagnosticPdf} disabled={surveyBusy} className="hw-btn hw-btn-ghost whitespace-nowrap"
-                    title={t('تصدير التقرير PDF مرتّب بهوية الشركة (الشعار + الاسم)', 'Export an organized PDF with the company identity (logo + name)')}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{t('تصدير PDF بالهوية', 'Export branded PDF')}
+                  <button onClick={openDiagnosticInCanvas} disabled={surveyBusy} className="hw-btn hw-btn-ghost whitespace-nowrap"
+                    title={t('افتح التقرير في الكانفس: حرّره وصدّره (Word / PDF / PowerPoint / Excel) بهوية الشركة', 'Open the report in the canvas: edit and export it (Word / PDF / PowerPoint / Excel) with the company identity')}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('افتح في الكانفس', 'Open in canvas')}
                   </button>
                 )}
                 {chunkCount === 0 && !model && <span className="text-xs text-amber-600 self-center">{t('افهرس المصادر أولاً من مرحلة المدخلات.', 'Index sources first from the Inputs stage.')}</span>}
@@ -3003,6 +3011,12 @@ ${content.slice(0, 8000)}`;
                 <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-4">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
+                      {/* V23 — a consistent way back out of the open live-canvas sub-view, near its heading. */}
+                      {modelCanvas && (
+                        <div className="mb-2">
+                          <BackButton onClick={() => setModelCanvas(false)} ar={ar} titleLabel={t('إغلاق محرّر الهيكل', 'Close structure editor')} />
+                        </div>
+                      )}
                       <div className="font-bold text-emerald-800 dark:text-emerald-200 text-sm flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>{t('تحرير الهيكل (كانفاس حي)', 'Edit structure (live canvas)')}</div>
                       <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('أضِف وحدة/دور، أعد التسمية، احذف، اربط بالسحب، أو رتّب تلقائيًا — كل تعديل يُحفظ في النموذج فورًا.', 'Add a unit/role, rename, delete, drag-connect, or auto-layout — every edit saves to the model instantly.')}</div>
                     </div>
@@ -3350,6 +3364,8 @@ ${content.slice(0, 8000)}`;
               {activeDiag && (
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center gap-2">
+                    {/* V23 — exit the open diagram back to the diagram gallery. */}
+                    <BackButton onClick={() => setActiveDiag(null)} ar={ar} titleLabel={t('رجوع إلى المخططات', 'Back to diagrams')} />
                     <h3 className="font-black text-slate-800">{activeDiag.title}</h3>
                     {activeDiag.kind !== 'swimlane' && (
                       <div className="ms-auto flex gap-1 bg-slate-200 rounded-xl p-1">
@@ -3536,7 +3552,8 @@ ${content.slice(0, 8000)}`;
                         const sel = createSel[d.key] || { on: false, pages: d.defaultPages };
                         const isRec = recs.some(r => r.key === d.key);
                         return (
-                          <div key={d.key} className={`flex items-center gap-2.5 rounded-xl border p-2.5 transition-all ${sel.on ? 'border-emerald-400 bg-white dark:bg-slate-800 shadow-sm' : 'border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/40'}`}>
+                          <div key={d.key} className={`rounded-xl border p-2.5 transition-all ${sel.on ? 'border-emerald-400 bg-white dark:bg-slate-800 shadow-sm' : 'border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/40'}`}>
+                            <div className="flex items-center gap-2.5">
                             <label className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
                               <input type="checkbox" checked={sel.on}
                                 onChange={e => setCreateSel(prev => ({ ...prev, [d.key]: { ...sel, on: e.target.checked } }))}
@@ -3551,6 +3568,16 @@ ${content.slice(0, 8000)}`;
                                 onChange={e => setCreateSel(prev => ({ ...prev, [d.key]: { ...sel, pages: Math.max(1, Math.min(100, parseInt(e.target.value) || 1)) } }))}
                                 className="w-14 px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-sm text-center font-bold" />
                             </div>
+                            </div>
+                            {/* V24: per-document AI guidance — only for selected rows; woven into THIS doc's generation prompt */}
+                            {sel.on && (
+                              <textarea
+                                value={docGuidance[d.key] || ''}
+                                onChange={e => setDocGuidance(prev => ({ ...prev, [d.key]: e.target.value }))}
+                                rows={2}
+                                placeholder={t('إرشادات للذكاء الاصطناعي لتوليد هذه الوثيقة (اختياري)…', 'AI guidance for generating this document (optional)…')}
+                                className="mt-2 w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-[12px] resize-none" />
+                            )}
                           </div>
                         );
                       })}
@@ -3799,31 +3826,22 @@ ${content.slice(0, 8000)}`;
                         <div className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> {t('ميثاق الحوكمة', 'Charter')}</div>
                         <div className="text-[11px] text-slate-500 mb-2 flex-1">{t('الأهداف والنطاق والرعاة — مولّد من النموذج.', 'Objectives, scope, sponsors — from the model.')}</div>
                         {!charterArt ? (
-                          <button onClick={genCharter} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>{t('توليد', 'Generate')}</button>
+                          <button onClick={genCharter} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>{t('توليد وفتح في الكانفس', 'Generate & open in canvas')}</button>
                         ) : (
-                          <div className="flex gap-1.5">
-                            <button onClick={() => exportArt(charterArt, 'docx')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">Word</button>
-                            <button onClick={() => exportArt(charterArt, 'pdf')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">PDF</button>
-                          </div>
+                          <button onClick={() => openArtifactInCanvas(charterArt)} disabled={!!busy} title={t('افتح الميثاق في الكانفس للتحرير والتصدير (Word / PDF / PowerPoint / Excel)', 'Open the charter in the canvas to edit and export (Word / PDF / PowerPoint / Excel)')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center justify-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('افتح في الكانفس', 'Open in canvas')}</button>
                         )}
                       </div>
                       {/* Risk register */}
                       <div className="rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-3 flex flex-col">
                         <div className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> {t('سجل المخاطر', 'Risk register')}</div>
                         <div className="text-[11px] text-slate-500 mb-2 flex-1">{t(`مشتق من ${(model.gaps||[]).length} فجوة — احتمال/أثر/تخفيف/مالك.`, `From ${(model.gaps||[]).length} gaps — likelihood/impact/owner.`)}</div>
-                        {riskArt && <div className="flex gap-1.5">
-                          <button onClick={() => exportArt(riskArt, 'docx')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">Word</button>
-                          <button onClick={() => exportArt(riskArt, 'pdf')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">PDF</button>
-                        </div>}
+                        {riskArt && <button onClick={() => openArtifactInCanvas(riskArt)} disabled={!!busy} title={t('افتح سجل المخاطر في الكانفس للتحرير والتصدير (Word / PDF / PowerPoint / Excel)', 'Open the risk register in the canvas to edit and export (Word / PDF / PowerPoint / Excel)')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center justify-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('افتح في الكانفس', 'Open in canvas')}</button>}
                       </div>
                       {/* Roadmap */}
                       <div className="rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-3 flex flex-col">
                         <div className="font-bold text-slate-800 dark:text-slate-100 text-sm mb-1 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg> {t('خارطة الطريق', 'Roadmap')}</div>
                         <div className="text-[11px] text-slate-500 mb-2 flex-1">{t('معالجة الفجوات على 3 مراحل زمنية.', 'Gaps across 3 time horizons.')}</div>
-                        {roadmapArt && <div className="flex gap-1.5">
-                          <button onClick={() => exportArt(roadmapArt, 'docx')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">Word</button>
-                          <button onClick={() => exportArt(roadmapArt, 'pdf')} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex-1">PDF</button>
-                        </div>}
+                        {roadmapArt && <button onClick={() => openArtifactInCanvas(roadmapArt)} disabled={!!busy} title={t('افتح خارطة الطريق في الكانفس للتحرير والتصدير (Word / PDF / PowerPoint / Excel)', 'Open the roadmap in the canvas to edit and export (Word / PDF / PowerPoint / Excel)')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center justify-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('افتح في الكانفس', 'Open in canvas')}</button>}
                       </div>
                     </div>
                     {!modelApproved && (
@@ -4035,6 +4053,10 @@ ${content.slice(0, 8000)}`;
               </button>
               {showRefForm && (
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 space-y-2">
+                  {/* V23 — a clear رجوع out of the manual-reference form (besides the toggle text above). */}
+                  <div>
+                    <BackButton onClick={() => setShowRefForm(false)} ar={ar} titleLabel={t('إغلاق نموذج المرجع', 'Close reference form')} />
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <input value={rp.name} onChange={e => setRp({ ...rp, name: e.target.value })} placeholder={t('اسم المشروع/الشركة', 'Project/company name')} className="hw-input text-sm" />
                     <input value={rp.sector} onChange={e => setRp({ ...rp, sector: e.target.value })} placeholder={t('القطاع', 'Sector')} className="hw-input text-sm" />
@@ -4180,8 +4202,10 @@ ${content.slice(0, 8000)}`;
                               </div>
                               <div className="flex flex-wrap gap-1 mt-2">
                                 <button onClick={() => reopenDoc(d)} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>{t('استعراض/تحرير', 'Preview/edit')}</button>
-                                <button onClick={() => { setCanvasPanelOpen(false); setCanvasRec(d); }} title={t('افتح المستند في الكانفس: حرّر، احفظ، وشارك رابطاً للعميل، وطبّق تعليقات المراجعة', 'Open in the canvas: edit, save, share a client link, and apply review comments')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('الكانفس ومشاركة العميل', 'Canvas & client share')}</button>
-                                <button onClick={() => handleBatchExport([d], d.title)} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('تصدير', 'Export')}</button>
+                                <button onClick={() => { setCanvasPanelOpen(false); setCanvasRec(d); }} title={t('افتح المستند في الكانفس: حرّر، احفظ، صدّر (Word / PDF / PowerPoint / Excel)، وشارك رابطاً للعميل، وطبّق تعليقات المراجعة', 'Open in the canvas: edit, save, export (Word / PDF / PowerPoint / Excel), share a client link, and apply review comments')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('الكانفس ومشاركة العميل', 'Canvas & client share')}</button>
+                                {/* V25: the redundant per-doc «تصدير» button was removed — the canvas
+                                    above is the single export surface (Word/PDF/PPTX/Excel). Bulk
+                                    «تصدير المجلد» / «تصدير الكل» remain for whole-folder batches. */}
                                 {d.status !== 'in_review' && <button onClick={() => setDocStatus(d, 'in_review')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('للمراجعة', 'To review')}</button>}
                                 {d.status !== 'approved' && <button onClick={() => setDocStatus(d, 'approved')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد', 'Approve')}</button>}
                                 {d.comments && d.comments.length > 0 && <button onClick={() => { setCanvasPanelOpen(true); setCanvasRec(d); }} title={t('استعراض تعليقات المراجعة في الكانفس', 'View the review comments in the canvas')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('التعليقات', 'Comments')} ({d.comments.length})</button>}
@@ -4327,6 +4351,23 @@ ${content.slice(0, 8000)}`;
           commentsOpenByDefault={canvasPanelOpen}
           onShareReview={() => mintReviewLink(canvasRec)}
           onApplyComments={async () => { const nx = await newDocVersion(canvasRec); setCanvasRec(nx); }}
+        />
+      )}
+
+      {/* V25 — a generated process artifact (charter / risk register / roadmap /
+          current-state report) open in the SAME canvas. These aren't library
+          records, so there's no save/share/comments — just the canvas's
+          Word/PDF/PPTX/Excel export suite. Gated on `!canvasRec` so a library
+          record always takes precedence (never two overlapping overlays). */}
+      {canvasArt && !canvasRec && (
+        <DocumentCanvas
+          markdown={canvasArtMarkdown}
+          title={canvasArt.title}
+          language={language}
+          subtitle={canvasArt.goal || t('وثيقة حوكمة', 'Governance document')}
+          brand={companyName ? `${companyName} · AILIGENT` : 'AILIGENT'}
+          date={t('بتاريخ ', 'Dated ') + new Date().toLocaleDateString(ar ? 'ar-EG' : 'en-GB')}
+          onClose={() => setCanvasArt(null)}
         />
       )}
     </div>

@@ -14,6 +14,7 @@
 // ===========================================================================
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Language, GovComment } from '../types';
+import BackButton from './BackButton';
 import { mermaidToSvg, makeSvgResponsive, diagramFallbackHtml } from '../services/diagramService';
 import {
   buildCanvasHtml, extractDocSpec, markdownToDocSpec, canvasHtmlToMarkdown,
@@ -613,6 +614,11 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       {/* Header */}
       <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-[var(--hw-border)] shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
+          {/* V23 — a clear, labelled way back out of the full-screen canvas (the corner
+              ✕ stays as the conventional overlay-close; this is the consistent رجوع). */}
+          {onClose && (
+            <BackButton onClick={onClose} ar={ar} titleLabel={t('إغلاق', 'Close')} />
+          )}
           <span className="dc-spark text-[var(--hw-brand,#11a8bc)]"><IcSpark /></span>
           <div className="flex flex-col min-w-0">
             <span className="text-[14.5px] font-bold text-slate-900 dark:text-slate-100 truncate">{docTitle}</span>
