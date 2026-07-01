@@ -15,6 +15,9 @@ import {
   MatchQualityChart,
   EngagementChart,
   CompetencyBullets,
+  TalentCompositionRing,
+  ActivityHeatmap,
+  ActivityTimeline,
 } from './dashboard/DashboardCharts';
 import {
   computeKpis,
@@ -22,6 +25,9 @@ import {
   computeScoreBuckets,
   buildWeeklyEngagement,
   riasecValue,
+  computeTalentComposition,
+  buildActivityHeatmap,
+  buildActivityTimeline,
 } from './dashboard/dashboardData';
 
 const ARABIC_FONTS = [
@@ -1124,6 +1130,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           const riasecData = computeRiasec(allAssessments);
           const scoreBuckets = computeScoreBuckets(allAssessments);
           const weeklyEngagement = buildWeeklyEngagement(allAssessments, logins);
+          const talentComposition = computeTalentComposition(allAssessments);
+          const activityHeatmap = buildActivityHeatmap(allAssessments, logins);
+          const activityTimeline = buildActivityTimeline(allAssessments, logins, consultationRequests);
 
           // Share/Clipboard generation summary for beneficiary
           const handleCopyAuditSummary = () => {
@@ -1159,6 +1168,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <RiasecBarChart data={riasecData} language={language} />
                 <MatchQualityChart buckets={scoreBuckets} language={language} />
+                <TalentCompositionRing composition={talentComposition} language={language} />
                 <EngagementChart data={weeklyEngagement} language={language} />
               </div>
 
@@ -1182,6 +1192,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                     { ar: 'التمكن الإحصائي والتحليلي للممارسات والبيانات', en: 'Data-driven Operational Diagnostics', value: 55, target: 75 },
                   ]}
                 />
+              </div>
+
+              {/* Temporal activity — heatmap (12-week) + recent-events timeline. */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <ActivityHeatmap data={activityHeatmap} language={language} />
+                <ActivityTimeline events={activityTimeline} language={language} />
               </div>
 
               {/* Bottom Executive Share Box */}
