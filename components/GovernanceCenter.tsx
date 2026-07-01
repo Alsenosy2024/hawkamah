@@ -36,7 +36,7 @@ import {
   GovernanceDocument, type BulkScope,
 } from '../services/governanceEngine';
 import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout, resolveOrgChartMermaid } from '../services/diagramService';
-import { exportDocx, exportPdfViaPrint, exportGovernanceManual, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual, exportArtifactsBatch, exportArtifactsZip, type BatchFormat, type BatchMode } from '../services/exportService';
+import { exportGovernanceManual, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual, exportArtifactsBatch, exportArtifactsZip, type BatchFormat, type BatchMode } from '../services/exportService';
 import { generateJson } from '../services/agentOrchestrator';
 import { GOV_DOC_CATALOG, CATALOG_CATEGORIES, recommendDocuments, type DocCatalogEntry } from '../services/governanceDocCatalog';
 import { analyzeIntegrity, maturity as computeMaturity, coverageMatrix, mergeModels, traceEntity } from '../services/governanceValidation';
@@ -1077,6 +1077,11 @@ ${content.slice(0, 8000)}`;
         onSection: (s) => pushSection(s),
       });
       setGenDoc(doc);
+      // V32 — the generated custom doc opens in the canvas (the single export surface):
+      // the owner reviews/edits and exports Word/PDF/PPTX/Excel from there instead of the
+      // old direct Word/PDF buttons. GovernanceDocument extends GeneratedArtifact, so it
+      // feeds openArtifactInCanvas directly. Save-to-library stays a separate action.
+      openArtifactInCanvas(doc);
     } catch (e: any) {
       alertMsg(t('فشل التوليد: ', 'Generation failed: ') + (e?.message || e));
     } finally { setGenerating(false); }
@@ -1449,23 +1454,9 @@ ${content.slice(0, 8000)}`;
     handleModelCanvasChange({ ...model, orgUnits: [...model.orgUnits, ...newUnits] });
   };
 
-  const handleExport = async (fmt: 'docx' | 'pdf') => {
-    if (!genDoc) return;
-    const opts = { language, companyName, logoUrl: settings.logoUrl } as any;
-    try {
-      // embed diagrams (PNG) into the exported artifact
-      let toExport = genDoc;
-      if (diagrams.length && !genDoc.diagrams?.length) {
-        setBusy(t('تجهيز الرسومات للتصدير', 'Rendering diagrams for export'));
-        const imgs = await diagramsToImages(diagrams.map(d => ({ title: d.title, mermaid: d.mermaid, swimlane: d.swimlane })));
-        toExport = { ...genDoc, diagrams: imgs };
-        setGenDoc(toExport);
-        setBusy('');
-      }
-      if (fmt === 'docx') await exportDocx(toExport, opts);
-      else exportPdfViaPrint(toExport, opts);
-    } catch (e: any) { setBusy(''); alertMsg(t('فشل التصدير: ', 'Export failed: ') + (e?.message || e)); }
-  };
+  // V32 — the custom-doc view no longer exports directly; the generated doc opens in
+  // DocumentCanvas (via openArtifactInCanvas), which owns the full Word/PDF/PPTX/Excel
+  // export suite. The old handleExport (direct exportDocx / exportPdfViaPrint) was removed.
 
   // V25 — open the current-state diagnostic in the canvas (the single export
   // surface). Builds the SAME GeneratedArtifact AST from reportData, then opens
@@ -3680,8 +3671,10 @@ ${content.slice(0, 8000)}`;
                     )}
                     {genDoc && (
                       <>
-                        <button onClick={() => handleExport('docx')} className="hw-btn hw-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Word</button>
-                        <button onClick={() => handleExport('pdf')} className="hw-btn hw-btn-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> PDF</button>
+                        {/* V32 — the canvas is the single export surface. Open the generated
+                            doc there (edit + Word / PDF / PowerPoint / Excel) instead of the old
+                            direct Word/PDF buttons. Save-to-library below stays as-is. */}
+                        <button onClick={() => openArtifactInCanvas(genDoc)} title={t('افتح الوثيقة في الكانفس للتحرير والتصدير (Word / PDF / PowerPoint / Excel)', 'Open the document in the canvas to edit and export (Word / PDF / PowerPoint / Excel)')} className="hw-btn hw-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('افتح في الكانفس', 'Open in canvas')}</button>
                         <button onClick={handleSaveToLibrary} disabled={!!busy} className="hw-btn hw-btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>{t('حفظ', 'Save')}</button>
                         {(genDoc as any)._gapFix && (
                           <button onClick={approveGapFixToModel} disabled={!!busy} className="hw-btn hw-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد في النموذج', 'Approve to model')}</button>
