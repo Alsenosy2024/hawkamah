@@ -183,13 +183,11 @@ export interface DocumentCanvasProps {
   // "Share" button opens a popover (optional access code + view-only) and the
   // host persists the snapshot, returning the ready-to-send URL.
   onShare?: (html: string, opts: { accessCode?: string; allowComments: boolean }) => Promise<{ url: string }>;
-  // V21 — anchored review comments left by the client on the /?r= review screen.
-  // When supplied, the canvas highlights them in the iframe body and shows a
-  // comments panel; `onShareReview` mints a /?r= reviewer link (the standalone
-  // doc-list share button was removed), and `onApplyComments` AI-applies the open
-  // comments into a new version.
+  // V21 — anchored review comments left by the client (via the /?doc= client
+  // share). When supplied, the canvas highlights them in the iframe body and shows
+  // a comments panel; `onApplyComments` AI-applies the open comments into a new
+  // version.
   comments?: GovComment[];
-  onShareReview?: () => Promise<{ url: string }>;
   onApplyComments?: () => void | Promise<void>;
   commentsOpenByDefault?: boolean;
   // V31 — inline "select text → add a comment" on BOTH surfaces (the owner canvas
@@ -213,7 +211,7 @@ export interface DocumentCanvasHandle {
 const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProps>(function DocumentCanvas({
   markdown, initialHtml, title, subtitle, date, brand, language,
   rootClass = 'fixed inset-0 z-[60]', readOnly = false, onClose, onSave, onAskAi, onShare,
-  comments = [], onShareReview, onApplyComments, commentsOpenByDefault = false,
+  comments = [], onApplyComments, commentsOpenByDefault = false,
   onAddComment, highlightAnchors,
 }, ref) {
   const ar = (language || 'ar') === 'ar';
@@ -239,12 +237,8 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
   const [shareUrl, setShareUrl] = useState('');
   const [shareErr, setShareErr] = useState('');
   const [shareCopied, setShareCopied] = useState(false);
-  // V21 inline-comments panel + reviewer-link share + AI-apply.
+  // V21 inline-comments panel + AI-apply.
   const [panelOpen, setPanelOpen] = useState(commentsOpenByDefault);
-  const [revShareBusy, setRevShareBusy] = useState(false);
-  const [revShareUrl, setRevShareUrl] = useState('');
-  const [revShareCopied, setRevShareCopied] = useState(false);
-  const [revShareErr, setRevShareErr] = useState('');
   const [applyBusy, setApplyBusy] = useState(false);
   // Read the latest comments from inside the (deps-stable) iframe-load callback.
   const commentsRef = useRef<GovComment[]>(comments);
@@ -426,21 +420,6 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
   useEffect(() => {
     applyCommentHighlights(iframeRef.current?.contentDocument);
   }, [comments, highlightAnchors, applyCommentHighlights]);
-
-  // Mint a /?r= reviewer link for this document and copy it to the clipboard.
-  const runShareReview = useCallback(async () => {
-    if (!onShareReview || revShareBusy) return;
-    setRevShareBusy(true); setRevShareErr(''); setRevShareCopied(false);
-    try {
-      const { url } = await onShareReview();
-      setRevShareUrl(url);
-      try { await navigator.clipboard.writeText(url); setRevShareCopied(true); } catch { /* clipboard blocked — link still shown */ }
-    } catch {
-      setRevShareErr(t('تعذّر إنشاء رابط المراجعة.', 'Could not create the review link.'));
-    } finally {
-      setRevShareBusy(false);
-    }
-  }, [onShareReview, revShareBusy, ar]);
 
   // AI-apply the open comments → a new version (host owns the version/history).
   const runApplyComments = useCallback(async () => {
@@ -737,7 +716,7 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          {(comments.length > 0 || onShareReview || onApplyComments) && (
+          {(comments.length > 0 || onApplyComments) && (
             <button type="button" onClick={() => setPanelOpen(o => !o)} aria-pressed={panelOpen}
               className={`hw-btn hw-btn-sm !rounded-full ${panelOpen ? 'hw-btn-primary' : 'hw-btn-subtle'}`}>
               <IcComment />{t('التعليقات', 'Comments')}{comments.length ? ` (${comments.length})` : ''}
@@ -1045,7 +1024,7 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
       )}
 
       {/* V21 — review-comments panel: client's anchored comments (highlighted in
-          the iframe), a "share with client" reviewer link, and the AI-apply action. */}
+          the iframe) and the AI-apply action. */}
       {panelOpen && (
         <div dir={ar ? 'rtl' : 'ltr'} className="absolute inset-y-0 end-0 z-[57] w-[330px] max-w-[88vw] bg-white dark:bg-slate-900 border-s border-[var(--hw-border)] shadow-2xl flex flex-col">
           <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--hw-border)]">
@@ -1061,37 +1040,19 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
             <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 font-bold">{t('مطبّقة', 'Implemented')} {doneCount}</span>
           </div>
 
-          {(onShareReview || onApplyComments) && (
+          {onApplyComments && (
             <div className="px-4 py-3 space-y-2 border-b border-[var(--hw-border)]">
-              {onShareReview && (
-                <div>
-                  <button type="button" onClick={runShareReview} disabled={revShareBusy} className="hw-btn hw-btn-subtle hw-btn-sm !rounded-full w-full justify-center">
-                    {revShareBusy ? <IcSpin /> : <IcShare />}{t('شارك مع العميل للمراجعة', 'Share with client for review')}
-                  </button>
-                  {revShareErr && <p className="text-[11px] text-rose-600 mt-1.5">{revShareErr}</p>}
-                  {revShareUrl && (
-                    <div className="mt-2 flex items-center gap-1.5">
-                      <input readOnly value={revShareUrl} onFocus={e => e.currentTarget.select()}
-                        className="flex-1 min-w-0 text-[11px] rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-2 py-1.5 text-slate-600 dark:text-slate-300" />
-                      <button type="button" title={t('نسخ', 'Copy')} onClick={async () => { try { await navigator.clipboard.writeText(revShareUrl); setRevShareCopied(true); } catch { /* noop */ } }} className="gc-icon-btn shrink-0"><IcCopy /></button>
-                    </div>
-                  )}
-                  {revShareCopied && <p className="text-[11px] text-emerald-600 mt-1">{t('نُسخ الرابط ✅', 'Link copied ✅')}</p>}
-                </div>
-              )}
-              {onApplyComments && (
-                <button type="button" onClick={runApplyComments} disabled={applyBusy || openCount === 0}
-                  title={t('طبّق التعليقات المفتوحة بالذكاء الاصطناعي → إصدار جديد', 'AI-apply the open comments → a new version')}
-                  className="hw-btn hw-btn-primary hw-btn-sm !rounded-full w-full justify-center disabled:opacity-50">
-                  {applyBusy ? <IcSpin /> : <IcSpark />}{t('مراجعة وتطبيق التعليقات (AI)', 'Review & apply comments (AI)')}
-                </button>
-              )}
+              <button type="button" onClick={runApplyComments} disabled={applyBusy || openCount === 0}
+                title={t('طبّق التعليقات المفتوحة بالذكاء الاصطناعي → إصدار جديد', 'AI-apply the open comments → a new version')}
+                className="hw-btn hw-btn-primary hw-btn-sm !rounded-full w-full justify-center disabled:opacity-50">
+                {applyBusy ? <IcSpin /> : <IcSpark />}{t('مراجعة وتطبيق التعليقات (AI)', 'Review & apply comments (AI)')}
+              </button>
             </div>
           )}
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {comments.length === 0 && (
-              <p className="text-[12px] text-slate-400 px-1">{t('لا توجد تعليقات بعد. شارك رابط المراجعة مع العميل لجمع الملاحظات.', 'No comments yet. Share the review link with the client to collect feedback.')}</p>
+              <p className="text-[12px] text-slate-400 px-1">{t('لا توجد تعليقات بعد. شارك المستند مع العميل لجمع الملاحظات.', 'No comments yet. Share the document with the client to collect feedback.')}</p>
             )}
             {comments.map(c => (
               <button key={c.id} type="button" onClick={() => c.anchor && focusComment(c.id)}

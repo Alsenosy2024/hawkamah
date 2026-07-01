@@ -26,7 +26,6 @@ import {
   saveGovDocument, loadGovDocuments, deleteGovDocument,
   saveSnapshot, loadSnapshots, deleteSnapshot,
 } from '../services/governanceService';
-import { createReviewerToken } from '../services/reviewerTokenService';
 import { createSharedDoc, loadTenantDocComments, snapshotByteLength } from '../services/sharedDocService';
 import { artifactToMarkdown } from '../services/canvasDocument';
 import DocumentCanvas from './DocumentCanvas';
@@ -1752,13 +1751,6 @@ ${content.slice(0, 8000)}`;
       ? t(`أُصدرت النسخة v${next.version} بعد تطبيق التعليقات بالذكاء الاصطناعي وأُعيدت للمراجعة؛ حُفظت النسخة السابقة.`, `Released v${next.version} with the comments AI-applied and re-shared; the prior version is kept.`)
       : t(`أُصدرت النسخة v${next.version} وأُعيدت للمراجعة؛ حُفظت النسخة السابقة.`, `Released v${next.version} and re-shared; the prior version is kept.`));
     return next;
-  };
-  // V21: mint a /?r= reviewer link for a document (used by the canvas's
-  // "Share with client for review" affordance — the standalone doc-list share
-  // button was removed). The canvas copies the URL to the clipboard and shows it.
-  const mintReviewLink = async (d: GovDocumentRecord): Promise<{ url: string }> => {
-    const { url } = await createReviewerToken(tenantId, d.id, d.title, auth.currentUser?.email || undefined);
-    return { url };
   };
 
   // ---- V14: open a stored document in the FUNCTIONAL editable canvas ----
@@ -4394,7 +4386,6 @@ ${content.slice(0, 8000)}`;
           comments={canvasRec.comments || []}
           commentsOpenByDefault={canvasPanelOpen}
           onAddComment={addCanvasComment}
-          onShareReview={() => mintReviewLink(canvasRec)}
           onApplyComments={async () => { const nx = await newDocVersion(canvasRec); setCanvasRec(nx); }}
         />
       )}
