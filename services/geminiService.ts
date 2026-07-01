@@ -121,6 +121,107 @@ export const transcribeAudio = async (
     return responseText(response);
 };
 
+// ── Natural-language Mermaid editor (multimodal) ───────────────────────────
+// Powers the structure editor's "edit the diagram by chatting" surface. Given the
+// CURRENT mermaid (may be empty), an Arabic/English instruction, and optional
+// reference images/PDFs, returns the FULL updated Mermaid code. When `validate`
+// is supplied it runs a parse → repair loop so an un-renderable generation is
+// corrected (or rejected) before it ever reaches the canvas.
+
+// Resilient PLAIN-TEXT generation — mirror of generateJsonResilient but no JSON
+// schema (we want raw Mermaid, not a wrapped object), with the same fast→robust
+// model ladder + backoff so a 503/overload blip self-heals.
+async function generateTextResilient(contents: any, signal?: AbortSignal): Promise<string> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+    const ladder = [
+        { model: MODELS.TEXT,          config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },     ms: 70_000 },
+        { model: MODELS.TEXT,          config: { thinkingConfig: { thinkingLevel: ThinkingLevel.MINIMAL } }, ms: 50_000 },
+        { model: MODELS.TEXT_FALLBACK, config: { thinkingConfig: { thinkingBudget: 0 } },                    ms: 45_000 },
+    ];
+    let lastErr: any;
+    for (let i = 0; i < ladder.length; i++) {
+        try {
+            const r = await withTimeout(
+                ai.models.generateContent({ model: ladder[i].model, contents, config: ladder[i].config }),
+                ladder[i].ms, signal,
+            );
+            const txt = responseText(r);
+            if (txt) return txt;
+            lastErr = new Error('empty model response');
+        } catch (e) {
+            if (signal?.aborted) throw e;
+            lastErr = e;
+            const timedOut = /timeout|timed out/i.test(String((e as any)?.message || ''));
+            if (!isRetryableError(e) && !timedOut) throw e;            // hard client error → don't retry
+        }
+        if (i < ladder.length - 1) await sleep(Math.min(1000 * 2 ** i + Math.random() * 1000, 8_000));
+    }
+    throw lastErr;
+}
+
+const stripMermaidFences = (s: string): string =>
+    (s || '').trim().replace(/^```(?:mermaid|mmd)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+
+export interface MermaidAttachment { data: string; mimeType: string; name?: string }
+
+export const editMermaidWithAI = async (
+    currentMermaid: string,
+    instruction: string,
+    opts: {
+        attachments?: MermaidAttachment[];
+        language?: Language;
+        validate?: (code: string) => Promise<string | null>;   // injected (mermaid.parse) → avoids pulling mermaid into this module
+        signal?: AbortSignal;
+    } = {},
+): Promise<string> => {
+    const ar = opts.language !== 'en';
+    const atts = opts.attachments || [];
+    const sys = [
+        'You are a Mermaid.js v11 diagram editor for an Arabic-first corporate-governance ("الحوكمة") app.',
+        'You receive the CURRENT Mermaid code (possibly empty) and an instruction, optionally with reference images or files.',
+        'Return ONLY the COMPLETE updated Mermaid code — no markdown fences, no prose, no explanation, no commentary.',
+        'Keep the SAME diagram type as the current code UNLESS the instruction explicitly asks to change it. If the current code is empty, pick the most fitting type (default to "flowchart TD" for an organisational structure / hierarchy).',
+        'The output MUST be valid Mermaid v11 that renders without errors.',
+        'Node IDs must be ASCII alphanumeric (n1, n2, …) and never reserved words. Labels may be Arabic.',
+        ar ? 'Write node labels in Arabic. In flowcharts wrap any label that has spaces/punctuation in double quotes: n1["نص العقدة"].'
+           : 'Write node labels in English. In flowcharts wrap any label that has spaces/punctuation in double quotes: n1["the label"].',
+        'NEVER put a double-quote character inside a label (use a single quote). NEVER use <br/> inside a label.',
+        'Preserve the existing nodes, edges and structure that the instruction does NOT ask to change — apply ONLY the requested edit.',
+        atts.length ? 'When reference images/files are provided, read their structure/text faithfully and reflect it in the diagram.' : '',
+    ].filter(Boolean).join(' ');
+
+    const promptText = [
+        'CURRENT MERMAID:',
+        currentMermaid && currentMermaid.trim() ? currentMermaid.trim() : '(empty — create a new diagram from scratch)',
+        '',
+        `INSTRUCTION (${ar ? 'Arabic' : 'English'}):`,
+        instruction.trim() || (ar ? 'حسِّن المخطط واجعله أوضح.' : 'Improve and clarify the diagram.'),
+        '',
+        'Return ONLY the full updated Mermaid code.',
+    ].join('\n');
+
+    const buildContents = (extra: string) => ({
+        parts: [
+            { text: sys + '\n\n' + promptText + extra },
+            ...atts.map(a => ({ inlineData: { data: a.data, mimeType: a.mimeType } })),
+        ],
+    });
+
+    const MAX_TRIES = opts.validate ? 2 : 1;
+    let lastErr = '';
+    for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+        const extra = attempt === 0 ? '' :
+            `\n\nYour previous Mermaid output FAILED to parse with this error:\n${lastErr}\nReturn corrected, VALID Mermaid only.`;
+        const code = stripMermaidFences(await generateTextResilient(buildContents(extra), opts.signal));
+        if (!code) { lastErr = 'empty diagram'; continue; }
+        if (!opts.validate) return code;
+        const err = await opts.validate(code);
+        if (!err) return code;
+        lastErr = err;
+    }
+    throw new Error(`INVALID_MERMAID: ${lastErr || 'could not produce a valid diagram'}`);
+};
+
 // ── Web-grounded document generation (the "google skill") ──────────────────
 // Creates a full Markdown document grounded in BOTH the user's uploaded files
 // (fileContext) and LIVE Google Search — for documents that need current or

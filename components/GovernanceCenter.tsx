@@ -35,7 +35,7 @@ import {
   industryLens, referenceProjectsBlock,
   GovernanceDocument, type BulkScope,
 } from '../services/governanceEngine';
-import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout } from '../services/diagramService';
+import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout, resolveOrgChartMermaid } from '../services/diagramService';
 import { exportDocx, exportPdfViaPrint, exportGovernanceManual, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual, exportArtifactsBatch, exportArtifactsZip, type BatchFormat, type BatchMode } from '../services/exportService';
 import { generateJson } from '../services/agentOrchestrator';
 import { GOV_DOC_CATALOG, CATALOG_CATEGORIES, recommendDocuments, type DocCatalogEntry } from '../services/governanceDocCatalog';
@@ -53,6 +53,7 @@ import MermaidView from './MermaidView';
 import SwimlaneView from './SwimlaneView';
 import { generateSwimlane } from '../services/swimlaneService';
 import GovernanceCanvas from './GovernanceCanvas';
+import DiagramChatEditor from './DiagramChatEditor';
 import GovCopilot from './GovCopilot';
 import ProjectsStage from './ProjectsStage';
 import DepartmentBuilder from './DepartmentBuilder';
@@ -497,6 +498,8 @@ ${content.slice(0, 8000)}`;
   const [modelCanvas, setModelCanvas] = useState(false);
   const [modelCanvasNodes, setModelCanvasNodes] = useState<any[]>([]);
   const [modelCanvasEdges, setModelCanvasEdges] = useState<any[]>([]);
+  // V29 — reflects the async persist of an AI-edited org-chart override into the model.
+  const [savingOrgChart, setSavingOrgChart] = useState(false);
   // HWK-D2: in-app comment composer (replaces window.prompt); tracks which doc's box is open + its draft.
   // V21: when the canvas is opened from the read-only «تعليق (N)» count, open it
   // straight to the review-comments panel.
@@ -1015,7 +1018,11 @@ ${content.slice(0, 8000)}`;
         diag = { id: uid('diag'), tenantId, kind, title: spec.title + focusLabel, mermaid: '', swimlane: spec, updatedAt: Date.now() };
       } else {
         const { title, mermaid } = await generateMermaid(model, kind, { language: ar ? 'ar' : 'en', focus, signal: ac.signal });
-        diag = { id: uid('diag'), tenantId, kind, title: title + focusLabel, mermaid, updatedAt: Date.now() };
+        // V29 — a saved org-chart snapshot (shown in the diagrams library & embedded into the
+        // DOCX/PDF export) must reflect the owner's override when present, not only the
+        // deterministic chart. Other kinds keep the freshly generated Mermaid untouched.
+        const resolved = kind === 'orgchart' ? resolveOrgChartMermaid(model) : mermaid;
+        diag = { id: uid('diag'), tenantId, kind, title: title + focusLabel, mermaid: resolved, updatedAt: Date.now() };
       }
       setActiveDiag(diag);
       try { await saveDiagram(diag); await loadAll(); } catch { /* Firestore optional in dev */ }
@@ -1508,6 +1515,23 @@ ${content.slice(0, 8000)}`;
     if (model) reconcileUnitTombstones(model, m); // FE-2: track unit deletions / re-adds
     setModel(m);
     try { await saveModel(m); } catch (e) { console.warn('model save failed', e); }
+  };
+
+  // V29 — the NL diagram editor commits the full Mermaid on every edit/undo. Persist it
+  // as an OVERRIDE on the model (same writeback path as the tree) so it survives re-render
+  // and reload; resolveOrgChartMermaid then prefers it over the deterministic chart.
+  const persistOrgChartOverride = async (mermaid: string) => {
+    if (!model) return;
+    setSavingOrgChart(true);
+    try { await handleModelCanvasChange({ ...model, orgChartMermaid: mermaid }); }
+    finally { setSavingOrgChart(false); }
+  };
+  // Clear the override → the chart re-derives deterministically from model.orgUnits.
+  const regenerateOrgChartFromStructure = async () => {
+    if (!model || !model.orgChartMermaid) return;
+    if (!(await toast.confirm(t('إعادة التوليد من الهيكل ستتجاهل تعديلاتك اليدوية على المخطط وتعيد اشتقاقه من الوحدات التنظيمية. متابعة؟', 'Regenerating from structure discards your manual chart edits and re-derives it from the org units. Continue?'), { danger: true }))) return;
+    const { orgChartMermaid: _dropped, ...rest } = model;
+    await handleModelCanvasChange(rest as CompanyGovernanceModel);
   };
   // HWK-B2: inline org-unit edits directly on the tree, persisted via the same writeback path.
   // Add/rename are pure; delete is offered ONLY for a leaf unit with no attached roles (the tree
@@ -3004,27 +3028,30 @@ ${content.slice(0, 8000)}`;
                 {chunkCount === 0 && !model && <span className="text-xs text-amber-600 self-center">{t('افهرس المصادر أولاً من مرحلة المدخلات.', 'Index sources first from the Inputs stage.')}</span>}
               </div>
 
-              {/* B — editable live canvas: the owner can add/rename/delete units &
-                  roles, draw connections, or auto-layout — every edit writes back to
-                  the real model. "أرسم بنفسي" + "أعدّل عليه" live here. */}
+              {/* B — V29: the org chart is now edited by CHATTING in natural language (move a
+                  unit under the CEO, rename, attach an image/PDF of an org chart to rebuild from)
+                  via DiagramChatEditor. Each AI edit commits the full Mermaid, persisted as an
+                  override on the model; «إعادة التوليد من الهيكل» clears it back to the
+                  deterministic chart derived from the org units. */}
               {model && (
                 <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-4">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
-                      {/* V23 — a consistent way back out of the open live-canvas sub-view, near its heading. */}
+                      {/* V23 — a consistent way back out of the open editor sub-view, near its heading. */}
                       {modelCanvas && (
                         <div className="mb-2">
-                          <BackButton onClick={() => setModelCanvas(false)} ar={ar} titleLabel={t('إغلاق محرّر الهيكل', 'Close structure editor')} />
+                          <BackButton onClick={() => setModelCanvas(false)} ar={ar} titleLabel={t('إغلاق محرّر المخطط', 'Close chart editor')} />
                         </div>
                       )}
-                      <div className="font-bold text-emerald-800 dark:text-emerald-200 text-sm flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>{t('تحرير الهيكل (كانفاس حي)', 'Edit structure (live canvas)')}</div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('أضِف وحدة/دور، أعد التسمية، احذف، اربط بالسحب، أو رتّب تلقائيًا — كل تعديل يُحفظ في النموذج فورًا.', 'Add a unit/role, rename, delete, drag-connect, or auto-layout — every edit saves to the model instantly.')}</div>
+                      <div className="font-bold text-emerald-800 dark:text-emerald-200 text-sm flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>{t('تحرير المخطط بالكلام', 'Edit the chart by chatting')}</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('عدّل المخطط بلغة طبيعية (مثال: اجعل إدارة المشاريع تتبع الرئيس)، أو أرفِق صورة/‏PDF لمخطط ليُبنى منه — يُحفظ التعديل فوق المخطط ويُصدَّر معه.', 'Reshape the chart in natural language (e.g. make Projects report to the CEO), or attach an image/PDF of a chart to build from — the edit is saved over the chart and exported with it.')}</div>
                     </div>
                     <div className="flex gap-2 shrink-0">
-                      {modelCanvas && (
-                        <button onClick={handleAutoLayout}
+                      {model.orgChartMermaid && (
+                        <button onClick={regenerateOrgChartFromStructure}
+                          title={t('تجاهل التعديلات اليدوية وأعد اشتقاق المخطط من الوحدات التنظيمية', 'Discard the manual edits and re-derive the chart from the org units')}
                           className="hw-btn hw-btn-sm hw-btn-ghost">
-                          ⊞ {t('ترتيب تلقائي', 'Auto-layout')}
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>{t('إعادة التوليد من الهيكل', 'Regenerate from structure')}
                         </button>
                       )}
                       <button onClick={openModelCanvas}
@@ -3035,12 +3062,12 @@ ${content.slice(0, 8000)}`;
                   </div>
                   {modelCanvas && (
                     <div className="mt-3">
-                      <GovernanceCanvas
+                      <DiagramChatEditor
                         language={language}
-                        initialNodes={modelCanvasNodes}
-                        initialEdges={modelCanvasEdges}
-                        model={model}
-                        onModelChange={handleModelCanvasChange}
+                        initialMermaid={resolveOrgChartMermaid(model)}
+                        title={t('الهيكل التنظيمي', 'Org structure')}
+                        onSave={persistOrgChartOverride}
+                        saving={savingOrgChart}
                       />
                     </div>
                   )}
@@ -3077,9 +3104,20 @@ ${content.slice(0, 8000)}`;
                 </div>
               )}
 
-              {model && activeDiag && activeDiag.kind === 'orgchart' && activeDiag.mermaid && (
+              {/* V29 — the read-only org chart is drawn from the SAME resolved source as the
+                  editor & the export: the AI-edited override when present, else the deterministic
+                  chart derived from the org units. Its built-in SVG/PNG export therefore prefers
+                  the override too. Hidden while the chat editor is open (which draws its own live
+                  chart). */}
+              {model && !modelCanvas && (
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
-                  <MermaidView mermaid={activeDiag.mermaid} title={activeDiag.title} language={language} />
+                  <MermaidView mermaid={resolveOrgChartMermaid(model)} title={t('الهيكل التنظيمي', 'Org structure')} language={language} />
+                  {model.orgChartMermaid && (
+                    <div className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                      <span>{t('مخطط معدَّل يدويًا يتجاوز الاشتقاق التلقائي — استخدم «إعادة التوليد من الهيكل» لمسحه.', 'Manually edited chart overriding the automatic derivation — use "Regenerate from structure" to clear it.')}</span>
+                    </div>
+                  )}
                 </div>
               )}
 

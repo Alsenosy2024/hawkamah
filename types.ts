@@ -853,6 +853,11 @@ export interface CompanyGovernanceModel {
   committees?: GovCommittee[];   // لجان الحوكمة
   meetings?: GovMeeting[];        // أنواع الاجتماعات الرسمية
   assessment?: GovAssessment;     // تقييم النضج (CMMI + SWOT/PESTEL + BSC)
+  // V29 — the owner's AI-/hand-edited org-chart Mermaid, kept as an OVERRIDE over
+  // the deterministic buildOrgChartMermaid(orgUnits). Present ⇒ the org-chart view,
+  // canvas/SVG and PNG/SVG export all prefer it; "إعادة التوليد من الهيكل" clears it
+  // to re-derive from orgUnits. Optional ⇒ absent on every pre-V29 model.
+  orgChartMermaid?: string;
   auditLog?: GovAuditEntry[];    // who/when changed the model
   updatedAt: string;
   version: number;

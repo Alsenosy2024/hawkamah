@@ -360,6 +360,22 @@ export function buildOrgChartMermaid(
   return lines.join('\n');
 }
 
+/**
+ * V29 — resolve the org-chart Mermaid the whole app should draw/export: PREFER the
+ * owner's saved override (`model.orgChartMermaid`, produced by the NL editor) when
+ * it is a non-blank string, otherwise fall back to the deterministic chart derived
+ * from `model.orgUnits`. Pure & synchronous so the read-only view, the interactive
+ * canvas, and the PNG/SVG export all agree on ONE source of truth for the chart.
+ */
+export function resolveOrgChartMermaid(
+  model: (Parameters<typeof buildOrgChartMermaid>[0] & { orgChartMermaid?: string }) | null | undefined,
+  opts: { includeRoles?: boolean } = {},
+): string {
+  const override = model?.orgChartMermaid;
+  if (typeof override === 'string' && override.trim()) return override.trim();
+  return buildOrgChartMermaid(model ?? { orgUnits: [] }, opts);
+}
+
 /** AI generates Mermaid syntax for the requested diagram kind, grounded in the model. */
 export async function generateMermaid(
   model: CompanyGovernanceModel,
