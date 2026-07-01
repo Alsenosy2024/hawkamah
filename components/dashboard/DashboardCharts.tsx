@@ -27,6 +27,7 @@ import {
   ActivityHeatmap as ActivityHeatmapData,
   TimelineEvent,
   heatmapLevel,
+  heatmapFitWeeks,
 } from './dashboardData';
 
 // ============================================================================
@@ -574,9 +575,34 @@ const HEAT_CELL = 13; // px — fixed so the grid scrolls rather than squishes.
 
 export const ActivityHeatmap: React.FC<{ data: ActivityHeatmapData; language: Language }> = ({ data, language }) => {
   const ar = language === 'ar';
-  const { weeks, maxCount } = data;
+  const { weeks } = data;
+
+  // Window the series to the newest weeks that fill the card. Without this the
+  // grid renders a fixed ~12-column block that strands ⅔ of a `col-span-2` card
+  // empty in the reading-start corner. Measured via ResizeObserver (same pattern
+  // as MeasuredChart); falls back to the default column count before first paint.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [viewportW, setViewportW] = useState(0);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth;
+      setViewportW(prev => (prev === w ? prev : w));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const fit = heatmapFitWeeks(viewportW, weeks.length, HEAT_CELL, 4, 30);
+  const windowed = weeks.slice(Math.max(0, weeks.length - fit));
+  // Colour ramp scales to the busiest day *in view*.
+  const maxCount = windowed.reduce((m, wk) => wk.days.reduce((mm, d) => Math.max(mm, d.count), m), 0);
+
   // Visual column order: newest at the reading start (right in AR / left in EN).
-  const cols = ar ? [...weeks].reverse() : weeks;
+  const cols = ar ? [...windowed].reverse() : windowed;
 
   const monthFmt = new Intl.DateTimeFormat(ar ? 'ar-EG' : 'en-US', { month: 'short' });
   const dateFmt = new Intl.DateTimeFormat(ar ? 'ar-EG' : 'en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -594,7 +620,7 @@ export const ActivityHeatmap: React.FC<{ data: ActivityHeatmapData; language: La
 
   return (
     <ChartCard className="lg:col-span-2" title={title} badge={ar ? 'خريطة حرارية' : 'Heatmap'}>
-      <div dir={ar ? 'rtl' : 'ltr'} className="overflow-x-auto pb-1">
+      <div ref={scrollRef} dir={ar ? 'rtl' : 'ltr'} className="overflow-x-auto pb-1">
         <div className="inline-flex flex-col gap-1 min-w-max">
           {/* Month labels row — a weekday gutter, then one slot per week column. */}
           <div className="flex gap-1">

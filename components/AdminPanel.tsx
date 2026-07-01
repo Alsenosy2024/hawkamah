@@ -1131,7 +1131,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           const scoreBuckets = computeScoreBuckets(allAssessments);
           const weeklyEngagement = buildWeeklyEngagement(allAssessments, logins);
           const talentComposition = computeTalentComposition(allAssessments);
-          const activityHeatmap = buildActivityHeatmap(allAssessments, logins);
+          // Build up to a year; the heatmap view windows to the newest weeks that fit its card.
+          const activityHeatmap = buildActivityHeatmap(allAssessments, logins, new Date(), 53);
           const activityTimeline = buildActivityTimeline(allAssessments, logins, consultationRequests);
 
           // Share/Clipboard generation summary for beneficiary

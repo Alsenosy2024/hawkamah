@@ -254,6 +254,22 @@ export function buildActivityHeatmap(
   return { weeks: out, maxCount };
 }
 
+/** How many week-columns fill a measured viewport, so the heatmap windows to the
+ *  newest N weeks that fit the card instead of a fixed block stranded in the
+ *  reading-start corner. Returns `fallback` (≤ total) before a width is known. */
+export function heatmapFitWeeks(
+  viewportW: number,
+  totalWeeks: number,
+  cell = 13,
+  gap = 4,
+  gutter = 30,
+  fallback = 12,
+): number {
+  if (!(viewportW > 0)) return Math.min(totalWeeks, fallback);
+  const fit = Math.floor((viewportW - gutter - gap) / (cell + gap));
+  return Math.max(1, Math.min(fit, totalWeeks));
+}
+
 /** Bucket a day's count into a 0..4 sequential-ramp step (0 = no activity). */
 export function heatmapLevel(count: number, maxCount: number): number {
   if (count <= 0 || maxCount <= 0) return 0;
