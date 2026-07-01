@@ -60,6 +60,14 @@ service cloud.firestore {
       allow read, update, delete: if isAdmin();
     }
 
+    // ---- Shared-document review comments (client-facing, create-only) ----
+    // Non-admin clients post comments / visual-review checks to shared docs;
+    // admin reads them in the library. Size-capped like other guest writes.
+    match /doc_comments/{commentId} {
+      allow create: if sizeOk();
+      allow read, update, delete: if isAdmin();
+    }
+
     // ---- Login / audit trail ----
     // Append-only for guests; admin reads the audit log.
     match /user_logins/{loginId} {
