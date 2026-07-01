@@ -295,7 +295,7 @@ const GovernanceCenter: React.FC<Props> = ({ documents, settings, language, onBa
   const [activeDiag, setActiveDiag] = useState<GovDiagram | null>(null);
   const [diagBusy, setDiagBusy] = useState<GovDiagramKind | null>(null);
   const [diagFocus, setDiagFocus] = useState('');   // HWK-C4: scope new diagrams to a dept/procedure ('' = whole org)
-  const [canvasMode, setCanvasMode] = useState(false);
+  const [diagView, setDiagView] = useState<'svg' | 'canvas' | 'chat'>('svg');   // V37 — 3-way: read-only SVG / drag canvas / natural-language chat editor
   const [savingCanvas, setSavingCanvas] = useState(false);
 
   // reference project form
@@ -1007,7 +1007,7 @@ ${content.slice(0, 8000)}`;
   const handleGenDiagram = async (kind: GovDiagramKind, focus?: string) => {
     if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
     abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
-    setDiagBusy(kind); setCanvasMode(false);
+    setDiagBusy(kind); setDiagView('svg');
     try {
       let diag: GovDiagram;
       // HWK-C4: an optional focus scopes the RACI / swimlane / process diagram to a specific
@@ -1039,7 +1039,7 @@ ${content.slice(0, 8000)}`;
       nodes = g.nodes; edges = g.edges;
       setActiveDiag({ ...activeDiag, flowNodes: nodes, flowEdges: edges });
     }
-    setCanvasMode(true);
+    setDiagView('canvas');
   };
 
   const handleSaveCanvas = async (nodes: any[], edges: any[], mermaid: string) => {
@@ -1055,10 +1055,18 @@ ${content.slice(0, 8000)}`;
     } finally { setSavingCanvas(false); }
   };
 
+  // V37 — the natural-language chat editor commits the full Mermaid; keep the Canvas
+  // nodes/edges in sync with it so all three views (SVG / Canvas / chat) stay coherent.
+  const handleSaveDiagramMermaid = async (mermaid: string) => {
+    if (!activeDiag) return;
+    const g = mermaidToFlow(mermaid);
+    await handleSaveCanvas(g.nodes, g.edges, mermaid);
+  };
+
   const handleDeleteDiagram = async (id: string) => {
     if (!(await toast.confirm(t('حذف هذا المخطط؟', 'Delete this diagram?'), { danger: true }))) return;
     await deleteDiagram(id);
-    if (activeDiag?.id === id) { setActiveDiag(null); setCanvasMode(false); }
+    if (activeDiag?.id === id) { setActiveDiag(null); setDiagView('svg'); }
     await loadAll();
   };
 
@@ -3457,7 +3465,7 @@ ${content.slice(0, 8000)}`;
                 <div className="flex flex-wrap gap-2">
                   {diagrams.map(d => (
                     <span key={d.id} className={`hw-tab-pill inline-flex items-center gap-1 cursor-pointer ${activeDiag?.id === d.id ? 'hw-tab-active' : ''}`}
-                      onClick={() => { setActiveDiag(d); setCanvasMode(false); }}>
+                      onClick={() => { setActiveDiag(d); setDiagView('svg'); }}>
                       {DIAG_KINDS.find(k => k.kind === d.kind)?.icon} {d.title}
                       <button onClick={(e) => { e.stopPropagation(); handleDeleteDiagram(d.id); }} className="ms-1 opacity-60 hover:opacity-100" aria-label="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
                     </span>
@@ -3474,14 +3482,25 @@ ${content.slice(0, 8000)}`;
                     <h3 className="font-black text-slate-800">{activeDiag.title}</h3>
                     {activeDiag.kind !== 'swimlane' && (
                       <div className="ms-auto flex gap-1 bg-slate-200 rounded-xl p-1">
-                        <button onClick={() => setCanvasMode(false)} className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 ${!canvasMode ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg> SVG</button>
-                        <button onClick={handleConvertToCanvas} className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 ${canvasMode ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Canvas</button>
+                        <button onClick={() => setDiagView('svg')} className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 ${diagView === 'svg' ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg> SVG</button>
+                        <button onClick={handleConvertToCanvas} className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 ${diagView === 'canvas' ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Canvas</button>
+                        {/* V37 — edit the process/procedure diagram by chatting in natural language, at parity with the org chart. */}
+                        <button onClick={() => setDiagView('chat')} className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 ${diagView === 'chat' ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> {t('بالكلام', 'Chat')}</button>
                       </div>
                     )}
                   </div>
                   {activeDiag.kind === 'swimlane' && activeDiag.swimlane ? (
                     <SwimlaneView spec={activeDiag.swimlane} title={activeDiag.title} language={language} />
-                  ) : canvasMode ? (
+                  ) : diagView === 'chat' ? (
+                    <DiagramChatEditor
+                      key={activeDiag.id}
+                      language={language}
+                      initialMermaid={activeDiag.mermaid}
+                      title={activeDiag.title}
+                      onSave={handleSaveDiagramMermaid}
+                      saving={savingCanvas}
+                    />
+                  ) : diagView === 'canvas' ? (
                     <GovernanceCanvas
                       language={language}
                       initialNodes={activeDiag.flowNodes || []}
