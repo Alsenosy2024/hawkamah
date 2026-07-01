@@ -9,6 +9,7 @@ import {
   computeTalentComposition,
   buildActivityHeatmap,
   heatmapLevel,
+  heatmapFitWeeks,
   buildActivityTimeline,
 } from '../../components/dashboard/dashboardData';
 
@@ -183,6 +184,25 @@ describe('buildActivityHeatmap', () => {
     const cellFor = (date: string) => h.weeks.flatMap(w => w.days).find(d => d.date === date);
     expect(cellFor('2026-06-30')?.count).toBe(1); // only the valid entry counts
     expect(h.maxCount).toBe(1);
+  });
+});
+
+describe('heatmapFitWeeks', () => {
+  it('falls back to the default column count before a width is measured', () => {
+    expect(heatmapFitWeeks(0, 53)).toBe(12);
+    expect(heatmapFitWeeks(-1, 53)).toBe(12);
+    expect(heatmapFitWeeks(0, 8)).toBe(8); // never exceeds what exists
+  });
+
+  it('fills a wide card with more weeks and never exceeds the series length', () => {
+    // 17px stride (13 cell + 4 gap), 34px reserved (gutter + gap).
+    expect(heatmapFitWeeks(34 + 12 * 17, 53)).toBe(12);
+    expect(heatmapFitWeeks(34 + 30 * 17, 53)).toBe(30);
+    expect(heatmapFitWeeks(5000, 53)).toBe(53); // capped at the built series
+  });
+
+  it('windows down to what fits a narrow card (at least one column)', () => {
+    expect(heatmapFitWeeks(60, 53)).toBe(1);
   });
 });
 
