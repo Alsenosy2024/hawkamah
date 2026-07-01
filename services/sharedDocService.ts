@@ -21,7 +21,7 @@
 
 import { db } from '../firebase';
 import { collection, doc, setDoc, getDoc, getDocs, query, where } from 'firebase/firestore';
-import type { SharedDocToken, DocComment, VisualReviewCheck } from '../types';
+import type { SharedDocToken, DocComment, VisualReviewCheck, GovCommentAnchor } from '../types';
 
 const C_TOKENS = 'survey_tokens';
 const C_COMMENTS = 'doc_comments';
@@ -112,6 +112,7 @@ export function buildDocComment(input: {
   author: string;
   text: string;
   check?: VisualReviewCheck;
+  anchor?: GovCommentAnchor;   // V31: present when the comment was left inline on a selection
 }): DocComment {
   return {
     id: uid('dcm'),
@@ -123,6 +124,19 @@ export function buildDocComment(input: {
     text: (input.text || '').slice(0, 4000),
     at: new Date().toISOString(),
     ...(input.check ? { check: input.check } : {}),
+    ...(input.anchor ? { anchor: boundAnchor(input.anchor) } : {}),
+  };
+}
+
+// Bound an inline anchor so the size-capped `doc_comments` rule always accepts it
+// (the quote/context are short spans, but a pathological selection shouldn't blow
+// the document limit). Drops empty context fields to keep the payload lean.
+function boundAnchor(a: GovCommentAnchor): GovCommentAnchor {
+  return {
+    quote: (a.quote || '').slice(0, 2000),
+    ...(a.prefix ? { prefix: a.prefix.slice(0, 200) } : {}),
+    ...(a.suffix ? { suffix: a.suffix.slice(0, 200) } : {}),
+    ...(a.sectionId ? { sectionId: a.sectionId.slice(0, 200) } : {}),
   };
 }
 
@@ -136,6 +150,7 @@ export async function postDocComment(input: {
   author: string;
   text: string;
   check?: VisualReviewCheck;
+  anchor?: GovCommentAnchor;   // V31: inline select-text comment anchor
 }): Promise<DocComment> {
   const payload = buildDocComment(input);
   try {

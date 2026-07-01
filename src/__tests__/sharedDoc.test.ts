@@ -64,6 +64,31 @@ describe('buildDocComment — create-only payload', () => {
     expect(c.author.length).toBeLessThanOrEqual(120);
     expect(c.text.length).toBeLessThanOrEqual(4000);
   });
+
+  it('has no anchor for a free-text comment', () => {
+    const c = buildDocComment({ tokenId: 'tk', docId: 'd1', tenantId: 't1', author: 'Sara', text: 'looks good' });
+    expect(c.anchor).toBeUndefined();
+  });
+
+  it('carries an inline anchor (quote + prefix/suffix) when supplied', () => {
+    const c = buildDocComment({
+      tokenId: 'tk', docId: 'd1', tenantId: 't1', author: 'Sara', text: 'reword this',
+      anchor: { quote: 'مجلس الإدارة', prefix: 'يجتمع ', suffix: ' مرة', sectionId: 'sec-1' },
+    });
+    expect(c.kind).toBe('comment');
+    expect(c.anchor).toEqual({ quote: 'مجلس الإدارة', prefix: 'يجتمع ', suffix: ' مرة', sectionId: 'sec-1' });
+  });
+
+  it('bounds an oversized anchor quote/context and drops empty context', () => {
+    const c = buildDocComment({
+      tokenId: 'tk', docId: 'd1', tenantId: 't1', author: '', text: '',
+      anchor: { quote: 'q'.repeat(5000), prefix: 'p'.repeat(500), suffix: '' },
+    });
+    expect(c.anchor!.quote.length).toBeLessThanOrEqual(2000);
+    expect(c.anchor!.prefix!.length).toBeLessThanOrEqual(200);
+    expect(c.anchor!.suffix).toBeUndefined();     // empty context dropped
+    expect(c.anchor!.sectionId).toBeUndefined();
+  });
 });
 
 describe('hashAccessCode', () => {
