@@ -11,6 +11,10 @@ import {
   LineChart,
   Line,
   LabelList,
+  RadialBarChart,
+  RadialBar,
+  PolarAngleAxis,
+  Cell,
 } from 'recharts';
 import { Language } from '../../types';
 import {
@@ -19,6 +23,10 @@ import {
   RiasecKey,
   ScoreBucket,
   EngagementPoint,
+  TalentComposition,
+  ActivityHeatmap as ActivityHeatmapData,
+  TimelineEvent,
+  heatmapLevel,
 } from './dashboardData';
 
 // ============================================================================
@@ -440,5 +448,272 @@ export const CompetencyBullets: React.FC<{ title: string; rows: BulletDatum[]; l
         </span>
       </div>
     </div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+//  6) Talent composition — concentric RING (RadialBar), share per match tier.
+//     Single teal family, 4 distinguishable steps, thin white arc dividers.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Teal-family ramp for the 4 match-quality tiers (deep → faint), anchored on the
+// brand tokens. Four distinguishable steps; touching arcs get a white divider.
+const TIER_RAMP: Record<ScoreBucket['id'], string> = {
+  high: BRAND_PRESSED,  // '#0a6775' — deepest
+  optimal: BRAND,       // '#0b8090'
+  mild: '#4ea9b6',      // mid teal
+  low: '#a9d6de',       // faint teal
+};
+
+const TIER_META: Record<ScoreBucket['id'], { ar: string; en: string; range: string }> = {
+  high: { ar: 'فائقة', en: 'Excellent', range: '85%+' },
+  optimal: { ar: 'جيدة', en: 'Good', range: '70–84%' },
+  mild: { ar: 'مقبولة', en: 'Fair', range: '55–69%' },
+  low: { ar: 'تطوير', en: 'Needs dev', range: '<55%' },
+};
+
+export const TalentCompositionRing: React.FC<{ composition: TalentComposition; language: Language }> = ({ composition, language }) => {
+  const ar = language === 'ar';
+  const { slices, total, avgScore } = composition;
+
+  // Best → worst so the deepest teal ring reads first.
+  const order: ScoreBucket['id'][] = ['high', 'optimal', 'mild', 'low'];
+  const rows = order.map(id => {
+    const s = slices.find(x => x.id === id);
+    return { id, count: s?.count ?? 0, pct: s?.pct ?? 0, fill: TIER_RAMP[id] };
+  });
+
+  const title = ar ? 'التكوين النسبي لجودة ملاءمة الكوادر' : 'Talent pool composition by match tier';
+
+  return (
+    <ChartCard className="lg:col-span-2" title={title} badge={ar ? 'حلقي' : 'Ring'}>
+      {total === 0 ? (
+        <div className="h-48 w-full min-w-0 flex items-center justify-center text-center px-4">
+          <p className="text-xs text-slate-400 font-medium leading-relaxed">
+            {ar ? 'لا توجد تقييمات مكتملة بعد لعرض التكوين النسبي للكوادر.' : 'No completed assessments yet to compose the ring.'}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+          {/* Ring + centred total / average readout. */}
+          <div className="relative">
+            <MeasuredChart className="h-56 w-full min-w-0">
+              <RadialBarChart
+                data={rows}
+                cx="50%"
+                cy="50%"
+                innerRadius="38%"
+                outerRadius="100%"
+                startAngle={90}
+                endAngle={ar ? 450 : -270}
+                barCategoryGap={2}
+              >
+                <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+                <RadialBar dataKey="pct" background={{ fill: '#eef3f5' }} cornerRadius={3}>
+                  {rows.map((r, i) => <Cell key={i} fill={r.fill} stroke="#fff" strokeWidth={2} />)}
+                </RadialBar>
+              </RadialBarChart>
+            </MeasuredChart>
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+              <span className="text-2xl font-bold tabular-nums leading-none" style={{ color: INK }}><bdi>{total}</bdi></span>
+              <span className="text-[9px] font-bold text-slate-500 mt-0.5">{ar ? 'مُقيَّم' : 'evaluated'}</span>
+              <span className="text-[11px] font-bold mt-1" style={{ color: BRAND_PRESSED }}>
+                <bdi>{avgScore}%</bdi> {ar ? 'متوسط' : 'avg'}
+              </span>
+            </div>
+          </div>
+
+          {/* Legend + description on the companion side. */}
+          <div className="space-y-3">
+            <ul className="space-y-1.5 text-[11px] font-bold" style={{ direction: ar ? 'rtl' : 'ltr' }}>
+              {rows.map(r => (
+                <li key={r.id} className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded-sm shrink-0" style={{ background: r.fill, border: `1px solid ${GRID}` }} aria-hidden="true" />
+                  <span className="text-slate-600">
+                    {ar ? TIER_META[r.id].ar : TIER_META[r.id].en} <bdi className="text-slate-400 font-medium">{ISO('(' + TIER_META[r.id].range + ')')}</bdi>
+                  </span>
+                  <span className="text-slate-500 ms-auto tabular-nums">
+                    <bdi>{r.count}</bdi> · <bdi>{r.pct}%</bdi>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              {ar
+                ? 'حصة كل فئة جودة من إجمالي الكوادر المُقيَّمة — عرض نسبي حلقي يكمّل أعمدة أعداد الملاءمة.'
+                : 'Each tier’s share of the evaluated pool — a proportional ring companion to the match-quality counts.'}
+            </p>
+          </div>
+        </div>
+      )}
+    </ChartCard>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+//  7) Activity heatmap — custom CSS grid (7 weekday rows × N week columns).
+//     Single-hue teal sequential ramp; 1px GRID border keeps steps separable.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Sequential teal ramp (index 0 = none → 4 = busiest), anchored on BRAND_PRESSED.
+// Lightness is spread wide so adjacent steps stay perceptibly distinct (each cell
+// also carries its exact count via title/aria-label — never colour-only).
+const HEAT_RAMP = ['#eef3f5', '#b3dde4', '#6fbccb', '#2e94a4', BRAND_PRESSED];
+
+const WEEKDAYS: { ar: string; en: string }[] = [
+  { ar: 'أحد', en: 'Sun' },
+  { ar: 'إثن', en: 'Mon' },
+  { ar: 'ثلا', en: 'Tue' },
+  { ar: 'أرب', en: 'Wed' },
+  { ar: 'خمي', en: 'Thu' },
+  { ar: 'جمع', en: 'Fri' },
+  { ar: 'سبت', en: 'Sat' },
+];
+
+const HEAT_CELL = 13; // px — fixed so the grid scrolls rather than squishes.
+
+export const ActivityHeatmap: React.FC<{ data: ActivityHeatmapData; language: Language }> = ({ data, language }) => {
+  const ar = language === 'ar';
+  const { weeks, maxCount } = data;
+  // Visual column order: newest at the reading start (right in AR / left in EN).
+  const cols = ar ? [...weeks].reverse() : weeks;
+
+  const monthFmt = new Intl.DateTimeFormat(ar ? 'ar-EG' : 'en-US', { month: 'short' });
+  const dateFmt = new Intl.DateTimeFormat(ar ? 'ar-EG' : 'en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  // Month label above the column where the month first changes (visual order).
+  let lastMonth = -1;
+  const monthLabels = cols.map(col => {
+    const first = new Date(col.days[0].date + 'T00:00:00');
+    const m = first.getMonth();
+    if (m !== lastMonth) { lastMonth = m; return monthFmt.format(first); }
+    return '';
+  });
+
+  const title = ar ? 'خريطة النشاط الزمني — التقييمات وعمليات الدخول' : 'Temporal activity heatmap — assessments & logins';
+
+  return (
+    <ChartCard className="lg:col-span-2" title={title} badge={ar ? 'خريطة حرارية' : 'Heatmap'}>
+      <div dir={ar ? 'rtl' : 'ltr'} className="overflow-x-auto pb-1">
+        <div className="inline-flex flex-col gap-1 min-w-max">
+          {/* Month labels row — a weekday gutter, then one slot per week column. */}
+          <div className="flex gap-1">
+            <div style={{ width: 30 }} className="shrink-0" aria-hidden="true" />
+            {monthLabels.map((m, i) => (
+              <div key={i} style={{ width: HEAT_CELL }} className="shrink-0 text-[8px] font-bold text-slate-400 text-start whitespace-nowrap overflow-visible">
+                {m}
+              </div>
+            ))}
+          </div>
+
+          {/* Body — weekday gutter, then one flex column per week. */}
+          <div className="flex gap-1">
+            <div className="shrink-0 flex flex-col gap-1" style={{ width: 30 }} aria-hidden="true">
+              {WEEKDAYS.map((w, i) => (
+                <div key={i} style={{ height: HEAT_CELL }} className="text-[8px] font-bold text-slate-400 leading-none flex items-center justify-end">
+                  {ar ? w.ar : w.en}
+                </div>
+              ))}
+            </div>
+
+            {cols.map((col, ci) => (
+              <div key={ci} className="shrink-0 flex flex-col gap-1">
+                {col.days.map((cell, di) => {
+                  const lvl = heatmapLevel(cell.count, maxCount);
+                  const localDate = dateFmt.format(new Date(cell.date + 'T00:00:00'));
+                  const label = ar ? `${localDate}: ${cell.count} نشاط` : `${localDate}: ${cell.count} events`;
+                  return (
+                    <div
+                      key={di}
+                      role="img"
+                      title={label}
+                      aria-label={label}
+                      style={{ width: HEAT_CELL, height: HEAT_CELL, background: HEAT_RAMP[lvl], border: `1px solid ${GRID}` }}
+                      className="rounded-[2px] shrink-0"
+                    />
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Ramp legend — أقل → أكثر / Less → More. */}
+      <div className="flex items-center gap-1.5 pt-1 text-[9px] font-bold text-slate-400" style={{ direction: ar ? 'rtl' : 'ltr' }}>
+        <span>{ar ? 'أقل' : 'Less'}</span>
+        {HEAT_RAMP.map((c, i) => (
+          <span key={i} className="inline-block rounded-[2px]" style={{ width: 11, height: 11, background: c, border: `1px solid ${GRID}` }} aria-hidden="true" />
+        ))}
+        <span>{ar ? 'أكثر' : 'More'}</span>
+      </div>
+    </ChartCard>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+//  8) Activity timeline — vertical spine of the most-recent discrete events.
+//     Spine on the reading-start side; content flows via logical insets.
+// ────────────────────────────────────────────────────────────────────────────
+
+const TIMELINE_META: Record<TimelineEvent['kind'], { ar: string; en: string }> = {
+  assessment: { ar: 'تقييم مكتمل', en: 'Assessment completed' },
+  approval: { ar: 'اعتماد بشري', en: 'Human approval' },
+  login: { ar: 'تسجيل دخول', en: 'Access login' },
+  consultation: { ar: 'طلب استشارة', en: 'Consultation request' },
+};
+
+export const ActivityTimeline: React.FC<{ events: TimelineEvent[]; language: Language }> = ({ events, language }) => {
+  const ar = language === 'ar';
+  const title = ar ? 'أحدث الأحداث والنشاط' : 'Recent activity timeline';
+  const dateFmt = new Intl.DateTimeFormat(ar ? 'ar-EG' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  const badgeFor = (e: TimelineEvent): string => {
+    if (typeof e.value !== 'number') return '';
+    if (e.kind === 'assessment') return `${e.value}%`;
+    if (e.kind === 'approval') return `★${e.value}`;
+    return `${e.value}`;
+  };
+
+  return (
+    <ChartCard title={title} badge={ar ? 'زمني' : 'Timeline'}>
+      {events.length === 0 ? (
+        <div className="h-40 flex items-center justify-center text-center px-4">
+          <p className="text-xs text-slate-400 font-medium">
+            {ar ? 'لا يوجد نشاط حديث بعد.' : 'No recent activity yet.'}
+          </p>
+        </div>
+      ) : (
+        <ol dir={ar ? 'rtl' : 'ltr'} className="relative space-y-4">
+          {/* Spine — on the reading-start side (right in AR, left in EN). */}
+          <span className="absolute top-1 bottom-1 w-px bg-slate-200" style={{ insetInlineStart: 5 }} aria-hidden="true" />
+          {events.map((e, i) => {
+            const badge = badgeFor(e);
+            const when = dateFmt.format(new Date(e.at));
+            return (
+              <li key={i} className="relative" style={{ paddingInlineStart: 22 }}>
+                <span className="absolute top-1 w-2.5 h-2.5 rounded-full ring-2 ring-white" style={{ insetInlineStart: 0, background: BRAND }} aria-hidden="true" />
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[11px] font-bold text-slate-700">{ar ? TIMELINE_META[e.kind].ar : TIMELINE_META[e.kind].en}</span>
+                  {badge && (
+                    <span className="text-[10px] font-black tabular-nums px-1.5 py-0.5 rounded shrink-0" style={{ background: '#eef3f5', color: BRAND_PRESSED }}>
+                      <bdi>{badge}</bdi>
+                    </span>
+                  )}
+                </div>
+                {(e.title || e.subtitle) && (
+                  <div className="text-[11px] text-slate-500 truncate">
+                    {e.title && <bdi>{e.title}</bdi>}{e.title && e.subtitle ? ' — ' : ''}{e.subtitle && <bdi>{e.subtitle}</bdi>}
+                  </div>
+                )}
+                <div className="text-[9px] font-bold text-slate-400 mt-0.5">
+                  <bdi>{when}</bdi>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </ChartCard>
   );
 };
