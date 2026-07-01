@@ -165,10 +165,19 @@ export interface TalentComposition {
 export function computeTalentComposition(allAssessments: any[] = []): TalentComposition {
   const buckets = computeScoreBuckets(allAssessments);
   const total = buckets.reduce((acc, b) => acc + b.count, 0);
-  const slices: CompositionSlice[] = buckets.map(b => ({
+  // Largest-remainder (Hamilton) rounding so the displayed shares always sum to
+  // exactly 100% — independent Math.round can otherwise drift to 99%/101%.
+  const raw = buckets.map(b => (total > 0 ? (b.count / total) * 100 : 0));
+  const pctArr = raw.map(p => Math.floor(p));
+  let leftover = total > 0 ? 100 - pctArr.reduce((acc, p) => acc + p, 0) : 0;
+  raw
+    .map((p, i) => ({ i, frac: p - Math.floor(p) }))
+    .sort((x, y) => y.frac - x.frac)
+    .forEach(({ i }) => { if (leftover > 0) { pctArr[i] += 1; leftover -= 1; } });
+  const slices: CompositionSlice[] = buckets.map((b, i) => ({
     id: b.id,
     count: b.count,
-    pct: total > 0 ? Math.round((b.count / total) * 100) : 0,
+    pct: pctArr[i],
   }));
 
   const complete = allAssessments.filter(a => a?.reportData?.totalScore !== undefined);
@@ -214,10 +223,11 @@ export function buildActivityHeatmap(
   const counts: Record<string, number> = {};
   const tally = (rows: any[]) => {
     for (const r of rows) {
-      if (r?.timestamp) {
-        const k = ymdKey(new Date(r.timestamp));
-        counts[k] = (counts[k] || 0) + 1;
-      }
+      if (!r?.timestamp) continue;
+      const d = new Date(r.timestamp);
+      if (isNaN(d.getTime())) continue;   // skip malformed timestamps (mirrors buildActivityTimeline)
+      const k = ymdKey(d);
+      counts[k] = (counts[k] || 0) + 1;
     }
   };
   tally(allAssessments);

@@ -556,7 +556,9 @@ export const TalentCompositionRing: React.FC<{ composition: TalentComposition; l
 // ────────────────────────────────────────────────────────────────────────────
 
 // Sequential teal ramp (index 0 = none → 4 = busiest), anchored on BRAND_PRESSED.
-const HEAT_RAMP = ['#eef3f5', '#c7e3e9', '#8fcdd8', '#3f9fae', BRAND_PRESSED];
+// Lightness is spread wide so adjacent steps stay perceptibly distinct (each cell
+// also carries its exact count via title/aria-label — never colour-only).
+const HEAT_RAMP = ['#eef3f5', '#b3dde4', '#6fbccb', '#2e94a4', BRAND_PRESSED];
 
 const WEEKDAYS: { ar: string; en: string }[] = [
   { ar: 'أحد', en: 'Sun' },
@@ -701,7 +703,7 @@ export const ActivityTimeline: React.FC<{ events: TimelineEvent[]; language: Lan
                 </div>
                 {(e.title || e.subtitle) && (
                   <div className="text-[11px] text-slate-500 truncate">
-                    {e.title}{e.title && e.subtitle ? ' — ' : ''}{e.subtitle}
+                    {e.title && <bdi>{e.title}</bdi>}{e.title && e.subtitle ? ' — ' : ''}{e.subtitle && <bdi>{e.subtitle}</bdi>}
                   </div>
                 )}
                 <div className="text-[9px] font-bold text-slate-400 mt-0.5">

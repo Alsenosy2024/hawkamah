@@ -133,6 +133,15 @@ describe('computeTalentComposition', () => {
     expect(byId.high.pct).toBe(25);      // 1/4
     expect(c.avgScore).toBe(68);         // round((90+80+60+40)/4) = round(67.5) = 68
   });
+
+  it('rounds shares by largest remainder so they always total 100%', () => {
+    // 1 each in high/optimal/mild → 33.33% each; naive rounding would sum to 99%.
+    const data = [90, 80, 60].map(s => a({ reportData: { totalScore: s } }));
+    const c = computeTalentComposition(data);
+    expect(c.slices.reduce((acc, s) => acc + s.pct, 0)).toBe(100);
+    expect(c.slices.filter(s => s.count > 0).every(s => s.pct === 34 || s.pct === 33)).toBe(true);
+    expect(c.slices.find(s => s.id === 'low')?.pct).toBe(0); // no leftover leaks into empty tiers
+  });
 });
 
 describe('buildActivityHeatmap', () => {
@@ -160,6 +169,20 @@ describe('buildActivityHeatmap', () => {
     expect(cellFor('2026-06-30')?.count).toBe(3); // 2 assessments + 1 login
     expect(cellFor('2026-06-29')?.count).toBe(1);
     expect(h.maxCount).toBe(3);
+  });
+
+  it('skips malformed timestamps instead of counting a NaN day', () => {
+    const h = buildActivityHeatmap(
+      [{ timestamp: '2026-06-30T09:00:00' }, { timestamp: 'not-a-date' }],
+      [{ timestamp: 'also-bad' }, { timestamp: null }],
+      NOW,
+      12,
+    );
+    const allDates = h.weeks.flatMap(w => w.days.map(d => d.date));
+    expect(allDates.includes('NaN-NaN-NaN')).toBe(false);
+    const cellFor = (date: string) => h.weeks.flatMap(w => w.days).find(d => d.date === date);
+    expect(cellFor('2026-06-30')?.count).toBe(1); // only the valid entry counts
+    expect(h.maxCount).toBe(1);
   });
 });
 
