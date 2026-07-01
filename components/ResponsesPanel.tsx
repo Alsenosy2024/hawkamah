@@ -2,13 +2,19 @@
 // Used inside ProjectsStage (expandable per-project panel).
 
 import React, { useState, useEffect } from 'react';
-import type { UnifiedAssessmentResult, PaperQuestion, Language } from '../types';
+import type { UnifiedAssessmentResult, PaperQuestion, Language, PublicSurveyResponse } from '../types';
 import {
   getProjectResults, analyzeResult,
   exportEmployeePdf, exportEmployeeDocx,
   buildEmployeeArtifact,
 } from '../services/unifiedAssessmentService';
-import { UI } from '../services/designTokens';
+// V36 — the «الردود» panel now also records environment-survey replies, which
+// live in the separate `survey_responses` collection (surveyTokenService).
+import { getProjectResponses, patchResponseAnalysis } from '../services/surveyTokenService';
+import { analyzeWorkEnvironment } from '../services/geminiService';
+import { buildSingleResponseArtifact, SURVEY_FIELDS } from '../services/surveyReport';
+import { exportDocx } from '../services/exportService';
+import { UI, badge } from '../services/designTokens';
 import { useToast } from './ToastProvider';
 import JSZip from 'jszip';
 
@@ -30,20 +36,34 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
   const [exporting, setExporting] = useState<string | null>(null);
   const [bulkExporting, setBulkExporting] = useState(false);
 
-  useEffect(() => {
-    setLoading(true);
-    getProjectResults(tenantId)
-      .then(r => setResults(r.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))))
-      .catch(() => toast.error(t('فشل تحميل الردود', 'Failed to load results')))
-      .finally(() => setLoading(false));
-  }, [tenantId]); // eslint-disable-line
+  // V36 — environment-survey replies (survey_responses collection) shown alongside
+  // the employee assessments so every reply type is recorded in one place.
+  const [surveys, setSurveys]             = useState<PublicSurveyResponse[]>([]);
+  const [surveyExpanded, setSurveyExpanded] = useState<string | null>(null);
+  const [surveyAnalyzing, setSurveyAnalyzing] = useState<string | null>(null);
+  const [surveyExporting, setSurveyExporting] = useState<string | null>(null);
 
-  const refresh = () => {
+  // Load BOTH record types concurrently. allSettled (not Promise.all's fail-fast)
+  // so a failure of one list never blanks the other — we still surface one toast.
+  const load = () => {
     setLoading(true);
-    getProjectResults(tenantId)
-      .then(r => setResults(r.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))))
+    Promise.allSettled([getProjectResults(tenantId), getProjectResponses(tenantId)])
+      .then(([resR, surR]) => {
+        let failed = false;
+        if (resR.status === 'fulfilled') {
+          setResults(resR.value.slice().sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)));
+        } else failed = true;
+        if (surR.status === 'fulfilled') {
+          setSurveys(surR.value.slice().sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)));
+        } else failed = true;
+        if (failed) toast.error(t('فشل تحميل الردود', 'Failed to load results'));
+      })
       .finally(() => setLoading(false));
   };
+
+  useEffect(() => { load(); }, [tenantId]); // eslint-disable-line
+
+  const refresh = () => load();
 
   // Generate a placeholder questions array for export (reuse last attempt job title)
   // We can't re-fetch real questions, so we reconstruct from stored answers only
@@ -150,6 +170,44 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
     }
   };
 
+  // V36 — analyze one environment-survey reply (reuses the ResponsesCenter flow:
+  // analyzeWorkEnvironment + the existing patchResponseAnalysis Firestore write).
+  const handleAnalyzeSurvey = async (s: PublicSurveyResponse) => {
+    setSurveyAnalyzing(s.id);
+    try {
+      const report = await analyzeWorkEnvironment(
+        s.answers, language, s.respondentJobTitle || t('موظف', 'Employee'),
+      );
+      setSurveys(prev => prev.map(x => x.id === s.id ? { ...x, analysis: report } : x));
+      // Persist for future loads (non-fatal — mirrors ResponsesCenter.analyzeOne).
+      patchResponseAnalysis(s.id, s.answers, report).catch(() => {/* non-fatal */});
+      toast.success(t('تم توليد التحليل', 'Analysis generated'));
+    } catch (err: unknown) {
+      toast.error(t('فشل توليد التحليل: ', 'Analysis failed: ') + (err as Error).message);
+    } finally {
+      setSurveyAnalyzing(null);
+    }
+  };
+
+  // V36 — export one environment-survey reply (same DOCX artifact ResponsesCenter uses).
+  const handleExportSurvey = async (s: PublicSurveyResponse) => {
+    setSurveyExporting(s.id);
+    try {
+      const art = buildSingleResponseArtifact({
+        userName: s.respondentName,
+        jobTitle: s.respondentJobTitle,
+        department: s.respondentDepartment,
+        workplaceAnswers: s.answers,
+        envReportData: s.analysis ?? null,
+      }, language);
+      await exportDocx(art);
+    } catch (err: unknown) {
+      toast.error(t('فشل تصدير Word: ', 'Word export failed: ') + (err as Error).message);
+    } finally {
+      setSurveyExporting(null);
+    }
+  };
+
   const scoreColor = (s: number) =>
     s >= 80 ? 'text-emerald-600 dark:text-emerald-400'
     : s >= 60 ? 'text-amber-600 dark:text-amber-400'
@@ -161,10 +219,12 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
       <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-200 dark:border-slate-700 bg-[#F7FAFB] dark:bg-slate-800/60">
         <div className="min-w-0">
           <h4 className="font-bold text-sm text-slate-800 dark:text-slate-100 leading-snug">
-            {t('مركز الردود — التقييمات الموحدة', 'Responses — Unified Assessments')}
+            {t('مركز الردود — كل الردود', 'Responses — All Replies')}
           </h4>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            {results.length} {t('موظف أجاب', 'employees responded')}
+            {results.length} {t('تقييم', 'assessments')}
+            {' · '}
+            {surveys.length} {t('استبيان بيئة', 'env. surveys')}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -202,13 +262,27 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
         <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">
           {t('جارٍ التحميل…', 'Loading…')}
         </div>
-      ) : results.length === 0 ? (
+      ) : (results.length === 0 && surveys.length === 0) ? (
         <div className="py-14 px-6 text-center">
           <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
-            {t('لا توجد ردود بعد. شارك الرابط الموحد مع الموظفين.', 'No responses yet. Share the unified link with employees.')}
+            {t('لا توجد ردود بعد. شارك رابط التقييم أو استبيان البيئة مع الموظفين.', 'No responses yet. Share the assessment or environment-survey link with employees.')}
           </p>
         </div>
       ) : (
+        <div className="divide-y divide-slate-200 dark:divide-slate-700">
+          {/* ── Employee assessments (unified_results) ───────────────────── */}
+          <section>
+            <div className="px-5 py-2.5 flex items-center gap-2 bg-slate-50/70 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-700/60">
+              <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                {t('تقييمات الموظفين', 'Employee assessments')}
+              </span>
+              <span className={badge('neutral')}>{results.length}</span>
+            </div>
+            {results.length === 0 ? (
+              <p className="px-5 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+                {t('لا توجد تقييمات موظفين بعد.', 'No employee assessments yet.')}
+              </p>
+            ) : (
         <ul className="divide-y divide-slate-100 dark:divide-slate-700/60">
           {results.map(r => {
             const isExpanded = expanded === r.id;
@@ -401,6 +475,185 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
             );
           })}
         </ul>
+            )}
+          </section>
+
+          {/* ── Work-environment surveys (survey_responses) ──────────────── */}
+          <section>
+            <div className="px-5 py-2.5 flex items-center gap-2 bg-slate-50/70 dark:bg-slate-800/30 border-y border-slate-100 dark:border-slate-700/60">
+              <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                {t('استبيانات بيئة العمل', 'Work-environment surveys')}
+              </span>
+              <span className={badge('info')}>{surveys.length}</span>
+            </div>
+            {surveys.length === 0 ? (
+              <p className="px-5 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+                {t('لا توجد ردود استبيان بيئة بعد.', 'No environment-survey responses yet.')}
+              </p>
+            ) : (
+              <ul className="divide-y divide-slate-100 dark:divide-slate-700/60">
+                {surveys.map(s => {
+                  const isOpen = surveyExpanded === s.id;
+                  const name = s.respondentName || t('مشارك مجهول', 'Anonymous');
+                  const meta = [s.respondentJobTitle, s.respondentDepartment].filter(Boolean).join(' · ');
+                  const analysis = s.analysis;
+
+                  return (
+                    <li key={s.id}>
+                      {/* Row summary — clickable */}
+                      <div
+                        className="flex items-center gap-3 px-5 py-3.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors duration-150"
+                        onClick={() => setSurveyExpanded(isOpen ? null : s.id)}
+                      >
+                        {/* Avatar initial */}
+                        <div className="w-8 h-8 rounded-md bg-sky-50 dark:bg-sky-900/30 flex items-center justify-center text-sky-700 dark:text-sky-400 font-bold text-sm shrink-0 select-none border border-sky-100 dark:border-sky-800/40">
+                          {name.slice(0, 1)}
+                        </div>
+
+                        {/* Name + meta + type badge */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-semibold text-sm text-slate-800 dark:text-slate-100 truncate leading-snug">
+                              {name}
+                            </span>
+                            <span className={`${badge('info')} shrink-0`}>{t('استبيان بيئة', 'Env. survey')}</span>
+                          </div>
+                          {meta && (
+                            <div className="text-xs text-slate-500 dark:text-slate-400 truncate leading-snug mt-0.5">
+                              {meta}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Score (if analyzed) + date + chevron */}
+                        <div className="flex items-center gap-3 shrink-0">
+                          {analysis && (
+                            <span className={`tabular-nums font-bold text-sm ${scoreColor(analysis.overallScore)}`}>
+                              {analysis.overallScore}<span className="text-xs font-normal text-slate-400">/100</span>
+                            </span>
+                          )}
+                          <span className="hidden sm:inline text-xs text-slate-400 dark:text-slate-500 tabular-nums">
+                            {new Date(s.submittedAt).toLocaleDateString(ar ? 'ar-SA' : 'en-US')}
+                          </span>
+                          <svg
+                            width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"
+                            className={`text-slate-400 transition-transform duration-150 ${isOpen ? 'rotate-180' : ''}`}
+                          >
+                            <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </div>
+                      </div>
+
+                      {/* Expanded disclosure zone */}
+                      {isOpen && (
+                        <div className="bg-[#F7FAFB] dark:bg-slate-800/30 border-t border-slate-100 dark:border-slate-700/60 px-5 py-4 space-y-4">
+
+                          {/* Answers */}
+                          <section>
+                            <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2">
+                              {t('الإجابات', 'Answers')}
+                            </p>
+                            <div className="divide-y divide-slate-100 dark:divide-slate-700 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden">
+                              {SURVEY_FIELDS.map(f => {
+                                const val = (s.answers as any)[f.key];
+                                if (!val) return null;
+                                return (
+                                  <div key={f.key} className="px-3 py-2.5 grid grid-cols-[130px_1fr] gap-x-3 sm:grid-cols-[160px_1fr]">
+                                    <div className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 pt-0.5 uppercase tracking-wide truncate">
+                                      {f.icon} {ar ? f.ar : f.en}
+                                    </div>
+                                    <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                                      {val}
+                                    </p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </section>
+
+                          {/* AI Analysis (lazy — reused from ResponsesCenter) */}
+                          {analysis ? (
+                            <section className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden">
+                              {/* Score strip */}
+                              <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex items-center gap-6 flex-wrap">
+                                <div className="flex items-baseline gap-1.5">
+                                  <span className={`text-xl font-bold tabular-nums ${scoreColor(analysis.overallScore)}`}>{analysis.overallScore}</span>
+                                  <span className="text-xs text-slate-400">/100</span>
+                                  <span className="text-[10px] text-slate-400 ms-1">{t('الإجمالي', 'Overall')}</span>
+                                </div>
+                                <div className="flex items-baseline gap-1.5">
+                                  <span className="text-base font-semibold tabular-nums text-slate-700 dark:text-slate-200">{analysis.isoComplianceRate}%</span>
+                                  <span className="text-[10px] text-slate-400">ISO 9001</span>
+                                </div>
+                                <div className="flex items-baseline gap-1.5">
+                                  <span className="text-base font-semibold tabular-nums text-slate-700 dark:text-slate-200">{analysis.efqmExcellenceRate}%</span>
+                                  <span className="text-[10px] text-slate-400">EFQM</span>
+                                </div>
+                                <span className={badge('info')}>{analysis.infrastructureRating}</span>
+                              </div>
+                              <div className="px-4 py-3 space-y-3">
+                                <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">{analysis.currentStatusSummary}</p>
+                                {analysis.keyChallenges?.length > 0 && (
+                                  <div>
+                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">{t('التحديات الرئيسية', 'Key challenges')}</div>
+                                    <ul className="space-y-1">
+                                      {analysis.keyChallenges.map((c, ci) => (
+                                        <li key={ci} className="text-xs text-slate-600 dark:text-slate-300 flex gap-2">
+                                          <span className="text-rose-400 shrink-0 mt-0.5" aria-hidden="true">–</span><span>{c}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                {analysis.recommendationsForManagement?.length > 0 && (
+                                  <div>
+                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">{t('توصيات للإدارة', 'Recommendations')}</div>
+                                    <ul className="space-y-1">
+                                      {analysis.recommendationsForManagement.map((rec, ri) => (
+                                        <li key={ri} className="text-xs text-slate-600 dark:text-slate-300 flex gap-2">
+                                          <span className="text-slate-400 shrink-0 mt-0.5" aria-hidden="true">·</span><span>{rec}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            </section>
+                          ) : (
+                            <button
+                              className="hw-btn hw-btn-ghost text-xs px-3 py-1.5 disabled:opacity-50"
+                              disabled={surveyAnalyzing === s.id}
+                              onClick={() => handleAnalyzeSurvey(s)}
+                            >
+                              {surveyAnalyzing === s.id
+                                ? t('جارٍ التحليل…', 'Analyzing…')
+                                : t('توليد التحليل الذكي', 'Generate AI Analysis')}
+                            </button>
+                          )}
+
+                          {/* Export action */}
+                          <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-slate-200/70 dark:border-slate-700/50">
+                            <span className="text-xs text-slate-400 dark:text-slate-500 me-1">
+                              {t('تصدير:', 'Export:')}
+                            </span>
+                            <button
+                              className="hw-btn hw-btn-ghost text-xs px-2.5 py-1.5 disabled:opacity-50"
+                              disabled={surveyExporting === s.id}
+                              onClick={() => handleExportSurvey(s)}
+                            >
+                              {surveyExporting === s.id ? t('جارٍ…', 'Working…') : t('تقرير Word', 'Word Report')}
+                            </button>
+                          </div>
+
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+        </div>
       )}
     </div>
   );
