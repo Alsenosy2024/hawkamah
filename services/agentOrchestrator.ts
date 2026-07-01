@@ -183,3 +183,50 @@ export async function generateJson<T = any>(
   }
   throw lastErr ?? new Error('GENJSON_EMPTY: unknown failure');
 }
+
+/**
+ * Streaming variant of {@link generateJson}. Streams the JSON body as the model
+ * writes it so the UI can render a PROGRESSIVE preview — `opts.onText` fires
+ * after every chunk with the full accumulated text so far (callers parse it
+ * leniently for a live view). Reasoning parts (`part.thought === true`) are
+ * skipped; only answer text is accumulated. When the stream finishes the text
+ * is fence-stripped + parsed via the same robust {@link extractJson} path and
+ * returned. Best-effort: it throws if the accumulated text can't parse, so
+ * callers should fall back to the blocking {@link generateJson} on failure.
+ */
+export async function generateJsonStream<T = any>(
+  prompt: string,
+  responseSchema: any,
+  opts: { temperature?: number; signal?: AbortSignal; onText?: (accumulated: string) => void } = {},
+): Promise<T> {
+  const ai = getAI();
+  let acc = '';
+  const stream = await ai.models.generateContentStream({
+    model: MODEL,
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema,
+      temperature: opts.temperature ?? 0.2,
+      thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM },
+    },
+  });
+
+  for await (const chunk of stream) {
+    if (opts.signal?.aborted) break;
+    const parts = chunk?.candidates?.[0]?.content?.parts;
+    if (!parts) continue;
+    for (const part of parts) {
+      const text = (part as any)?.text;
+      if (typeof text !== 'string' || !text) continue;
+      if ((part as any).thought === true) continue; // skip visible reasoning
+      acc += text;
+    }
+    opts.onText?.(acc);
+  }
+
+  // Reuse the blocking helper's robust extraction: strips ```json fences and
+  // finds the outermost object even if the model added preamble; throws on junk.
+  const jsonStr = extractJson(acc);
+  return JSON.parse(jsonStr) as T;
+}
