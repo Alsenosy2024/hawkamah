@@ -12,8 +12,8 @@
 //  Adapted from the Ailigent/document-canvas in-app editor, re-themed to this
 //  app's design system (hw-btn, Thmanyah, teal) and inline t(ar,en) i18n.
 // ===========================================================================
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Language, GovComment } from '../types';
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import type { Language, GovComment, GovCommentAnchor } from '../types';
 import BackButton from './BackButton';
 import { mermaidToSvg, makeSvgResponsive, diagramFallbackHtml } from '../services/diagramService';
 import {
@@ -23,7 +23,7 @@ import {
 import { exportMessageDocx, exportMessageXlsx } from '../services/exportService';
 import { exportMessagePptx } from '../services/pptxExport';
 import { rewriteSelection, type SmartEditAction } from '../services/governanceChat';
-import { highlightComments, scrollToComment } from '../services/commentAnchor';
+import { anchorFromSelection, highlightComments, scrollToComment, type AnchoredComment } from '../services/commentAnchor';
 
 // A Mermaid diagram queued for PROGRESSIVE rendering (PRD V2/V3): the document
 // text shows within a beat, then each diagram fills into its placeholder.
@@ -192,13 +192,30 @@ export interface DocumentCanvasProps {
   onShareReview?: () => Promise<{ url: string }>;
   onApplyComments?: () => void | Promise<void>;
   commentsOpenByDefault?: boolean;
+  // V31 — inline "select text → add a comment" on BOTH surfaces (the owner canvas
+  // and the read-only client share). When provided, selecting text in the document
+  // shows an «أضف تعليقاً» control; submitting hands the anchored text back so the
+  // host persists it (owner → gov_document comment · client → doc_comments). Works
+  // in readOnly (client) mode too, independently of the owner's smart-edit toolbar.
+  onAddComment?: (input: { anchor: GovCommentAnchor; text: string }) => void | Promise<void>;
+  // V31 — highlight-only anchors (e.g. the client's own inline comments) painted in
+  // the iframe body without opening the owner comments panel. Merged with `comments`
+  // in the highlight pass; scroll to one via the imperative `scrollToComment` handle.
+  highlightAnchors?: AnchoredComment[];
 }
 
-const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
+// V31 — imperative handle so a host that renders its own comment list OUTSIDE the
+// canvas (the client share drawer) can scroll the iframe to a highlighted span.
+export interface DocumentCanvasHandle {
+  scrollToComment: (id: string) => void;
+}
+
+const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProps>(function DocumentCanvas({
   markdown, initialHtml, title, subtitle, date, brand, language,
   rootClass = 'fixed inset-0 z-[60]', readOnly = false, onClose, onSave, onAskAi, onShare,
   comments = [], onShareReview, onApplyComments, commentsOpenByDefault = false,
-}) => {
+  onAddComment, highlightAnchors,
+}, ref) {
   const ar = (language || 'ar') === 'ar';
   const t = (a: string, e: string) => (ar ? a : e);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -234,6 +251,20 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   commentsRef.current = comments;
   const openCount = comments.filter(c => c.status !== 'implemented').length;
   const doneCount = comments.length - openCount;
+  // V31 inline "select → comment": the floating «أضف تعليقاً» button anchored to the
+  // client's selection, the composer popover, and its draft/state. onAddComment +
+  // highlightAnchors are read via refs from the deps-stable iframe-load listeners.
+  const [commentBtn, setCommentBtn] = useState<{ top: number; left: number } | null>(null);
+  const [commentComposer, setCommentComposer] = useState<{ anchor: GovCommentAnchor; top: number; left: number } | null>(null);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [commentErr, setCommentErr] = useState('');
+  const onAddCommentRef = useRef(onAddComment);
+  onAddCommentRef.current = onAddComment;
+  const highlightAnchorsRef = useRef<AnchoredComment[] | undefined>(highlightAnchors);
+  highlightAnchorsRef.current = highlightAnchors;
+  const composerOpenRef = useRef(false);
+  composerOpenRef.current = !!commentComposer;
 
   const docTitle = useMemo(
     () => (title || (markdown.match(/^#{1,2}\s+(.+)$/m)?.[1] || t('وثيقة', 'Document'))).slice(0, 80).trim(),
@@ -287,7 +318,13 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       st.textContent = COMMENT_HL_CSS;
       (doc.head || doc.documentElement).appendChild(st);
     }
-    try { highlightComments(doc.body, (commentsRef.current || []).filter(c => c.anchor)); } catch { /* noop */ }
+    // Merge the owner's anchored review comments with any highlight-only anchors
+    // (the client's own inline comments), then repaint in one idempotent pass.
+    const anchored: AnchoredComment[] = [
+      ...(commentsRef.current || []).filter(c => c.anchor),
+      ...(highlightAnchorsRef.current || []),
+    ];
+    try { highlightComments(doc.body, anchored); } catch { /* noop */ }
   }, []);
 
   // Enable in-place editing once the iframe document is ready.
@@ -328,6 +365,31 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     }
     // V21: paint the anchored review-comment highlights (both modes).
     applyCommentHighlights(doc);
+
+    // V31 — client (read-only) inline comments: the owner's smart-edit toolbar is
+    // skipped in readOnly, so wire a dedicated selection→«أضف تعليقاً» button here.
+    // (In the editable owner canvas the same action lives on the smart-edit bar.)
+    if (readOnly && onAddCommentRef.current) {
+      const updateCommentBtn = () => {
+        if (composerOpenRef.current) return;                 // don't fight an open composer
+        const win = doc.defaultView;
+        const s = win?.getSelection?.();
+        const text = s?.toString().trim() || '';
+        const frame = iframeRef.current;
+        if (!s || s.isCollapsed || !text || !frame) { setCommentBtn(null); return; }
+        try {
+          const r = s.getRangeAt(0).getBoundingClientRect();
+          if (!r.width && !r.height) { setCommentBtn(null); return; }
+          const f = frame.getBoundingClientRect();
+          const left = Math.max(8, Math.min(f.left + r.left, window.innerWidth - 176));
+          setCommentBtn({ top: f.top + r.bottom + 6, left });
+        } catch { setCommentBtn(null); }
+      };
+      doc.addEventListener('mouseup', updateCommentBtn);
+      doc.addEventListener('keyup', updateCommentBtn);
+      doc.addEventListener('scroll', () => setCommentBtn(null), true);
+    }
+
     if (readOnly) return;   // share view: no restyle / selection editing
 
     // Clicking the cover opens the restyle modal (instead of editing its text).
@@ -359,11 +421,11 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     doc.addEventListener('scroll', () => setAskSel(null), true);
   }, [onAskAi, ar, readOnly, applyCommentHighlights]);
 
-  // Re-highlight when the comments prop changes (e.g. after an AI apply) without a
-  // full iframe reload.
+  // Re-highlight when the comments (or client highlight-only anchors) change (e.g.
+  // after an AI apply, or a new inline comment) without a full iframe reload.
   useEffect(() => {
     applyCommentHighlights(iframeRef.current?.contentDocument);
-  }, [comments, applyCommentHighlights]);
+  }, [comments, highlightAnchors, applyCommentHighlights]);
 
   // Mint a /?r= reviewer link for this document and copy it to the clipboard.
   const runShareReview = useCallback(async () => {
@@ -394,6 +456,55 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     const el = scrollToComment(doc.body, id);
     if (el) { el.classList.add('cmt-flash'); window.setTimeout(() => el.classList.remove('cmt-flash'), 1200); }
   }, []);
+
+  // Expose an imperative scroll so a host with its own comment list outside the
+  // canvas (the client share drawer) can jump the iframe to a highlighted span.
+  useImperativeHandle(ref, () => ({ scrollToComment: (id: string) => focusComment(id) }), [focusComment]);
+
+  // ── V31 inline "select → comment" ─────────────────────────────────────────
+  // Capture an anchor from the LIVE iframe selection and open the composer. Runs
+  // on mousedown (client button) / click (owner smart-edit bar) — both keep the
+  // selection alive (preventDefault, resp. the bar's own onMouseDown guard).
+  const openCommentComposer = useCallback((e?: React.MouseEvent) => {
+    e?.preventDefault?.();
+    const doc = iframeRef.current?.contentDocument;
+    const body = doc?.body;
+    if (!body) return;
+    const sel = doc?.defaultView?.getSelection?.();
+    let sectionId: string | undefined;
+    const node = sel?.anchorNode || null;
+    if (node) {
+      const el = (node.nodeType === 1 ? node : node.parentElement) as Element | null;
+      sectionId = el?.closest?.('[data-section-id]')?.getAttribute('data-section-id') || undefined;
+    }
+    const anchor = anchorFromSelection(body, sectionId);
+    if (!anchor) { setCommentBtn(null); return; }
+    const src = commentBtn || askSel;
+    const top = src?.top ?? 96;
+    const left = Math.max(8, Math.min(src?.left ?? 16, window.innerWidth - 316));
+    setCommentComposer({ anchor, top, left });
+    setCommentBtn(null);
+    setAskSel(null);
+    setCommentErr('');
+    setCommentDraft('');
+  }, [commentBtn, askSel]);
+
+  const cancelCommentComposer = useCallback(() => { setCommentComposer(null); setCommentDraft(''); setCommentErr(''); }, []);
+
+  const submitInlineComment = useCallback(async () => {
+    const text = commentDraft.trim();
+    if (!text || !commentComposer || commentBusy) return;
+    setCommentBusy(true); setCommentErr('');
+    try {
+      await onAddCommentRef.current?.({ anchor: commentComposer.anchor, text });
+      setCommentComposer(null);
+      setCommentDraft('');
+    } catch {
+      setCommentErr(t('تعذّر إرسال التعليق. حاول مرة أخرى.', 'Could not send the comment. Please try again.'));
+    } finally {
+      setCommentBusy(false);
+    }
+  }, [commentDraft, commentComposer, commentBusy, ar]);
 
   const exec = useCallback((cmd: string, val?: string) => {
     const win = iframeRef.current?.contentWindow;
@@ -819,6 +930,16 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           <span className="w-px h-5 bg-[var(--hw-border)] mx-0.5" />
           <button type="button" disabled={!!smartBusy} onClick={deleteSelection} title={t('حذف', 'Delete')}
             className="flex items-center justify-center w-7 h-7 rounded-lg text-slate-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/15 disabled:opacity-50 transition-colors"><IcTrash /></button>
+          {/* V31 — anchor a review comment to the selection (owner side). */}
+          {onAddComment && (
+            <>
+              <span className="w-px h-5 bg-[var(--hw-border)] mx-0.5" />
+              <button type="button" disabled={!!smartBusy} onClick={() => openCommentComposer()} title={t('علّق على التحديد', 'Comment on selection')}
+                className="flex items-center gap-1 h-7 px-2 rounded-lg text-[12px] font-semibold text-[var(--hw-brand,#11a8bc)] hover:bg-[var(--hw-brand-50,#eef8fa)] disabled:opacity-50 transition-colors">
+                <IcComment />{t('علّق', 'Comment')}
+              </button>
+            </>
+          )}
           {onAskAi && (
             <>
               <span className="w-px h-5 bg-[var(--hw-border)] mx-0.5" />
@@ -830,6 +951,42 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
             </>
           )}
         </div>
+      )}
+
+      {/* V31 — client (read-only) floating «أضف تعليقاً» over the live selection.
+          The owner uses the smart-edit bar's Comment button instead. */}
+      {readOnly && commentBtn && onAddComment && (
+        <button type="button" onMouseDown={openCommentComposer}
+          style={{ top: commentBtn.top, left: commentBtn.left }}
+          className="fixed z-[10000] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--hw-brand,#11a8bc)] text-white text-[12px] font-bold shadow-lg hover:opacity-90">
+          <IcComment />{t('أضف تعليقاً', 'Add comment')}
+        </button>
+      )}
+
+      {/* V31 — inline comment composer popover (both surfaces). Bound to the anchor
+          captured from the selection; submit hands it to onAddComment. */}
+      {commentComposer && (
+        <>
+          <div className="fixed inset-0 z-[10000]" onClick={cancelCommentComposer} aria-hidden="true" />
+          <div dir={ar ? 'rtl' : 'ltr'} role="dialog"
+            style={{ top: commentComposer.top, left: Math.max(8, Math.min(commentComposer.left, window.innerWidth - 316)) }}
+            className="fixed z-[10001] w-[300px] rounded-xl border border-[var(--hw-border)] bg-white dark:bg-slate-800 p-3 shadow-2xl dc-pop">
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 border-s-2 border-amber-300 dark:border-amber-700 ps-2 mb-2 line-clamp-3">«{commentComposer.anchor.quote}»</div>
+            <textarea value={commentDraft} onChange={e => setCommentDraft(e.target.value)} rows={3} autoFocus
+              placeholder={t('اكتب تعليقك…', 'Write your comment…')}
+              onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') submitInlineComment(); }}
+              className="w-full text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 resize-y" />
+            {commentErr && <p className="text-[11px] text-rose-600 mt-1">{commentErr}</p>}
+            <div className="flex items-center justify-end gap-2 mt-2">
+              <button type="button" onClick={cancelCommentComposer}
+                className="px-3 py-1.5 rounded-lg text-[12px] font-medium text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700">{t('إلغاء', 'Cancel')}</button>
+              <button type="button" onClick={submitInlineComment} disabled={!commentDraft.trim() || commentBusy}
+                className="hw-btn hw-btn-primary hw-btn-sm !rounded-lg disabled:opacity-50">
+                {commentBusy ? t('جارٍ الإرسال…', 'Sending…') : t('تعليق', 'Comment')}
+              </button>
+            </div>
+          </div>
+        </>
       )}
 
       {/* Appearance modal — cover gradient/color/image/pattern + page bg */}
@@ -955,6 +1112,6 @@ const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       )}
     </div>
   );
-};
+});
 
 export default DocumentCanvas;

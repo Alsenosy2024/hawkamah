@@ -434,6 +434,11 @@ export interface DocComment {
   text: string;
   at: string;                 // ISO
   check?: VisualReviewCheck;  // present when kind === 'review_check'
+  // V31: an optional TextQuoteSelector anchor when the comment was left inline by
+  // selecting a span in the shared document (vs. the free-text box). Reuses the
+  // same GovCommentAnchor shape the owner canvas / reviewer screen use, so the
+  // owner can re-locate + highlight the quote. Absent for free-text comments.
+  anchor?: GovCommentAnchor;
 }
 
 // One employee's public survey response (written by anonymous; read by admin).

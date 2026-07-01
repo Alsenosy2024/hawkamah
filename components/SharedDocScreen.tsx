@@ -8,12 +8,12 @@
 // readable `survey_tokens` collection (no rules change). Comments are written to
 // the create-only `doc_comments` collection — until that rule is deployed the post
 // fails gracefully with a clear "comments not enabled yet" message.
-import React, { useEffect, useState } from 'react';
-import DocumentCanvas from './DocumentCanvas';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import DocumentCanvas, { type DocumentCanvasHandle } from './DocumentCanvas';
 import {
   getSharedDoc, verifyAccessCode, postDocComment,
 } from '../services/sharedDocService';
-import type { SharedDocToken, DocComment, VisualReviewCheck } from '../types';
+import type { SharedDocToken, DocComment, VisualReviewCheck, GovCommentAnchor } from '../types';
 
 interface Props { token: string; }
 
@@ -35,6 +35,10 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
   const [posting, setPosting] = useState(false);
   const [note, setNote] = useState('');
   const [mine, setMine] = useState<DocComment[]>([]);
+
+  // V31 — imperative handle to scroll the canvas iframe to a highlighted span when
+  // an anchored comment in the drawer is clicked.
+  const canvasApiRef = useRef<DocumentCanvasHandle | null>(null);
 
   const ar = true;                                   // Arabic-first; the snapshot carries its own dir
   const t = (a: string, e: string) => (ar ? a : e);
@@ -91,6 +95,29 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
     }
   };
 
+  // V31 — inline "select text → add comment": DocumentCanvas captures the anchor
+  // from the selection inside the read-only snapshot and hands it here; we persist
+  // it via the SAME postDocComment path (now anchor-aware) and reflect it as a
+  // highlight. Throws propagate to the canvas composer, which shows a retry note.
+  const addInlineComment = async ({ anchor, text }: { anchor: GovCommentAnchor; text: string }) => {
+    if (!tok) return;
+    const saved = await postDocComment({
+      tokenId: tok.id, docId: tok.docId, tenantId: tok.tenantId,
+      author: author.trim() || t('عميل', 'Client'),
+      text, anchor,
+    });
+    setMine(m => [...m, saved]);
+    setNote(t('أُرسل تعليقك إلى المالك ✅', 'Your comment was sent to the owner ✅'));
+  };
+
+  // The client's own anchored comments (this session) painted in the snapshot.
+  // Memoized so its identity is stable across drawer keystrokes — otherwise the
+  // canvas would re-run its (idempotent) iframe highlight pass on every render.
+  const anchoredMine = useMemo(
+    () => mine.filter(c => c.anchor).map(c => ({ id: c.id, anchor: c.anchor, status: 'open' as const })),
+    [mine],
+  );
+
   if (phase === 'loading') {
     return <div dir="rtl" className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-500">{t('جارٍ التحميل…', 'Loading…')}</div>;
   }
@@ -131,13 +158,18 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
   const d = tok!;
   return (
     <div dir="rtl" className="fixed inset-0 bg-white dark:bg-slate-900">
-      {/* The read-only canvas fills the screen (its own header carries title + export). */}
+      {/* The read-only canvas fills the screen (its own header carries title + export).
+          V31: when comments are allowed the client can also select text and add an
+          inline anchored comment (in addition to the free-text / visual-review drawer). */}
       <DocumentCanvas
+        ref={canvasApiRef}
         markdown=""
         initialHtml={d.html}
         title={d.docTitle}
         language="ar"
         readOnly
+        onAddComment={d.allowComments ? addInlineComment : undefined}
+        highlightAnchors={anchoredMine}
       />
 
       {/* Floating comments toggle (only when the owner allowed comments). */}
@@ -165,6 +197,13 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
                 <button onClick={() => setReviewMode(false)} className={`flex-1 py-1.5 rounded-lg text-xs font-bold ${!reviewMode ? 'bg-white dark:bg-slate-700 text-teal-700 dark:text-teal-300 shadow' : 'text-slate-500'}`}>{t('تعليق', 'Comment')}</button>
                 <button onClick={() => setReviewMode(true)} className={`flex-1 py-1.5 rounded-lg text-xs font-bold ${reviewMode ? 'bg-white dark:bg-slate-700 text-teal-700 dark:text-teal-300 shadow' : 'text-slate-500'}`}>{t('مراجعة بصرية', 'Visual review')}</button>
               </div>
+
+              {!reviewMode && (
+                <p className="text-[11px] text-teal-700 dark:text-teal-400 flex items-center gap-1.5">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                  {t('نصيحة: ظلّل أي جملة في المستند لإضافة تعليق عليها مباشرةً.', 'Tip: highlight any sentence in the document to comment on it directly.')}
+                </p>
+              )}
 
               <input type="text" value={author} onChange={e => setAuthor(e.target.value)} placeholder={t('اسمك (اختياري)', 'Your name (optional)')}
                 className="w-full text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2" />
@@ -203,7 +242,14 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
               {mine.length > 0 && (
                 <div className="border-t border-slate-100 dark:border-slate-800 pt-3 space-y-2">
                   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">{t('مساهماتك', 'Your submissions')}</p>
-                  {mine.map(c => (
+                  {mine.map(c => c.anchor ? (
+                    // Inline (anchored) comment — click to scroll the snapshot to its span.
+                    <button key={c.id} type="button" onClick={() => canvasApiRef.current?.scrollToComment(c.id)}
+                      className="block w-full text-start rounded-lg border border-slate-200 dark:border-slate-700 p-2 hover:border-teal-300 dark:hover:border-teal-700 transition-colors">
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 border-s-2 border-amber-300 dark:border-amber-700 ps-2 mb-1 line-clamp-2">«{c.anchor.quote}»</div>
+                      <div className="text-[12px] text-slate-700 dark:text-slate-200">{c.text}</div>
+                    </button>
+                  ) : (
                     <div key={c.id} className="text-[12px] text-slate-600 dark:text-slate-300 border-s-2 border-teal-200 dark:border-teal-800 ps-2">
                       {c.kind === 'review_check' && c.check && (
                         <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full me-1 ${c.check.verdict === 'pass' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>

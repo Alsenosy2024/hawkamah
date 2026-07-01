@@ -9,7 +9,7 @@ import type {
   GovDiagram, GovDiagramKind, GovGap, GovDocumentRecord, GovModelSnapshot,
   IntegrityIssue, MaturityReport, CoverageRow, FrameworkAlignment, GovAction,
   TraceChain, GovAgentStep, DocChunk, GeneratedArtifact, GovOrgUnit, DocComment,
-  GovComment,
+  GovComment, GovCommentAnchor,
 } from '../types';
 import { ingestDocument, summarizeSentiment } from '../services/ingestionService';
 import { extractFileText } from '../services/fileExtraction';
@@ -1775,6 +1775,19 @@ ${content.slice(0, 8000)}`;
     const rec: GovDocumentRecord = { ...canvasRec, canvasHtml: html, updatedAt: new Date().toISOString() };
     try { await saveGovDocument(rec); setCanvasRec(rec); setGovDocs(ds => ds.map(d => d.id === rec.id ? rec : d)); }
     catch (e: any) { alertMsg(t('فشل حفظ التعديلات: ', 'Failed to save edits: ') + (e?.message || e)); }
+  };
+  // V31 — the owner can also select text in the canvas and attach an anchored
+  // review comment (same GovComment model + persistence as client review comments,
+  // so it highlights, lists in the panel, and flows into the AI apply-comments run).
+  const addCanvasComment = async ({ anchor, text }: { anchor: GovCommentAnchor; text: string }) => {
+    if (!canvasRec) return;
+    const comment: GovComment = {
+      id: uid('cmt'), at: new Date().toISOString(),
+      author: auth.currentUser?.email || ADMIN_ACTOR, text, anchor, status: 'open',
+    };
+    const rec: GovDocumentRecord = { ...canvasRec, comments: [...(canvasRec.comments || []), comment], updatedAt: new Date().toISOString() };
+    try { await saveGovDocument(rec); setCanvasRec(rec); setGovDocs(ds => ds.map(d => d.id === rec.id ? rec : d)); }
+    catch (e: any) { alertMsg(t('تعذّر إضافة التعليق: ', 'Could not add the comment: ') + (e?.message || e)); throw e; }
   };
   // Mint a /?doc= client share from the live canvas HTML (snapshot persisted in
   // the token). docId = the record id so client comments surface in this library.
@@ -4349,6 +4362,7 @@ ${content.slice(0, 8000)}`;
           onShare={shareRecord(canvasRec)}
           comments={canvasRec.comments || []}
           commentsOpenByDefault={canvasPanelOpen}
+          onAddComment={addCanvasComment}
           onShareReview={() => mintReviewLink(canvasRec)}
           onApplyComments={async () => { const nx = await newDocVersion(canvasRec); setCanvasRec(nx); }}
         />
