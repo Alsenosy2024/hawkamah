@@ -36,7 +36,8 @@ import {
 } from '../services/governanceEngine';
 import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout, resolveOrgChartMermaid } from '../services/diagramService';
 import { exportGovernanceManual, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual, exportArtifactsBatch, exportArtifactsZip, type BatchFormat, type BatchMode } from '../services/exportService';
-import { generateJson } from '../services/agentOrchestrator';
+import { generateJson, generateJsonStream } from '../services/agentOrchestrator';
+import { extractPartialFields } from '../services/partialJson';
 import { GOV_DOC_CATALOG, CATALOG_CATEGORIES, recommendDocuments, type DocCatalogEntry } from '../services/governanceDocCatalog';
 import { analyzeIntegrity, maturity as computeMaturity, coverageMatrix, mergeModels, traceEntity } from '../services/governanceValidation';
 import { alignAll, standardsLens, buildCriteriaLens, type BuildCriterion } from '../services/governanceFrameworks';
@@ -2101,6 +2102,10 @@ ${content.slice(0, 8000)}`;
   // uploaded sources and write it into the shared `assessments` repository — now a
   // governance-pipeline action living in the Library stage.
   const [surveyBusy, setSurveyBusy] = useState(false);
+  // V35 — live streaming preview of the current-state diagnostic. Holds whatever
+  // of the score + three columns has arrived so far while the model writes; the
+  // authoritative report still lands in `localDiagnostic` once the stream ends.
+  const [streamingDiag, setStreamingDiag] = useState<{ totalScore?: number; strengths?: string; weaknesses?: string; recommendations?: string } | null>(null);
   const triggerAutoSurveyReport = async (feedback?: string) => {
     const targetComp = companyName;
     const reportTitle = docTitle || targetComp;
@@ -2199,19 +2204,43 @@ ${content.slice(0, 8000)}`;
       required: ['totalScore', 'strengths', 'weaknesses', 'recommendations'],
     };
     try {
-      // retry the grounded call up to 3× — transient API failures shouldn't drop the report.
-      // ROUTE through generateJson: it sets thinkingConfig (MEDIUM) so gemini-3.5-flash's
-      // default thinking doesn't starve the JSON output to empty (the root cause of the
-      // "تعذر إنشاء التقرير" failure), and it handles empty/fenced responses robustly.
+      // V35 — STREAM FIRST so the score + three columns fill in progressively as
+      // the model writes; `onText` parses the incomplete JSON leniently to drive
+      // the live preview. Streaming is best-effort: if it yields an incomplete or
+      // unparseable report we fall back to the EXISTING blocking 3× retry ladder,
+      // so generation is never made less reliable than before.
+      // ROUTE (fallback) through generateJson: it sets thinkingConfig (MEDIUM) so
+      // gemini-3.5-flash's default thinking doesn't starve the JSON output to empty
+      // (the root cause of the "تعذر إنشاء التقرير" failure), and it handles
+      // empty/fenced responses robustly.
       let parsed: any = null; let lastErr: any = null;
-      for (let attempt = 0; attempt < 3 && !parsed; attempt++) {
-        try {
-          const cand = await generateJson<any>(prompt, reportSchema, { temperature: 0.2 });
-          if (typeof cand.totalScore !== 'number' || !cand.strengths || !cand.weaknesses || !cand.recommendations) {
-            throw new Error('AI returned an incomplete diagnostic (missing score or narrative).');
-          }
-          parsed = cand;
-        } catch (e) { lastErr = e; if (attempt < 2) await new Promise(r => setTimeout(r, 800 * (attempt + 1))); }
+      try {
+        const cand = await generateJsonStream<any>(prompt, reportSchema, {
+          temperature: 0.2,
+          onText: (acc) => {
+            const p = extractPartialFields(acc, ['strengths', 'weaknesses', 'recommendations'], ['totalScore']);
+            setStreamingDiag({
+              totalScore: typeof p.totalScore === 'number' ? p.totalScore : undefined,
+              strengths: p.strengths as string,
+              weaknesses: p.weaknesses as string,
+              recommendations: p.recommendations as string,
+            });
+          },
+        });
+        if (typeof cand.totalScore === 'number' && cand.strengths && cand.weaknesses && cand.recommendations) parsed = cand;
+        else lastErr = new Error('AI returned an incomplete diagnostic (missing score or narrative).');
+      } catch (e) { lastErr = e; }
+      // Fallback: the existing blocking 3× retry ladder if streaming didn't yield a valid report.
+      if (!parsed) {
+        for (let attempt = 0; attempt < 3 && !parsed; attempt++) {
+          try {
+            const cand = await generateJson<any>(prompt, reportSchema, { temperature: 0.2 });
+            if (typeof cand.totalScore !== 'number' || !cand.strengths || !cand.weaknesses || !cand.recommendations) {
+              throw new Error('AI returned an incomplete diagnostic (missing score or narrative).');
+            }
+            parsed = cand;
+          } catch (e) { lastErr = e; if (attempt < 2) await new Promise(r => setTimeout(r, 800 * (attempt + 1))); }
+        }
       }
       if (!parsed) throw lastErr || new Error('diagnostic failed');
 
@@ -2268,6 +2297,7 @@ ${content.slice(0, 8000)}`;
       toast.error(ar ? 'تعذّر توليد تقرير الواقع الراهن — لم يُحفظ أي تقرير. أعد المحاولة.' : 'Failed to generate the diagnostic — nothing was saved. Please retry.');
     } finally {
       setSurveyBusy(false);
+      setStreamingDiag(null); // clear the live preview; the final report now renders
     }
   };
 
@@ -2289,6 +2319,12 @@ ${content.slice(0, 8000)}`;
       .filter((a: any) => a?.reportData && (a.assessmentType === 'survey' || a.userName?.includes?.('الواقع')))
       .sort((a: any, b: any) => String(b?.timestamp || '').localeCompare(String(a?.timestamp || '')))[0] || null;
   }, [localDiagnostic, allAssessments]);
+
+  // V35 — is the live streaming preview worth showing? True while generating and
+  // at least one of the score / three columns has arrived. Drives showing the
+  // progressive preview and dimming the stale report during a regeneration.
+  const streamPreviewActive = surveyBusy && !!streamingDiag &&
+    (streamingDiag.totalScore != null || !!streamingDiag.strengths || !!streamingDiag.weaknesses || !!streamingDiag.recommendations);
 
   // Project-first gating: every numbered stage requires an active project.
   const canGo = (s: number) =>
@@ -2917,10 +2953,42 @@ ${content.slice(0, 8000)}`;
                 {chunkCount === 0 && !model && <span className="text-xs text-amber-600 self-center">{t('افهرس المصادر أولاً من مرحلة المدخلات.', 'Index sources first from the Inputs stage.')}</span>}
               </div>
 
+              {/* V35 — live streaming preview: the score + three columns fill in
+                  progressively as the model writes. Same visual language as the
+                  final report; a pulsing caret / skeleton marks fields not yet
+                  arrived. During a regeneration the stale report below is dimmed
+                  so the user watches the NEW one build; on failure the stream
+                  yields nothing and the untouched report stays fully visible. */}
+              {streamPreviewActive && streamingDiag && (
+                <div className="space-y-4">
+                  <div className={UI.sectionAccent + ' flex items-center justify-between gap-3'}>
+                    <div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('درجة الحوكمة الكلية', 'Overall governance score')}
+                      </div>
+                      {streamingDiag.totalScore != null
+                        ? <div className="text-2xl font-bold text-slate-800 dark:text-slate-100">{Math.round(streamingDiag.totalScore)}<span className="text-base font-medium text-slate-500 dark:text-slate-400 ms-0.5">%</span></div>
+                        : <div className="h-8 w-16 mt-1 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />}
+                    </div>
+                    <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 animate-pulse whitespace-nowrap">{t('يكتب…', 'streaming…')}</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {[['نقاط القوة', 'Strengths', streamingDiag.strengths], ['نقاط الضعف', 'Weaknesses', streamingDiag.weaknesses], ['التوصيات', 'Recommendations', streamingDiag.recommendations]].map(([a, e, body], i) => (
+                      <div key={i} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                        <div className="font-black text-slate-700 dark:text-slate-200 text-sm mb-2">{t(a as string, e as string)}</div>
+                        {body
+                          ? <div className="text-[13px] text-slate-600 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">{body as string}<span className="animate-pulse text-emerald-500 dark:text-emerald-400">▌</span></div>
+                          : <div className="space-y-1.5"><div className="h-3 w-full rounded bg-slate-100 dark:bg-slate-700 animate-pulse" /><div className="h-3 w-5/6 rounded bg-slate-100 dark:bg-slate-700 animate-pulse" /><div className="h-3 w-2/3 rounded bg-slate-100 dark:bg-slate-700 animate-pulse" /></div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {latestDiagnostic?.reportData ? (() => {
                 const rd = latestDiagnostic.reportData;
                 return (
-                  <div className="space-y-4">
+                  <div className={'space-y-4' + (streamPreviewActive ? ' opacity-40 pointer-events-none transition-opacity' : '')}>
                     <div className={UI.sectionAccent + ' flex items-center justify-between'}>
                       <div>
                         <div className="text-xs text-slate-500 dark:text-slate-400">{t('درجة الحوكمة الكلية', 'Overall governance score')}</div>
@@ -2975,9 +3043,12 @@ ${content.slice(0, 8000)}`;
                   </div>
                 );
               })() : (
-                <div className="text-slate-400 text-sm rounded-lg border border-dashed border-slate-200 dark:border-slate-700 p-8 text-center bg-white dark:bg-slate-800">
-                  {t('لا يوجد تقرير واقع راهن بعد — اضغط «توليد تقرير الواقع الراهن».', 'No diagnostic yet — click "Generate diagnostic".')}
-                </div>
+                // Hide the empty-state while the first-generation preview is streaming.
+                !streamPreviewActive && (
+                  <div className="text-slate-400 text-sm rounded-lg border border-dashed border-slate-200 dark:border-slate-700 p-8 text-center bg-white dark:bg-slate-800">
+                    {t('لا يوجد تقرير واقع راهن بعد — اضغط «توليد تقرير الواقع الراهن».', 'No diagnostic yet — click "Generate diagnostic".')}
+                  </div>
+                )
               )}
 
               <StageNav back={() => gotoStage(0)} next={() => gotoStage(7)} nextLabel={t('التالي: الهيكل التنظيمي', 'Next: org structure')} ar={ar} />
