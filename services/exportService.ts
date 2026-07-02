@@ -361,12 +361,39 @@ function richDocxTable(headers: string[], rows: string[][], o?: ExportOptions): 
   });
 }
 
-/** Mermaid source → centered embedded image paragraphs (diagram INSIDE the document body). */
-async function mermaidBlockToDocx(code: string): Promise<Paragraph[]> {
+// D2 — labelled fallback for a diagram whose PNG render failed: a short caption
+// («تعذّر رسم المخطط») + the raw Mermaid source as a plain code block, styled the
+// same way the ordinary code-block path renders (mono font, light shading). A
+// diagram must NEVER vanish from the Word file — only the raster render is
+// best-effort; the source itself always makes it into the document.
+function mermaidFailureFallbackDocx(code: string, o?: ExportOptions): Paragraph[] {
+  const ar = (o?.language || 'ar') !== 'en';
+  const font = DOCX_FONT(o);
+  const caption = new Paragraph({
+    bidirectional: true,
+    alignment: AlignmentType.CENTER,
+    spacing: { before: 160, after: 60 },
+    children: [new TextRun({
+      text: ar ? 'تعذّر رسم المخطط — الكود التالي' : 'Could not render the diagram — source below',
+      bold: true, italics: true, color: GREY, font, size: 20,
+    })],
+  });
+  const codeLines = (code || '').split('\n').map(line => new Paragraph({
+    alignment: AlignmentType.LEFT,
+    shading: { fill: 'F1F5F9' },
+    children: [new TextRun({ text: line || ' ', font: MONO_FONT, size: 18 })],
+  }));
+  return [caption, ...codeLines, new Paragraph({ text: '', spacing: { after: 200 } })];
+}
+
+/** Mermaid source → centered embedded image paragraphs (diagram INSIDE the document body).
+ *  A render failure (D2) never drops the diagram silently — it falls back to a
+ *  labelled source block instead of an empty gap. */
+export async function mermaidBlockToDocx(code: string, o?: ExportOptions): Promise<Paragraph[]> {
   try {
     const { png, width, height } = await mermaidToPng(code);
     const img = dataUrlToUint8(png);
-    if (!img) return [];
+    if (!img) return mermaidFailureFallbackDocx(code, o);
     const MAXW = 620, MAXH = 760;
     const scale = Math.min(MAXW / (width || MAXW), MAXH / (height || MAXH), 1);
     return [new Paragraph({
@@ -376,7 +403,7 @@ async function mermaidBlockToDocx(code: string): Promise<Paragraph[]> {
         transformation: { width: Math.max(1, Math.round((width || MAXW) * scale)), height: Math.max(1, Math.round((height || MAXH) * scale)) },
       } as any)],
     })];
-  } catch { return []; } // un-renderable diagram → skip rather than dump raw code
+  } catch { return mermaidFailureFallbackDocx(code, o); }   // un-renderable diagram → labelled source, never skipped
 }
 
 async function blockToDocx(block: MdBlock, o?: ExportOptions): Promise<(Paragraph | Table)[]> {
@@ -440,7 +467,7 @@ async function blockToDocx(block: MdBlock, o?: ExportOptions): Promise<(Paragrap
       })];
     case 'code':
       // Mermaid → embedded rendered diagram (never raw code in the document).
-      if ((block.lang || '').toLowerCase() === 'mermaid') return mermaidBlockToDocx(block.text);
+      if ((block.lang || '').toLowerCase() === 'mermaid') return mermaidBlockToDocx(block.text, o);
       return block.text.split('\n').map(line => new Paragraph({
         alignment: AlignmentType.LEFT,
         shading: { fill: 'F1F5F9' },

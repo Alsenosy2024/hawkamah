@@ -24,16 +24,32 @@ import { exportMessageDocx, exportMessageXlsx } from '../services/exportService'
 import { exportMessagePptx } from '../services/pptxExport';
 import { rewriteSelection, type SmartEditAction } from '../services/governanceChat';
 import { anchorFromSelection, highlightComments, scrollToComment, type AnchoredComment } from '../services/commentAnchor';
+import DiagramChatEditor from './DiagramChatEditor';
 
 // A Mermaid diagram queued for PROGRESSIVE rendering (PRD V2/V3): the document
 // text shows within a beat, then each diagram fills into its placeholder.
-interface PendingDiagram { id: string; code: string; }
+export interface PendingDiagram { id: string; code: string; }
 
 // Placeholder figure shown until a diagram finishes rendering — keeps the page
 // layout stable and tells the reader a diagram is on the way (never a blank gap).
-function pendingPlaceholder(id: string, label: string): string {
-  return `<div class="dgm-host" id="${id}" data-dgm-pending="1" style="width:100%;min-height:88px;`
+// D1 — the placeholder stamps its own Mermaid source (data-mermaid-code) at
+// CREATION time, not only after a successful render: any snapshot serialized
+// WHILE this is still on screen (an export/save/share that races the injection)
+// still carries the source, so canvasHtmlToMarkdown's figureToMd can recover the
+// diagram for Word/PPTX/Excel, and a reopened/reshared snapshot can be healed
+// (re-queued for render) instead of showing a permanently stuck placeholder.
+function pendingPlaceholder(id: string, label: string, code: string): string {
+  const stamped = encodeURIComponent(code);
+  return `<div class="dgm-host" id="${id}" data-dgm-pending="1" data-mermaid-code="${stamped}" style="width:100%;min-height:88px;`
     + `display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12.5px">${label}…</div>`;
+}
+
+// D1 — pure gating check (no DOM, unit-testable): does this document HTML/DOM
+// snapshot currently carry an unresolved diagram placeholder? Export/save/share
+// must wait until this is false, or a placeholder — never the diagram itself —
+// can get baked into a PDF/DOCX/share snapshot while Mermaid is still injecting.
+export function hasPendingDiagrams(html: string): boolean {
+  return /\bdata-dgm-pending\s*=\s*"1"/i.test(html || '');
 }
 
 // ── prepare: markdown/spec → canvas HTML, Mermaid swapped for placeholders ──
@@ -41,7 +57,7 @@ function pendingPlaceholder(id: string, label: string): string {
 // huge diagram used to hang the whole canvas → "nothing shows / ~15 min"). The
 // document renders immediately with placeholder figures; the diagrams are then
 // rendered and injected progressively after the iframe loads.
-function prepareCanvasDoc(markdown: string, opts: MdToSpecOptions): { html: string; pending: PendingDiagram[] } {
+export function prepareCanvasDoc(markdown: string, opts: MdToSpecOptions): { html: string; pending: PendingDiagram[] } {
   const spec: DocSpec = extractDocSpec(markdown, opts) || markdownToDocSpec(markdown, opts);
   const pending: PendingDiagram[] = [];
   const label = opts.lang === 'en' ? 'Rendering diagram' : 'جارٍ رسم المخطط';
@@ -55,13 +71,48 @@ function placeholderMermaid(blocks: DocBlock[], pending: PendingDiagram[], label
     if (b.type === 'mermaid') {
       const id = `dgm-${pending.length}`;
       pending.push({ id, code: b.code });
-      blocks[i] = { type: 'figure', svg: pendingPlaceholder(id, label), alt: 'diagram' };
+      blocks[i] = { type: 'figure', svg: pendingPlaceholder(id, label, b.code), alt: 'diagram' };
     } else if (b.type === 'columns') {
       // recurse into column children, writing the swapped block back into place
       if (b.left) { const k = [b.left]; placeholderMermaid(k, pending, label); b.left = k[0]; }
       if (b.right) { const k = [b.right]; placeholderMermaid(k, pending, label); b.right = k[0]; }
     }
   }
+}
+
+// D3 — the in-place "edit this diagram" affordance rendered INSIDE each resolved
+// diagram host. It's plain injected markup (not React — the host document is a
+// srcDoc iframe), a hover-revealed button; the click is caught by ONE delegated
+// listener in handleIframeLoad (elements inside the iframe don't bubble to the
+// parent document, so the listener lives on the iframe's own `doc`). Stripped
+// again in liveHtml() before any export/save/share serialize (see there).
+function diagramEditAffordanceHtml(lang: 'ar' | 'en'): string {
+  const label = lang === 'en' ? 'Edit diagram' : 'تعديل المخطط';
+  return `<button type="button" class="dgm-edit-btn" data-dgm-edit="1" contenteditable="false" `
+    + `title="${label}" aria-label="${label}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" `
+    + `stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">`
+    + `<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>`;
+}
+
+// (Re)attach the affordance to every already-resolved diagram host that doesn't
+// have one yet. Covers three cases with one idempotent scan: a fresh diagram that
+// just finished rendering, the D1 healing pass, and a REOPENED saved/shared
+// snapshot (the affordance never rides into a persisted snapshot — see
+// liveHtml() — so it must be re-added on load).
+function attachDiagramAffordances(doc: Document, lang: 'ar' | 'en'): void {
+  doc.querySelectorAll<HTMLElement>('.dgm-host[data-mermaid-code]:not([data-dgm-pending])').forEach(host => {
+    if (!host.querySelector(':scope > .dgm-edit-btn')) {
+      host.insertAdjacentHTML('beforeend', diagramEditAffordanceHtml(lang));
+    }
+  });
+}
+
+// D3 — pure string transform (no DOM, unit-testable): remove the in-place "edit
+// diagram" affordance from a serialized document. liveHtml() runs this before
+// every export/save/share so the editing chrome never rides into a PDF, a
+// DOCX/PPTX/XLSX (via canvasHtmlToMarkdown), or a persisted/shared HTML snapshot.
+export function stripDiagramEditAffordance(html: string): string {
+  return (html || '').replace(/<button\b[^>]*\bdata-dgm-edit="1"[^>]*>[\s\S]*?<\/button\s*>/gi, '');
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -94,9 +145,9 @@ async function renderPendingDiagrams(
     if (!target) continue;
     target.innerHTML = inner;
     target.removeAttribute('data-dgm-pending');
-    // FE-3: stash the diagram source on the host so canvasHtmlToMarkdown can
-    // re-emit a ```mermaid block — that lets the Word/PPTX/Excel exporters embed
-    // the diagram as an image too (previously only the PDF carried diagrams).
+    // FE-3/D1: re-stamp the source (already present since creation — see
+    // pendingPlaceholder — but kept idempotent here too) so canvasHtmlToMarkdown
+    // can re-emit a ```mermaid block for the Word/PPTX/Excel exporters.
     try { target.setAttribute('data-mermaid-code', encodeURIComponent(p.code)); } catch { /* noop */ }
   }
 }
@@ -259,6 +310,18 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
   highlightAnchorsRef.current = highlightAnchors;
   const composerOpenRef = useRef(false);
   composerOpenRef.current = !!commentComposer;
+  // D1 — a brief bilingual notice shown ONLY when export/save/share actually had
+  // to wait on an in-flight diagram render (waitForDiagrams below); near-instant
+  // waits never flash it.
+  const [diagramsWaitNotice, setDiagramsWaitNotice] = useState(false);
+  // D3 — in-place diagram regenerate / natural-language edit. The hover/click
+  // affordance itself lives INSIDE the iframe (diagramEditAffordanceHtml, native
+  // CSS :hover — no cross-frame hover tracking needed); a single delegated click
+  // listener in handleIframeLoad reads the clicked diagram's id + stamped source
+  // and opens this PARENT overlay panel to edit it.
+  const [dgmEditor, setDgmEditor] = useState<{ id: string; code: string } | null>(null);
+  const [dgmRegenBusy, setDgmRegenBusy] = useState(false);
+  const [dgmSaving, setDgmSaving] = useState(false);
 
   const docTitle = useMemo(
     () => (title || (markdown.match(/^#{1,2}\s+(.+)$/m)?.[1] || t('وثيقة', 'Document'))).slice(0, 80).trim(),
@@ -321,6 +384,19 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     try { highlightComments(doc.body, anchored); } catch { /* noop */ }
   }, []);
 
+  // D3 — open the parent overlay panel for a clicked diagram, reading its CURRENT
+  // stamped Mermaid source straight off the host (always present since D1 stamps
+  // it at placeholder creation and every render pass keeps it in sync).
+  const openDiagramEditor = useCallback((id: string) => {
+    const doc = iframeRef.current?.contentDocument;
+    const host = doc?.getElementById(id);
+    if (!host) return;
+    let code = '';
+    try { code = decodeURIComponent(host.getAttribute('data-mermaid-code') || ''); } catch { /* noop */ }
+    if (!code) return;
+    setDgmEditor({ id, code });
+  }, []);
+
   // Enable in-place editing once the iframe document is ready.
   const handleIframeLoad = useCallback(() => {
     const doc = iframeRef.current?.contentDocument;
@@ -346,17 +422,49 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
         '.fig .svgwrap{display:block!important;width:100%!important;max-width:100%!important;overflow:auto;}'
         + '.fig .svgwrap svg{display:block!important;width:100%!important;height:auto!important;max-width:100%!important;max-height:620px;margin-inline:auto;}'
         + '.fig .svgwrap .dgm-host,.fig .svgwrap .dgm-fallback{width:100%;}'
-        + '@media print{.fig .svgwrap{overflow:visible}.fig .svgwrap svg,.fig svg{width:100%!important;height:auto!important;max-width:100%!important;max-height:250mm!important;}}';
+        + '@media print{.fig .svgwrap{overflow:visible}.fig .svgwrap svg,.fig svg{width:100%!important;height:auto!important;max-width:100%!important;max-height:250mm!important;}}'
+        // D3 — hover-revealed "edit diagram" affordance (native CSS :hover, no JS
+        // needed to show/hide it); never printed/exported (belt-and-suspenders —
+        // liveHtml() also strips the markup before any serialize).
+        + '.dgm-host{position:relative}'
+        + '.dgm-edit-btn{position:absolute;top:8px;inset-inline-end:8px;width:28px;height:28px;padding:0;border:none;'
+        + 'border-radius:8px;background:rgba(17,168,188,.94);color:#fff;display:flex;align-items:center;justify-content:center;'
+        + 'opacity:0;transform:translateY(-2px);transition:opacity .15s,transform .15s;cursor:pointer;z-index:4;}'
+        + '.dgm-host:hover .dgm-edit-btn,.dgm-edit-btn:focus-visible{opacity:1;transform:translateY(0)}'
+        + '@media print{.dgm-edit-btn{display:none!important}}';
       (doc.head || doc.documentElement).appendChild(st);
     }
 
     // PRD V2/V3: render the queued diagrams progressively into their placeholders.
-    const pending = pendingRef.current;
+    // D1 — heal a stuck/reopened snapshot: when this load has no FRESH pending
+    // queue (the initialHtml/reopen path never builds one — pendingRef stays []),
+    // but the DOM still carries [data-dgm-pending] hosts that stamped their source
+    // at creation, rescan and queue them too. Otherwise a placeholder saved mid-
+    // render (an export/save/share that raced the injection) would stay stuck
+    // forever — this is what actually resolves it on the next open.
+    let pending = pendingRef.current;
+    if (!pending.length) {
+      const orphans: PendingDiagram[] = [];
+      doc.querySelectorAll<HTMLElement>('[data-dgm-pending="1"][data-mermaid-code]').forEach((el: HTMLElement) => {
+        let code = '';
+        try { code = decodeURIComponent(el.getAttribute('data-mermaid-code') || ''); } catch { /* noop */ }
+        if (el.id && code) orphans.push({ id: el.id, code });
+      });
+      if (orphans.length) pending = orphans;
+    }
+    const lang = ar ? 'ar' : 'en';
     if (pending.length) {
       const run = ++renderRunRef.current;
-      void renderPendingDiagrams(doc, pending, ar ? 'ar' : 'en',
-        () => run === renderRunRef.current && !!iframeRef.current);
+      const alive = () => run === renderRunRef.current && !!iframeRef.current;
+      void renderPendingDiagrams(doc, pending, lang, alive).then(() => {
+        // D3 — attach the edit affordance to every diagram this pass just resolved.
+        if (alive() && !readOnly) attachDiagramAffordances(doc, lang);
+      });
     }
+    // D3 — attach the affordance to diagrams that are ALREADY resolved at load
+    // time (a reopened saved/shared snapshot never carries the affordance markup
+    // itself — see liveHtml() — so it must be re-added here on every load).
+    if (!readOnly) attachDiagramAffordances(doc, lang);
     // V21: paint the anchored review-comment highlights (both modes).
     applyCommentHighlights(doc);
 
@@ -386,6 +494,18 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
 
     if (readOnly) return;   // share view: no restyle / selection editing
 
+    // D3 — one delegated listener catches every diagram's edit affordance (present
+    // and future — a click on any [data-dgm-edit] button, however many render
+    // passes injected it). Elements inside the iframe don't bubble to the PARENT
+    // document, so this must live on the iframe's own `doc`, not on window/document.
+    doc.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement)?.closest?.('[data-dgm-edit="1"]') as HTMLElement | null;
+      if (!btn) return;
+      e.preventDefault();
+      const host = btn.closest('.dgm-host') as HTMLElement | null;
+      if (host?.id) openDiagramEditor(host.id);
+    });
+
     // Clicking the cover opens the restyle modal (instead of editing its text).
     const cover = doc.querySelector('.cover') as HTMLElement | null;
     if (cover) {
@@ -413,7 +533,7 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     doc.addEventListener('mouseup', updateAsk);
     doc.addEventListener('keyup', updateAsk);
     doc.addEventListener('scroll', () => setAskSel(null), true);
-  }, [onAskAi, ar, readOnly, applyCommentHighlights]);
+  }, [onAskAi, ar, readOnly, applyCommentHighlights, openDiagramEditor]);
 
   // Re-highlight when the comments (or client highlight-only anchors) change (e.g.
   // after an AI apply, or a new inline comment) without a full iframe reload.
@@ -520,6 +640,12 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     const doc = iframeRef.current?.contentDocument;
     let html = doc?.documentElement?.outerHTML || docHtml || '';
     if (!/^\s*<!doctype/i.test(html)) html = `<!DOCTYPE html>${html}`;
+    // D3 — the in-place "edit diagram" affordance (button + its stylesheet) is a
+    // live-canvas-only overlay, injected straight into the DOM for reliable native
+    // :hover + same-document click handling. Strip it here so it never rides into
+    // an export/save/share snapshot — every one of those paths serializes through
+    // this function. attachDiagramAffordances() re-adds it on the next load.
+    html = stripDiagramEditAffordance(html);
     // Reinforce color printing + strip the screen card chrome. Pagination is owned
     // by the document's own @media print rules (per-section pages, atomic blocks
     // never split) so the PDF matches the canvas — do NOT override break-* here.
@@ -529,11 +655,33 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     return html;
   }, [docHtml]);
 
+  // D1 — wait until no diagram placeholder is left unresolved in the live iframe
+  // (every diagram either rendered or fell back to its labelled source —
+  // renderPendingDiagrams always clears [data-dgm-pending] either way), so a
+  // still-injecting diagram can never get baked into a PDF/DOCX/share snapshot.
+  // Bounded (12s) so a stuck/aborted render pass can never hang export forever;
+  // shows a brief bilingual notice ONLY if the wait is actually noticeable.
+  const waitForDiagrams = useCallback(async (): Promise<void> => {
+    const readNow = () => hasPendingDiagrams(iframeRef.current?.contentDocument?.documentElement?.outerHTML || '');
+    if (!readNow()) return;
+    const noticeTimer = window.setTimeout(() => setDiagramsWaitNotice(true), 150);
+    try {
+      const deadline = Date.now() + 12000;
+      while (Date.now() < deadline && readNow()) {
+        await new Promise(resolve => window.setTimeout(resolve, 120));
+      }
+    } finally {
+      window.clearTimeout(noticeTimer);
+      setDiagramsWaitNotice(false);
+    }
+  }, []);
+
   // Export PDF: print the live document HTML in a dedicated hidden iframe. The
   // browser's own print engine shapes Arabic correctly and renders the woff2
   // brand font + colored backgrounds (print-color-adjust:exact) — a real,
   // selectable, vector PDF via "Save as PDF".
-  const exportPdf = useCallback(() => {
+  const exportPdf = useCallback(async () => {
+    await waitForDiagrams();   // D1 — never print a still-pending placeholder box
     const html = liveHtml();
     const frame = document.createElement('iframe');
     frame.setAttribute('aria-hidden', 'true');
@@ -556,7 +704,7 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     if (fonts?.ready?.then) fonts.ready.then(fire).catch(fire);
     else if (d.readyState === 'complete') fire();
     else frame.onload = fire;
-  }, [liveHtml]);
+  }, [liveHtml, waitForDiagrams]);
 
   // WYSIWYG export (PRD V12): Word / PowerPoint / Excel are built from the LIVE
   // edited canvas — we serialize its HTML back to Markdown and feed the shared
@@ -565,9 +713,10 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
   // the canvas + PDF carry the Thmanyah brand font (V13).
   const doExport = useCallback(async (kind: 'pdf' | 'docx' | 'pptx' | 'xlsx') => {
     setMenuOpen(false);
-    if (kind === 'pdf') { exportPdf(); return; }
+    if (kind === 'pdf') { await exportPdf(); return; }
     setExporting(kind);
     try {
+      await waitForDiagrams();   // D1 — never export a still-pending placeholder box
       const md = canvasHtmlToMarkdown(liveHtml());
       const company = (brand || '').split(/[·|]/)[0].trim() || undefined;
       if (kind === 'docx') await exportMessageDocx(md, docTitle, { language, companyName: company });
@@ -578,13 +727,63 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     } finally {
       setExporting('');
     }
-  }, [liveHtml, exportPdf, brand, docTitle, language]);
+  }, [liveHtml, exportPdf, waitForDiagrams, brand, docTitle, language]);
 
   // ── V11: floating smart-edit toolbar — act on the live selection IN PLACE ──
   // The edits land in the same designMode document the canvas exports, and we
   // persist them through the existing save path so they survive reload + flow
-  // into every export (ties to V12/V14).
-  const persist = useCallback(() => { onSave?.(liveHtml()); }, [onSave, liveHtml]);
+  // into every export (ties to V12/V14). D1 — waits for any in-flight diagram
+  // render first, so an auto-save mid-edit can never bake in a pending placeholder.
+  const persist = useCallback(async () => {
+    const save = onSave;
+    if (!save) return;
+    await waitForDiagrams();
+    save(liveHtml());
+  }, [onSave, liveHtml, waitForDiagrams]);
+
+  // D3 — shared by "إعادة توليد" (regenerate, same code) and the NL editor's save
+  // (new code): re-render the diagram's SVG through the SAME repair pipeline every
+  // Mermaid render goes through (mermaidToSvg → prepareMermaidForRender), swap it
+  // into its host in place, re-stamp the source, re-add the edit affordance, and
+  // persist via the existing save path.
+  const applyDiagramCode = useCallback(async (id: string, code: string): Promise<void> => {
+    const doc = iframeRef.current?.contentDocument;
+    const host = doc?.getElementById(id);
+    if (!doc || !host) return;
+    let inner: string;
+    try {
+      inner = makeSvgResponsive(await withTimeout(mermaidToSvg(code), 9000));
+    } catch {
+      inner = diagramFallbackHtml(code, ar ? 'ar' : 'en');
+    }
+    host.innerHTML = inner;
+    host.removeAttribute('data-dgm-pending');
+    try { host.setAttribute('data-mermaid-code', encodeURIComponent(code)); } catch { /* noop */ }
+    attachDiagramAffordances(doc, ar ? 'ar' : 'en');
+    await persist();
+  }, [ar, persist]);
+
+  // «إعادة توليد» — re-attempt the CURRENT diagram's render (recovers a transient
+  // failure/timeout, or simply refreshes it) without changing its source.
+  const regenerateDiagram = useCallback(async () => {
+    if (!dgmEditor || dgmRegenBusy) return;
+    setDgmRegenBusy(true);
+    try { await applyDiagramCode(dgmEditor.id, dgmEditor.code); }
+    finally { setDgmRegenBusy(false); }
+  }, [dgmEditor, dgmRegenBusy, applyDiagramCode]);
+
+  // DiagramChatEditor's onSave — a natural-language edit ("ضيف رئيس تنفيذي فوق")
+  // produced a NEW, already-validated Mermaid string; render + swap it in place.
+  const handleDiagramEditorSave = useCallback(async (nextCode: string) => {
+    if (!dgmEditor) return;
+    setDgmSaving(true);
+    try {
+      await applyDiagramCode(dgmEditor.id, nextCode);
+      setDgmEditor(prev => (prev && prev.id === dgmEditor.id ? { ...prev, code: nextCode } : prev));
+    } finally {
+      setDgmSaving(false);
+    }
+  }, [dgmEditor, applyDiagramCode]);
 
   // Replace the selected range with plain text, preferring execCommand so the
   // change joins designMode's own undo stack; falls back to a manual DOM swap.
@@ -659,11 +858,14 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     persist();
   }, [persist]);
 
-  const handleSave = useCallback(() => {
-    onSave?.(liveHtml());
+  const handleSave = useCallback(async () => {
+    const save = onSave;
+    if (!save) return;
+    await waitForDiagrams();   // D1 — never save a still-pending placeholder box
+    save(liveHtml());
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
-  }, [onSave, liveHtml]);
+  }, [onSave, liveHtml, waitForDiagrams]);
 
   // V14 — mint a /?doc= share from the LIVE canvas HTML (the host persists the
   // snapshot and returns the URL). Surfaces SNAPSHOT_TOO_LARGE / failures inline.
@@ -671,6 +873,7 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     if (!onShare || shareBusy) return;
     setShareBusy(true); setShareErr(''); setShareUrl(''); setShareCopied(false);
     try {
+      await waitForDiagrams();   // D1 — never share a still-pending placeholder box
       const { url } = await onShare(liveHtml(), {
         accessCode: shareCode.trim() || undefined,
         allowComments: shareAllowComments,
@@ -687,14 +890,14 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     } finally {
       setShareBusy(false);
     }
-  }, [onShare, shareBusy, liveHtml, shareCode, shareAllowComments, ar]);
+  }, [onShare, shareBusy, liveHtml, waitForDiagrams, shareCode, shareAllowComments, ar]);
 
   // Esc closes the canvas (when a close handler exists and no modal is open).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !coverOpen && !shareOpen) onClose?.(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !coverOpen && !shareOpen && !dgmEditor) onClose?.(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, coverOpen, shareOpen]);
+  }, [onClose, coverOpen, shareOpen, dgmEditor]);
 
   const tbtn = 'flex items-center justify-center w-8 h-8 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-[var(--hw-brand-50,#eef8fa)] hover:text-[var(--hw-brand,#11a8bc)] transition-colors shrink-0';
   const md = (e: React.MouseEvent, cmd: string, val?: string) => { e.preventDefault(); exec(cmd, val); };
@@ -1019,6 +1222,43 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
             </div>
 
             <p className="mt-4 text-[11px] text-slate-400">{t('يُطبَّق التغيير فوراً. أغلِق لمتابعة التحرير.', 'Changes apply immediately. Close to keep editing.')}</p>
+          </div>
+        </div>
+      )}
+
+      {/* D3 — in-place diagram editor: regenerate the current render, or edit the
+          diagram in natural language via the SAME chat editor the org-chart Build
+          stage uses. Owner canvas only — never reachable in the read-only share view. */}
+      {!readOnly && dgmEditor && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 p-4 dc-fade" onClick={() => setDgmEditor(null)}>
+          <div className="w-[620px] max-w-full max-h-[88vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-800 p-5 shadow-2xl dc-pop" onClick={e => e.stopPropagation()} dir={ar ? 'rtl' : 'ltr'}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">{t('تحرير المخطط', 'Edit diagram')}</h3>
+              <button type="button" onClick={() => setDgmEditor(null)} title={t('إغلاق', 'Close')} aria-label={t('إغلاق', 'Close')} className="gc-icon-btn"><IcClose /></button>
+            </div>
+            <button type="button" onClick={regenerateDiagram} disabled={dgmRegenBusy || dgmSaving}
+              title={t('أعِد رسم المخطط الحالي من جديد', 'Re-render the current diagram from scratch')}
+              className="hw-btn hw-btn-subtle hw-btn-sm !rounded-full mb-3 disabled:opacity-50">
+              {dgmRegenBusy ? <IcSpin /> : <IcRetry />}{t('إعادة توليد', 'Regenerate')}
+            </button>
+            <DiagramChatEditor
+              language={language}
+              initialMermaid={dgmEditor.code}
+              title={t('المخطط', 'Diagram')}
+              onSave={handleDiagramEditorSave}
+              saving={dgmSaving}
+            />
+            <p className="mt-3 text-[11px] text-slate-400">{t('يُطبَّق كل تعديل على المستند فوراً ويُحفظ.', 'Every edit applies to the document immediately and is saved.')}</p>
+          </div>
+        </div>
+      )}
+
+      {/* D1 — brief notice while export/save/share waits on an in-flight diagram
+          render (never shown for a near-instant wait — see waitForDiagrams). */}
+      {diagramsWaitNotice && (
+        <div className="fixed bottom-6 inset-x-0 z-[10002] flex justify-center pointer-events-none" dir={ar ? 'rtl' : 'ltr'}>
+          <div className="pointer-events-auto flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/90 text-white text-[12.5px] font-semibold shadow-2xl dc-pop">
+            <IcSpin />{t('بانتظار اكتمال المخططات…', 'Waiting for diagrams…')}
           </div>
         </div>
       )}
