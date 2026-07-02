@@ -26,7 +26,7 @@ from google.genai import types
 from . import genai_client
 from .config import SETTINGS
 from .exporters import Exported, ManualDoc, export, render_manual
-from .generation import GeneratedDoc, GroundingContext, generate_deliverable, generate_document
+from .generation import GeneratedDoc, GroundingContext, _as_grounding, generate_deliverable, generate_document
 from .rag import Evidence, RagEngine
 from .skill import (
     DELIVERABLES,
@@ -87,6 +87,14 @@ _WIZARD_HINT_AR = (
 # keeps bare acks like «نعم»/«تمام»/"ok"/«اه» OUT: they carry no greeting/thanks
 # token at all, so they fall through to the normal grounded path (they are answers
 # to a prior elicitation question, not smalltalk).
+#
+# P11 — the "one bare name" allowance used to accept ANY single extra token, so a
+# greeting+topic message ("هلا الحوكمة", "hi, policy?") was misread as pure
+# smalltalk and skipped RAG entirely. The tolerated token is now rejected outright
+# when it looks like a content word rather than a name: the message contains a
+# question mark, the token is longer than a name-sized ceiling, or the token
+# matches a small governance-domain stoplist (checked as a substring so Arabic
+# definite-article/plural forms like "الحوكمة" still match "حوكمة").
 _TASHKEEL_RE = re.compile(r"[ً-ْٰـ]")  # harakat + tatweel
 _ALEF_NORMALIZE = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي", "ؤ": "و", "ئ": "ي"})
 _NON_WORD_RE = re.compile(r"[^\w\s]", re.UNICODE)
@@ -127,6 +135,20 @@ _SMALLTALK_FILLER = {
 _SMALLTALK_MAX_CHARS = 40
 _SMALLTALK_MAX_TOKENS = 6
 
+# P11 — the single tolerated "unknown" token (the bare-name allowance) is rejected
+# when it looks like a content word: longer than a plausible name, or a substring
+# match against these common governance nouns (deliberately small — this is a
+# conservative last-mile guard, not a full stopword list; RAG retrieval already
+# handles the general case of a real governance question).
+_MAX_UNKNOWN_TOKEN_CHARS = 12
+_CONTENT_STOPLIST = {
+    "حوكمة", "سياسة", "سياسات", "لائحة", "لوائح", "تقرير", "تقارير", "وثيقة", "وثائق",
+    "استراتيج", "خطة", "خطط", "هيكل", "مخاطر", "ميثاق", "إجراء", "اجراء",
+    "مؤشرات", "لجنة", "لجان", "لجنه", "مستند",
+    "policy", "policies", "report", "reports", "document", "documents", "strategy",
+    "governance", "structure", "risk", "charter", "kpi", "kpis",
+}
+
 
 def _normalize_smalltalk(message: str) -> str:
     text = (message or "").strip().translate(_ALEF_NORMALIZE)
@@ -144,6 +166,10 @@ def _is_smalltalk(message: str) -> bool:
     matching rule."""
     if not message or len(message.strip()) >= _SMALLTALK_MAX_CHARS:
         return False
+    # P11 — a question mark always signals a real question, even a short
+    # greeting-shaped one ("hi, policy?"), so it can never be pure smalltalk.
+    if "?" in message or "؟" in message:
+        return False
     normalized = _normalize_smalltalk(message)
     if not normalized:
         return False
@@ -154,7 +180,15 @@ def _is_smalltalk(message: str) -> bool:
     if core_hits == 0:
         return False
     unknown = [t for t in tokens if t not in _SMALLTALK_CORE and t not in _SMALLTALK_FILLER]
-    return len(unknown) <= 1
+    if len(unknown) > 1:
+        return False
+    if unknown:
+        # P11 — the single tolerated token must look like a bare name, not a
+        # governance content word (see the stoplist/length rationale above).
+        token = unknown[0]
+        if len(token) > _MAX_UNKNOWN_TOKEN_CHARS or any(w in token for w in _CONTENT_STOPLIST):
+            return False
+    return True
 
 
 @dataclass
@@ -186,7 +220,16 @@ class HawkamaAgent:
         return self.rag.stats()
 
     # ------------------------------------------------------------------ ask
-    def ask(self, question: str, history: list[dict] | None = None) -> AskResult:
+    def ask(
+        self,
+        question: str,
+        history: list[dict] | None = None,
+        ground: "GroundingContext | dict | None" = None,
+    ) -> AskResult:
+        # P11 — accept the same GroundingContext /draft already honors (org units,
+        # roles, departments, current-state) so grounded answers about "our
+        # departments/roles" derive from the structured model, not just chunks.
+        ground = _as_grounding(ground)
         # P10: a standalone greeting/thanks skips retrieval entirely and gets a
         # tiny conversational reply — no evidence block, no [مصدر N], no document.
         if _is_smalltalk(question):
@@ -194,12 +237,19 @@ class HawkamaAgent:
             answer = genai_client.generate(contents, system=smalltalk_system_prompt(), temperature=0.5)
             return AskResult(answer=answer, sources=[])
         evidence = self.rag.retrieve(question)
-        contents = self._build_contents(question, evidence, history)
-        answer = genai_client.generate(contents, system=ask_system_prompt(), temperature=0.3)
+        contents = self._build_contents(question, evidence, history, ground=ground)
+        brief = ground.brief() if ground else ""
+        answer = genai_client.generate(contents, system=ask_system_prompt(brief), temperature=0.3)
         return AskResult(answer=answer, sources=evidence)
 
-    def ask_stream(self, question: str, history: list[dict] | None = None) -> Iterator[dict]:
+    def ask_stream(
+        self,
+        question: str,
+        history: list[dict] | None = None,
+        ground: "GroundingContext | dict | None" = None,
+    ) -> Iterator[dict]:
         """Yield {'type': 'sources'|'delta'|'done', ...} events for SSE."""
+        ground = _as_grounding(ground)
         # P10: same smalltalk shortcut as ask() — SSE event shape is unchanged
         # (sources → delta* → done), sources is just an empty list.
         if _is_smalltalk(question):
@@ -213,9 +263,10 @@ class HawkamaAgent:
             return
         evidence = self.rag.retrieve(question)
         yield {"type": "sources", "sources": [self._ev_dict(e) for e in evidence]}
-        contents = self._build_contents(question, evidence, history)
+        contents = self._build_contents(question, evidence, history, ground=ground)
+        brief = ground.brief() if ground else ""
         full = []
-        for piece in genai_client.generate_stream(contents, system=ask_system_prompt(), temperature=0.3):
+        for piece in genai_client.generate_stream(contents, system=ask_system_prompt(brief), temperature=0.3):
             full.append(piece)
             yield {"type": "delta", "text": piece}
         yield {"type": "done", "text": "".join(full)}
@@ -227,6 +278,7 @@ class HawkamaAgent:
         history: list[dict] | None,
         *,
         prompt_text: str | None = None,
+        ground: "GroundingContext | None" = None,
     ) -> list[types.Content]:
         """Prior turns as TYPED multi-turn Content + a final user turn carrying the
         instructions, question and freshly-retrieved evidence.
@@ -241,12 +293,14 @@ class HawkamaAgent:
         ``prompt_text`` (P10) overrides the final user turn with a raw, un-wrapped
         message — used by the smalltalk shortcut so the model sees the greeting
         as-is instead of the grounded ``_ask_prompt`` wrapper (evidence block,
-        citation instructions, etc.)."""
+        citation instructions, etc.). ``ground`` (P11) is forwarded into
+        ``_ask_prompt`` when building the grounded wrapper; already normalized by
+        the caller, so it is trusted as-is here."""
         contents = [
             types.Content(role=role, parts=[types.Part.from_text(text=text)])
             for role, text in self._history_window(history)
         ]
-        text = prompt_text if prompt_text is not None else self._ask_prompt(question, evidence)
+        text = prompt_text if prompt_text is not None else self._ask_prompt(question, evidence, ground)
         contents.append(types.Content(role="user", parts=[types.Part.from_text(text=text)]))
         return contents
 
@@ -255,17 +309,25 @@ class HawkamaAgent:
         """True when an ASK turn is really a 'build this' request (V5/V16)."""
         return bool(_BUILD_INTENT.search(message or ""))
 
-    def _ask_prompt(self, question: str, evidence: list[Evidence]) -> str:
+    def _ask_prompt(
+        self, question: str, evidence: list[Evidence], ground: "GroundingContext | None" = None,
+    ) -> str:
         ev_block = self.rag.format_evidence(evidence)
         # V5/V16: on a build-intent ASK, steer the copilot to converse + propose an
         # editable plan before generating, rather than dumping a document.
         wizard = _WIZARD_HINT_AR if self._is_build_request(question) else ""
+        # P11 — the same company-specific briefing /draft injects via
+        # GroundingContext.brief(), so "our departments/roles" questions answer
+        # from the real org model instead of only whatever text a chunk contains.
+        brief = ground.brief() if ground else ""
+        brief_block = f"== سياق المنظمة ==\n{brief}\n\n" if brief else ""
         return (
             f"السؤال: {question}\n\n"
             "أجب بدقة واستنادًا إلى الأدلة أدناه فقط فيما يخص وقائع المنظمة، مع الاستشهاد "
             "بـ [مصدر N]. إن لم تكفِ الأدلة فاذكر ذلك واقترح ما يلزم من ملفات. استعن بسياق "
             "المحادثة السابق لفهم الإحالات (مثل «وسّع ذلك» أو «والإدارة الأخرى؟») دون تكراره.\n\n"
             f"{wizard}"
+            f"{brief_block}"
             f"== الأدلة ==\n{ev_block or 'لا توجد ملفات مفهرسة بعد.'}"
         )
 

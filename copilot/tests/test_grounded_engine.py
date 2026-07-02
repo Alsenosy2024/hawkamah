@@ -427,3 +427,90 @@ def test_generate_full_model_grounded(fake_gemini, tmp_corpus):
     # The org-structure doc is grounded in the real units.
     org_doc = next(d for d in docs if "الهيكل" in d.title)
     assert "flowchart TD" in org_doc.markdown
+
+
+# --------------------------------------------------------------------------- #
+# P11 — ungrounded-section signal: a thin/empty corpus must surface honestly,   #
+# not silently render best-practice boilerplate as if it were company fact.    #
+# --------------------------------------------------------------------------- #
+def test_draft_section_flags_ungrounded_and_softens_prompt(fake_gemini, tmp_corpus, monkeypatch):
+    from hawkama_copilot.generation import Section, _draft_section
+    from hawkama_copilot.rag import RagEngine
+
+    rag = RagEngine("p11_empty")  # never ingested — always zero evidence
+    captured = {}
+
+    def _spy_generate(prompt, **kw):
+        captured["prompt"] = prompt
+        return "## قسم\nمحتوى [مصدر 1]."
+
+    monkeypatch.setattr(generation.genai_client, "generate", _spy_generate)
+
+    section = Section(title="سياسة الإجازات", goal="صياغة سياسة الإجازات كاملة")
+    out = _draft_section(section, "وثيقة تجريبية", ["سياسة الإجازات"], rag, section_tokens=2048, language="ar")
+
+    assert out.grounded is False
+    # The prompt must clearly mark the content as general guidance, not company
+    # fact — never silently fall back to "design per best practices" alone.
+    assert "لا تختلق وقائع" in captured["prompt"]
+    assert "⚠️" in captured["prompt"]
+
+
+def test_draft_section_flags_grounded_when_evidence_present(fake_gemini, tmp_corpus):
+    from hawkama_copilot.generation import Section, _draft_section
+    from hawkama_copilot.rag import RagEngine
+
+    rag = RagEngine("p11_full")
+    rag.ingest_bytes([("HR.md", HR_TEXT.encode("utf-8"))])
+    section = Section(title="التعيين والتوظيف", goal="سياسة التعيين والكفاءة")
+    out = _draft_section(section, "وثيقة", ["التعيين والتوظيف"], rag, section_tokens=2048, language="ar")
+    assert out.grounded is True
+    assert out.sources
+
+
+def test_pinned_section_is_always_grounded(fake_gemini, tmp_corpus):
+    from hawkama_copilot.generation import Section, _draft_section
+    from hawkama_copilot.rag import RagEngine
+
+    rag = RagEngine("p11_pinned")  # unused — pinned sections never retrieve
+    section = Section(title="الهيكل", goal="مبني آليًا", body="محتوى مسبق", pinned=True)
+    out = _draft_section(section, "وثيقة", ["الهيكل"], rag, section_tokens=2048, language="ar")
+    assert out is section
+    assert out.grounded is True
+
+
+def test_generated_doc_ungrounded_sections_counts():
+    from hawkama_copilot.generation import GeneratedDoc, Section
+
+    doc = GeneratedDoc(
+        title="وثيقة",
+        markdown="# وثيقة",
+        sections=[
+            Section(title="أ", goal="أ", grounded=True),
+            Section(title="ب", goal="ب", grounded=False),
+            Section(title="ج", goal="ج", grounded=False),
+        ],
+        sources=[],
+        word_count=10,
+    )
+    assert doc.ungrounded_sections == 2
+
+
+def test_generate_document_on_empty_corpus_flags_every_section_ungrounded(fake_gemini, tmp_corpus):
+    from hawkama_copilot.rag import RagEngine
+
+    rag = RagEngine("p11_doc_empty")  # never ingested
+    # Drafting must still work for a thin/empty corpus (never a hard refusal) —
+    # it just has to be HONEST that nothing here is grounded in the org's files.
+    doc = generate_document("وثيقة حوكمة", "هدف تجريبي", rag, parallel_sections=False)
+    assert doc.sections
+    assert doc.ungrounded_sections == len(doc.sections)
+
+
+def test_generate_document_with_matching_corpus_has_no_ungrounded_sections(fake_gemini, tmp_corpus):
+    from hawkama_copilot.rag import RagEngine
+
+    rag = RagEngine("p11_doc_full")
+    rag.ingest_bytes([("HR.md", HR_TEXT.encode("utf-8"))])
+    doc = generate_document("سياسة الموارد البشرية", "هدف", rag, parallel_sections=False)
+    assert doc.ungrounded_sections == 0

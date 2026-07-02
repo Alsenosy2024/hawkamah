@@ -141,10 +141,20 @@ async def ask(body: dict[str, Any]) -> StreamingResponse:
     if not question:
         raise HTTPException(400, "message is required")
     agent = get_agent(corpus)
+    # P11 — /ask now honors the same GroundingContext (org units, roles,
+    # departments, current-state) that /draft, /draft/stream and /build_full
+    # already apply, via the shared _grounding_from_body helper.
+    ground = _grounding_from_body(body)
 
     def event_stream():
-        for ev in agent.ask_stream(question, history):
-            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        # P11 — a mid-stream Gemini error used to abort the raw chunked response
+        # with no signal; now it closes with a clean SSE error event, matching
+        # /draft/stream's protocol.
+        try:
+            for ev in agent.ask_stream(question, history, ground=ground):
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -347,7 +357,11 @@ def _doc_payload(doc: GeneratedDoc, with_html: bool = True) -> dict[str, Any]:
         "markdown": doc.markdown,
         "word_count": doc.word_count,
         "pages": doc.page_estimate,
-        "sections": [{"title": s.title, "goal": s.goal} for s in doc.sections],
+        # P11 — per-section `grounded` + a top-level `ungrounded_sections` count
+        # so the caller can tell a thin/empty-corpus draft (best-practice
+        # boilerplate) apart from one actually derived from the org's own files.
+        "sections": [{"title": s.title, "goal": s.goal, "grounded": s.grounded} for s in doc.sections],
+        "ungrounded_sections": doc.ungrounded_sections,
         "sources": [
             {"label": e.label, "doc": e.doc_name, "heading": e.heading_path}
             for s in doc.sections for e in s.sources

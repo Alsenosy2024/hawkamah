@@ -363,12 +363,20 @@ CONVERSATION_RULE = (
 )
 
 
-def ask_system_prompt() -> str:
+def ask_system_prompt(brief: str = "") -> str:
     """System prompt for the /ask (conversational Q&A) path ONLY — persona +
-    grounding + formatting + CONVERSATION_RULE. Scoped away from generation.py's
-    ``system_prompt()`` calls so document drafting keeps its report-length,
-    zero-clarifying-questions register untouched (see the NOTE on system_prompt)."""
-    return system_prompt(CONVERSATION_RULE)
+    grounding + formatting + CONVERSATION_RULE (+ an optional company-specific
+    briefing). Scoped away from generation.py's ``system_prompt()`` calls so
+    document drafting keeps its report-length, zero-clarifying-questions register
+    untouched (see the NOTE on system_prompt).
+
+    ``brief`` (P11) is the same ``GroundingContext.brief()`` text /draft already
+    injects via ``grounded_system_prompt()`` — naming the org's real departments/
+    criteria so grounded ASK answers about "our departments/roles" derive from the
+    structured governance model, not only from whatever text a chunk happens to
+    contain. Absent → identical to the pre-P11 prompt."""
+    extra = f"{CONVERSATION_RULE}\n\n{brief}" if brief else CONVERSATION_RULE
+    return system_prompt(extra)
 
 
 # P10 — a standalone-greeting/thanks turn gets NO persona, NO grounding block, NO

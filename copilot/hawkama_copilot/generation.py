@@ -64,6 +64,11 @@ class Section:
     body: str = ""
     sources: list[Evidence] = field(default_factory=list)
     pinned: bool = False  # deterministic body (org chart / axis matrix) — never redrafted
+    # P11 — True unless this section was drafted with ZERO retrieved evidence, in
+    # which case its content is best-practice guidance rather than a claim about
+    # the organization. Pinned sections are always grounded (built from the real
+    # org units, not free-form prose).
+    grounded: bool = True
 
 
 @dataclass
@@ -78,6 +83,13 @@ class GeneratedDoc:
     def page_estimate(self) -> int:
         # ~450 words per A4 page of Arabic body text.
         return max(1, round(self.word_count / 450))
+
+    @property
+    def ungrounded_sections(self) -> int:
+        """Count of sections drafted with no retrieved evidence (P11) — the
+        machine-readable signal that a thin/empty corpus produced best-practice
+        boilerplate rather than facts about the organization."""
+        return sum(1 for s in self.sections if not s.grounded)
 
 
 # --------------------------------------------------------------------------- #
@@ -163,6 +175,26 @@ def _as_grounding(ground: "GroundingContext | dict | None") -> GroundingContext 
         )
         return None if g.is_empty else g
     return None
+
+
+# P11 — fallback text injected in place of the evidence block when retrieval
+# comes back empty (fresh/thin tenant corpus). Previously this just told the
+# model to "design per best practices" with no instruction to LABEL that content
+# as general guidance rather than a fact about the organization — so a thin
+# corpus silently produced prose that read exactly like a grounded finding. Both
+# now explicitly require a visible disclaimer instead of a silent fallback.
+_NO_EVIDENCE_OUTLINE_NOTE = (
+    "لا توجد أدلة كافية من ملفات المنظمة. صمّم الخطة وفق أفضل الممارسات العامة، "
+    "واذكر بوضوح أن الأقسام التي تفتقر إلى دليل ستُبنى على إرشادات عامة لا على "
+    "وقائع مؤكدة عن المنظمة إلى أن تتوفر الأدلة."
+)
+_NO_EVIDENCE_SECTION_NOTE = (
+    "لا توجد أدلة مباشرة من ملفات المنظمة لهذا القسم. لا تختلق وقائع كأنها عن "
+    "المنظمة. اكتب المحتوى بصفته إرشادًا عامًا وفق أفضل الممارسات فقط، وابدأ "
+    "القسم بسطر تنبيه صريح مشابه لِـ: «⚠️ لا تتوفر أدلة من ملفات المنظمة لهذا "
+    "القسم — المحتوى أدناه إرشادات عامة وفق أفضل الممارسات وتحتاج مراجعة وتكييف "
+    "على واقع المنظمة الفعلي.» ثم أكمل المحتوى دون عرضه كواقع مؤكد أو خاص بالمنظمة."
+)
 
 
 _OUTLINE_SCHEMA = {
@@ -601,7 +633,7 @@ def build_outline(
         "للوثيقة. لكل قسم: عنوان دقيق و«goal» يصف ما يجب أن يغطيه القسم تحديدًا مستندًا "
         "إلى واقع المنظمة. اجعل الأقسام كافية لإنتاج وثيقة احترافية كاملة "
         f"(حتى {max_sections} قسمًا).\n\n"
-        f"== الأدلة ==\n{ev_block or 'لا توجد أدلة كافية؛ صمّم الخطة وفق أفضل الممارسات واذكر مواضع نقص الدليل.'}"
+        f"== الأدلة ==\n{ev_block or _NO_EVIDENCE_OUTLINE_NOTE}"
     )
     data = genai_client.generate_json(
         prompt,
@@ -645,6 +677,10 @@ def _draft_section(
         return section
     evidence = rag.retrieve(f"{section.title}\n{section.goal}", k=8)
     section.sources = evidence
+    # P11 — zero retrieved evidence ⇒ this section's content is best-practice
+    # guidance, not a fact about the organization; surfaced to callers via
+    # GeneratedDoc.ungrounded_sections (see api._doc_payload).
+    section.grounded = bool(evidence)
     ev_block = rag.format_evidence(evidence, max_chars=18000)
     coherence = " | ".join(outline_titles)
 
@@ -688,7 +724,7 @@ def _draft_section(
         "- حافظ على تطابق المسميات (إدارات/أدوار/سياسات/مؤشرات) مع بقية الوثيقة.\n"
         f"{dept_rule}"
         "- عند نقص الدليل لقسم ما، اكتب توصية واضحة واذكر الدليل الناقص بدل اختلاق وقائع.\n\n"
-        f"== الأدلة المتاحة لهذا القسم ==\n{ev_block or 'لا توجد أدلة مباشرة؛ استند لأفضل الممارسات واذكر نقص الدليل.'}"
+        f"== الأدلة المتاحة لهذا القسم ==\n{ev_block or _NO_EVIDENCE_SECTION_NOTE}"
         f"{ground_block}"
     )
     body = genai_client.generate(
