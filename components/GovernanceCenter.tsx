@@ -54,6 +54,11 @@ import ThinkingTrace from './ThinkingTrace';
 import ArtifactProgress from './ArtifactProgress';
 import SwimlaneView from './SwimlaneView';
 import { generateSwimlane, buildProvenance as buildSwimlaneProvenance, type SwimlaneSpec } from '../services/swimlaneService';
+// P16-I — still needed here: the org-structure Stage-4 live node/edge editor
+// (model-bound unit/role/policy/procedure editing). PR #95 removed this import
+// because it dropped GovernanceCanvas from the DIAGRAM gallery (routed through
+// EditableDiagram there instead) — a separate, unrelated usage from this one.
+import GovernanceCanvas from './GovernanceCanvas';
 import DiagramChatEditor from './DiagramChatEditor';
 import EditableDiagram from './EditableDiagram';
 import GovCopilot from './GovCopilot';
