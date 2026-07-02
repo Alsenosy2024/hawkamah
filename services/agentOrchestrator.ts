@@ -113,6 +113,65 @@ function extractJson(raw: string): string {
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
+ * Combines a caller-supplied AbortSignal with an internal deadline into one
+ * downstream AbortController, so a single signal captures both "caller gave
+ * up" and "we gave up waiting" (the SDK's own `abortSignal` is a client-only
+ * cancel — the goal here is bounding OUR wait, not the server's work).
+ * `reset(ms)` re-arms the deadline without touching the caller-abort wiring —
+ * used by the streaming variant to implement an inter-chunk stall timeout
+ * instead of one flat cap. `dispose()` MUST be called exactly once (in a
+ * `finally`) to clear the timer and detach the listener on `callerSignal` —
+ * otherwise listeners pile up across retry attempts.
+ */
+function withDeadline(callerSignal: AbortSignal | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const onCallerAbort = () => controller.abort();
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener('abort', onCallerAbort);
+  }
+
+  const arm = (ms: number) => {
+    if (timer) clearTimeout(timer);
+    if (controller.signal.aborted) return;
+    timer = setTimeout(() => { timedOut = true; controller.abort(); }, ms);
+  };
+  arm(timeoutMs);
+
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    reset: (ms: number) => arm(ms),
+    dispose: () => {
+      if (timer) clearTimeout(timer);
+      callerSignal?.removeEventListener('abort', onCallerAbort);
+    },
+  };
+}
+
+/**
+ * Settles as soon as `signal` aborts, even if `promise` itself never settles.
+ * Needed because AbortSignal is only a hint to the SDK's transport — a
+ * slow/misbehaving or mocked call is not guaranteed to actually reject
+ * promptly just because the signal fired, so we can't rely on that alone to
+ * bound the wait.
+ */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error('DEADLINE_ABORT'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error('DEADLINE_ABORT'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (v) => { signal.removeEventListener('abort', onAbort); resolve(v); },
+      (e) => { signal.removeEventListener('abort', onAbort); reject(e); },
+    );
+  });
+}
+
+/**
  * Non-streaming JSON helper (outline / critique / question-gen). Honors abort.
  *
  * CRITICAL: a thinking budget can silently eat the WHOLE output budget — when
@@ -133,11 +192,16 @@ export async function generateJson<T = any>(
     thinkingLevel?: ThinkingLevel;
     disableThinking?: boolean;
     retries?: number;
+    /** Per-attempt wall-clock deadline. Without this, a hung/slow request
+     *  stalled forever — opts.signal was only ever checked BEFORE each attempt
+     *  and in the catch, never during the in-flight HTTP call. Default 150s. */
+    timeoutMs?: number;
   } = {},
 ): Promise<T> {
   const ai = getAI();
   const maxOutputTokens = opts.maxOutputTokens ?? 32000;
   const retries = opts.retries ?? 2;
+  const timeoutMs = opts.timeoutMs ?? 150_000;
   // Thinking tokens eat into the output budget — disable for structured JSON generation.
   const thinkingConfig = opts.disableThinking
     ? { thinkingBudget: 0 }
@@ -146,19 +210,24 @@ export async function generateJson<T = any>(
   let lastErr: any;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (opts.signal?.aborted) throw new Error('ABORTED');
+    const deadline = withDeadline(opts.signal, timeoutMs);
     try {
-      const res = await ai.models.generateContent({
-        model: MODEL,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          systemInstruction: opts.systemInstruction,
-          temperature: opts.temperature ?? 0.3,
-          responseMimeType: 'application/json',
-          responseSchema,
-          maxOutputTokens,
-          thinkingConfig,
-        },
-      });
+      const res = await raceAbort(
+        ai.models.generateContent({
+          model: MODEL,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: {
+            systemInstruction: opts.systemInstruction,
+            temperature: opts.temperature ?? 0.3,
+            responseMimeType: 'application/json',
+            responseSchema,
+            maxOutputTokens,
+            thinkingConfig,
+            abortSignal: deadline.signal,
+          },
+        }),
+        deadline.signal,
+      );
       const raw = (res.text || '').trim();
       if (!raw) {
         throw new Error('GENJSON_EMPTY: model returned no content (blocked or truncated)');
@@ -167,9 +236,12 @@ export async function generateJson<T = any>(
       const jsonStr = extractJson(raw); // throws GENJSON_PARSE → treated as transient → retried
       return JSON.parse(jsonStr) as T;
     } catch (err) {
-      lastErr = err;
-      if (opts.signal?.aborted) throw new Error('ABORTED');
-      const transient = isTransient(err);
+      const callerAborted = !!opts.signal?.aborted;
+      const timedOut = !callerAborted && deadline.timedOut();
+      const effectiveErr = timedOut ? new Error(`timeout: generateJson request exceeded ${timeoutMs}ms`) : err;
+      lastErr = effectiveErr;
+      if (callerAborted) throw new Error('ABORTED');
+      const transient = isTransient(effectiveErr);
       if (transient && attempt < retries) {
         await sleep(800 * (attempt + 1) + Math.floor(Math.random() * 400)); // backoff + jitter
         continue;
@@ -177,8 +249,13 @@ export async function generateJson<T = any>(
       if (!transient) {
         throw new Error('GENJSON_PARSE: model returned non-JSON output');
       }
+      // A deadline expiry is a distinct, actionable failure — surface it as-is
+      // rather than folding it into the generic "no content" message below.
+      if (timedOut) throw effectiveErr;
       // exhausted retries on a transient failure
       throw new Error('GENJSON_EMPTY: model returned no content after retries (blocked or truncated)');
+    } finally {
+      deadline.dispose();
     }
   }
   throw lastErr ?? new Error('GENJSON_EMPTY: unknown failure');
@@ -203,40 +280,65 @@ export async function generateJsonStream<T = any>(
     onText?: (accumulated: string) => void;
     maxOutputTokens?: number;
     thinkingLevel?: ThinkingLevel;
+    /** Inter-chunk STALL deadline, reset on every chunk received — NOT a
+     *  total cap, since a long stream is legitimate. Fires only when no new
+     *  chunk arrives within the window. Default 90s. */
+    timeoutMs?: number;
   } = {},
 ): Promise<T> {
   const ai = getAI();
+  const staleMs = opts.timeoutMs ?? 90_000;
+  const deadline = withDeadline(opts.signal, staleMs);
   let acc = '';
-  const stream = await ai.models.generateContentStream({
-    model: MODEL,
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema,
-      temperature: opts.temperature ?? 0.2,
-      // Mirrors generateJson's fix (see its docstring above): an unbounded
-      // thinking budget at MEDIUM can silently eat the WHOLE output budget,
-      // truncating the streamed JSON — extractJson then throws at stream end
-      // and the caller falls back to the blocking ladder, so the live
-      // preview never shows for exactly the long (comprehensive) runs that
-      // need it most. Explicit large budget + LOW thinking keeps the output
-      // budget intact.
-      maxOutputTokens: opts.maxOutputTokens ?? 32000,
-      thinkingConfig: { thinkingLevel: opts.thinkingLevel ?? ThinkingLevel.LOW },
-    },
-  });
+  try {
+    const stream = await raceAbort(
+      ai.models.generateContentStream({
+        model: MODEL,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema,
+          temperature: opts.temperature ?? 0.2,
+          // Mirrors generateJson's fix (see its docstring above): an unbounded
+          // thinking budget at MEDIUM can silently eat the WHOLE output budget,
+          // truncating the streamed JSON — extractJson then throws at stream end
+          // and the caller falls back to the blocking ladder, so the live
+          // preview never shows for exactly the long (comprehensive) runs that
+          // need it most. Explicit large budget + LOW thinking keeps the output
+          // budget intact.
+          maxOutputTokens: opts.maxOutputTokens ?? 32000,
+          thinkingConfig: { thinkingLevel: opts.thinkingLevel ?? ThinkingLevel.LOW },
+          abortSignal: deadline.signal,
+        },
+      }),
+      deadline.signal,
+    );
 
-  for await (const chunk of stream) {
-    if (opts.signal?.aborted) break;
-    const parts = chunk?.candidates?.[0]?.content?.parts;
-    if (!parts) continue;
-    for (const part of parts) {
-      const text = (part as any)?.text;
-      if (typeof text !== 'string' || !text) continue;
-      if ((part as any).thought === true) continue; // skip visible reasoning
-      acc += text;
+    // Drive the async iterator manually (rather than `for await...of`) so each
+    // `.next()` call — i.e. the wait for the NEXT chunk — is itself bounded by
+    // the stall deadline. A `for await` loop has no way to interrupt a pull
+    // that never settles.
+    const iterator = (stream as AsyncIterable<any>)[Symbol.asyncIterator]();
+    while (true) {
+      const { value: chunk, done } = await raceAbort(iterator.next(), deadline.signal);
+      if (done) break;
+      deadline.reset(staleMs); // a chunk arrived — push the stall window back out
+      const parts = chunk?.candidates?.[0]?.content?.parts;
+      if (!parts) continue;
+      for (const part of parts) {
+        const text = (part as any)?.text;
+        if (typeof text !== 'string' || !text) continue;
+        if ((part as any).thought === true) continue; // skip visible reasoning
+        acc += text;
+      }
+      opts.onText?.(acc);
     }
-    opts.onText?.(acc);
+  } catch (err) {
+    if (opts.signal?.aborted) throw err;
+    if (deadline.timedOut()) throw new Error(`timeout: generateJsonStream stalled for ${staleMs}ms without a new chunk`);
+    throw err;
+  } finally {
+    deadline.dispose();
   }
 
   // Reuse the blocking helper's robust extraction: strips ```json fences and
