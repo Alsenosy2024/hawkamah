@@ -16,6 +16,7 @@ import { buildSingleResponseArtifact, SURVEY_FIELDS } from '../services/surveyRe
 import { exportDocx } from '../services/exportService';
 import { UI, badge } from '../services/designTokens';
 import { useToast } from './ToastProvider';
+import { useArtifactExport } from '../hooks/useArtifactExport';
 import JSZip from 'jszip';
 
 interface Props {
@@ -35,13 +36,15 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
   const [bulkExporting, setBulkExporting] = useState(false);
+  // [MINOR fix] shared busy/toast wrapper for the buildXArtifact→exportDocx
+  // export below (was its own `surveyExporting` copy — see hooks/useArtifactExport.ts).
+  const exp = useArtifactExport(language);
 
   // V36 — environment-survey replies (survey_responses collection) shown alongside
   // the employee assessments so every reply type is recorded in one place.
   const [surveys, setSurveys]             = useState<PublicSurveyResponse[]>([]);
   const [surveyExpanded, setSurveyExpanded] = useState<string | null>(null);
   const [surveyAnalyzing, setSurveyAnalyzing] = useState<string | null>(null);
-  const [surveyExporting, setSurveyExporting] = useState<string | null>(null);
 
   // Load BOTH record types concurrently. allSettled (not Promise.all's fail-fast)
   // so a failure of one list never blanks the other — we still surface one toast.
@@ -190,23 +193,16 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
   };
 
   // V36 — export one environment-survey reply (same DOCX artifact ResponsesCenter uses).
-  const handleExportSurvey = async (s: PublicSurveyResponse) => {
-    setSurveyExporting(s.id);
-    try {
-      const art = buildSingleResponseArtifact({
-        userName: s.respondentName,
-        jobTitle: s.respondentJobTitle,
-        department: s.respondentDepartment,
-        workplaceAnswers: s.answers,
-        envReportData: s.analysis ?? null,
-      }, language);
-      await exportDocx(art);
-    } catch (err: unknown) {
-      toast.error(t('فشل تصدير Word: ', 'Word export failed: ') + (err as Error).message);
-    } finally {
-      setSurveyExporting(null);
-    }
-  };
+  const handleExportSurvey = (s: PublicSurveyResponse) => exp.run(`survey_${s.id}`, async () => {
+    const art = buildSingleResponseArtifact({
+      userName: s.respondentName,
+      jobTitle: s.respondentJobTitle,
+      department: s.respondentDepartment,
+      workplaceAnswers: s.answers,
+      envReportData: s.analysis ?? null,
+    }, language);
+    await exportDocx(art);
+  }, { errorPrefix: { ar: 'فشل تصدير Word: ', en: 'Word export failed: ' } });
 
   const scoreColor = (s: number) =>
     s >= 80 ? 'text-emerald-600 dark:text-emerald-400'
@@ -638,10 +634,10 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
                             </span>
                             <button
                               className="hw-btn hw-btn-ghost text-xs px-2.5 py-1.5 disabled:opacity-50"
-                              disabled={surveyExporting === s.id}
+                              disabled={exp.isBusy(`survey_${s.id}`)}
                               onClick={() => handleExportSurvey(s)}
                             >
-                              {surveyExporting === s.id ? t('جارٍ…', 'Working…') : t('تقرير Word', 'Word Report')}
+                              {exp.isBusy(`survey_${s.id}`) ? t('جارٍ…', 'Working…') : t('تقرير Word', 'Word Report')}
                             </button>
                           </div>
 

@@ -39,6 +39,12 @@ export interface SimAssessmentRecord {
   id: string;
   tenantId: string;
   simulated: true;
+  // [MAJOR fix] whether this respondent was generated WITH the tenant's
+  // ingested-document context available. false means the model had nothing but
+  // the manual company profile to draw on, so persona/answer specifics are
+  // generic rather than grounded in the company's real documents — surfaced to
+  // the consultant (badge/tooltip) instead of silently looking authoritative.
+  grounded: boolean;
   userId: string;
   userName: string;
   userEmail: string;
@@ -136,9 +142,16 @@ export async function simulateRespondents(
   const plan = sentimentPlan(p.count, p.mix);
   const out: SimulatedRespondent[] = [];
   const BATCH = 8;
+  // [MAJOR fix] track batch outcomes so a total failure (every batch throws)
+  // can be surfaced as an error instead of silently reported as "0 respondents,
+  // success". A partial failure still returns whatever succeeded — the caller
+  // (runSurveySimulation) reports the honest "N of M" split.
+  let batchesAttempted = 0;
+  let batchesFailed = 0;
 
   for (let start = 0; start < p.count; start += BATCH) {
     if (p.signal?.aborted) break;
+    batchesAttempted++;
     const slice = plan.slice(start, start + BATCH);
     const langInstr = ar
       ? 'اكتب كل الأسماء والمسميات والإدارات والإجابات بالعربية الفصحى الواقعية (لهجة موظفين سعوديين/خليجيين محترفة).'
@@ -173,10 +186,21 @@ export async function simulateRespondents(
       });
       out.push(...got);
     } catch (e) {
+      batchesFailed++;
       console.error('simulateRespondents batch failed', e);
     }
     onProgress?.(Math.min(out.length, p.count), p.count);
   }
+
+  // Every batch threw (and we weren't cancelled) → this is a hard failure, not
+  // a "0 respondents" success. Let it propagate so the caller shows an error
+  // instead of a false-positive completion toast.
+  if (!p.signal?.aborted && batchesAttempted > 0 && batchesFailed === batchesAttempted) {
+    throw new Error(ar
+      ? 'فشل توليد جميع دفعات المشاركين الافتراضيين — لم يُنشأ أي رد.'
+      : 'All synthetic-respondent batches failed to generate — no respondents were created.');
+  }
+
   return out.slice(0, p.count);
 }
 
@@ -197,12 +221,14 @@ export function toAssessmentRecord(
   respondent: SimulatedRespondent,
   envReport: WorkEnvironmentReport | null,
   idx: number,
+  grounded: boolean,
 ): SimAssessmentRecord {
   const { persona, answers } = respondent;
   return {
     id: simId(),
     tenantId,
     simulated: true,
+    grounded,
     userId: 'sim',
     userName: persona.name,
     userEmail: emailFor(persona.name, idx),
@@ -238,6 +264,9 @@ export interface SimulationResult {
   records: SimAssessmentRecord[];
   saved: number;
   analyzed: number;
+  // [MAJOR fix] how many respondents were requested, so the caller can tell a
+  // full success (saved === requested) from a partial one and report "N of M".
+  requested: number;
 }
 
 /**
@@ -249,11 +278,14 @@ export async function runSurveySimulation(
   onPhase?: (msg: string, done: number, total: number) => void,
 ): Promise<SimulationResult> {
   const ar = p.language === 'ar';
+  // [MAJOR fix] whether this run had ingested-document context to ground on —
+  // stamped onto every produced record (see SimAssessmentRecord.grounded).
+  const grounded = !!(p.chunkContext && p.chunkContext.trim().length > 0);
   onPhase?.(ar ? 'توليد المشاركين الافتراضيين…' : 'Generating synthetic respondents…', 0, p.count);
   const respondents = await simulateRespondents(p, (d, t) =>
     onPhase?.(ar ? `توليد المشاركين (${d}/${t})…` : `Generating (${d}/${t})…`, d, t));
 
-  if (p.signal?.aborted) return { records: [], saved: 0, analyzed: 0 };
+  if (p.signal?.aborted) return { records: [], saved: 0, analyzed: 0, requested: p.count };
 
   const analyze = p.analyze !== false;
   const records: SimAssessmentRecord[] = new Array(respondents.length);
@@ -275,14 +307,14 @@ export async function runSurveySimulation(
         } catch (e) {
           console.error('analyze respondent failed', e);
         }
-        records[i] = toAssessmentRecord(p.tenantId, r, env, i);
+        records[i] = toAssessmentRecord(p.tenantId, r, env, i, grounded);
         analyzed += env ? 1 : 0;
         onPhase?.(ar ? `تحليل الردود (${analyzed}/${total})…` : `Analyzing (${analyzed}/${total})…`, analyzed, total);
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONC, respondents.length) }, () => worker()));
   } else {
-    respondents.forEach((r, i) => { records[i] = toAssessmentRecord(p.tenantId, r, null, i); });
+    respondents.forEach((r, i) => { records[i] = toAssessmentRecord(p.tenantId, r, null, i, grounded); });
   }
 
   // persist
@@ -295,5 +327,5 @@ export async function runSurveySimulation(
     onPhase?.(ar ? `حفظ السجلات (${saved}/${records.length})…` : `Saving (${saved}/${records.length})…`, saved, records.length);
   }
 
-  return { records: records.filter(Boolean), saved, analyzed };
+  return { records: records.filter(Boolean), saved, analyzed, requested: p.count };
 }
