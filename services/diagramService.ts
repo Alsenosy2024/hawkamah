@@ -267,6 +267,52 @@ function modelDigest(model: CompanyGovernanceModel): string {
   ].join('\n\n');
 }
 
+// ---- Grounding: what fed the prompt, and whether there's enough of it -------------
+
+/**
+ * Per-kind minimum grounding — the model section(s) each KIND_GUIDE hint actually draws
+ * from. A kind whose required section(s) are ALL empty has nothing real to ground a
+ * diagram in (e.g. a RACI matrix with zero authorities), so calling the AI would only
+ * invite invented structure — the exact failure mode buildOrgChartMermaid's own
+ * deterministic short-circuit above already fixed for org charts. orgchart is excluded
+ * here — it never calls the AI (see the `kind === 'orgchart'` branch in generateMermaid).
+ */
+const KIND_REQUIRES: Partial<Record<GovDiagramKind, { keys: ('policies' | 'procedures' | 'authorities')[]; ar: string; en: string }>> = {
+  flowchart: { keys: ['procedures', 'authorities'], ar: 'إجراءات أو صلاحيات', en: 'procedures or authorities' },
+  swimlane: { keys: ['procedures', 'authorities'], ar: 'إجراءات أو صلاحيات', en: 'procedures or authorities' },
+  state: { keys: ['policies', 'procedures'], ar: 'سياسات أو إجراءات', en: 'policies or procedures' },
+  raci: { keys: ['authorities'], ar: 'صلاحيات', en: 'authorities' },
+};
+
+function sectionsEmpty(model: CompanyGovernanceModel, keys: string[]): boolean {
+  return keys.every(k => !((model as any)[k] as any[] | undefined)?.length);
+}
+
+/**
+ * Compact, ACCURATE "مبني على: …" provenance line for the diagram gallery — exactly the
+ * model sections serialized into modelDigest() above, so a generated diagram's grounding
+ * is traceable back to the real governance model instead of a dead GovDiagram.sourceRef
+ * field (declared in types.ts, never populated). No per-node citations: the grounding
+ * here IS the governance model itself, not a document corpus, so section counts are the
+ * honest unit — not a RAG-style citation index.
+ */
+export function buildProvenance(model: CompanyGovernanceModel, ar = true): string {
+  const n = {
+    units: model.orgUnits?.length || 0,
+    roles: model.roles?.length || 0,
+    policies: model.policies?.length || 0,
+    authorities: (model.authorities || []).length,
+    kpis: (model.kpis || []).length,
+  };
+  const parts: string[] = [];
+  if (n.units) parts.push(ar ? `${n.units} وحدة تنظيمية` : `${n.units} org units`);
+  if (n.roles) parts.push(ar ? `${n.roles} دور` : `${n.roles} roles`);
+  if (n.policies) parts.push(ar ? `${n.policies} سياسة` : `${n.policies} policies`);
+  if (n.authorities) parts.push(ar ? `${n.authorities} صلاحية` : `${n.authorities} authorities`);
+  if (n.kpis) parts.push(ar ? `${n.kpis} مؤشر` : `${n.kpis} KPIs`);
+  return parts.join(ar ? '، ' : ', ');
+}
+
 /**
  * Deterministic org-chart Mermaid, built PURELY from `model.orgUnits` (+ roles) with
  * NO model/AI call. PRD V6: the org structure used to be AI-generated, so it came out
@@ -397,7 +443,7 @@ export function staleOrgChartDiagrams<T extends { kind: string; mermaid: string 
 export async function generateMermaid(
   model: CompanyGovernanceModel,
   kind: GovDiagramKind,
-  opts: { language?: 'ar' | 'en'; focus?: string; signal?: AbortSignal } = {},
+  opts: { language?: 'ar' | 'en'; focus?: string; signal?: AbortSignal; onProgress?: (info: { attempt: number; maxTries: number }) => void } = {},
 ): Promise<{ title: string; mermaid: string }> {
   const g = KIND_GUIDE[kind];
   const ar = opts.language !== 'en';
@@ -409,6 +455,21 @@ export async function generateMermaid(
   if (kind === 'orgchart') {
     return { title: g[ar ? 'ar' : 'en'], mermaid: buildOrgChartMermaid(model) };
   }
+
+  // PRD P18 — every other kind used to call the AI unconditionally, even when its
+  // required model section is empty (e.g. a RACI matrix with zero authorities). Skip
+  // the call and tell the caller what to add first, mirroring the orgchart short-circuit
+  // above. Thrown (not returned empty) so every existing caller — the interactive
+  // gallery AND governanceAgent's build_diagram step — surfaces it as an honest message
+  // instead of silently saving/pushing a blank diagram.
+  const req = KIND_REQUIRES[kind];
+  if (req && sectionsEmpty(model, req.keys)) {
+    const label = ar ? req.ar : req.en;
+    throw new Error(`INSUFFICIENT_DATA: ${ar
+      ? `لا توجد بيانات كافية لهذا المخطط — أضف ${label} أولاً.`
+      : `Not enough data for this diagram — add ${label} first.`}`);
+  }
+
   const sys = [
     'You are a senior governance analyst that draws precise, high-quality diagrams.',
     'Output VALID Mermaid syntax only — it must render without errors.',
@@ -447,6 +508,7 @@ export async function generateMermaid(
   let title = g[ar ? 'ar' : 'en'];
   let lastErr = '';
   for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+    opts.onProgress?.({ attempt: attempt + 1, maxTries: MAX_TRIES });
     const repairNote = attempt === 0 ? '' :
       `\n\nYour previous Mermaid output FAILED to parse with this error:\n${lastErr}\nReturn corrected, VALID Mermaid that renders without errors. Keep IDs ASCII; quote every label with spaces/punctuation.`;
     try {

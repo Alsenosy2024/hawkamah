@@ -36,7 +36,7 @@ import {
   resolveApplyOutcome, type ApplyOutcome,
   GovernanceDocument, type BulkScope,
 } from '../services/governanceEngine';
-import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout, resolveOrgChartMermaid, staleOrgChartDiagrams } from '../services/diagramService';
+import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout, resolveOrgChartMermaid, staleOrgChartDiagrams, buildProvenance } from '../services/diagramService';
 import { exportGovernanceManual, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual, exportArtifactsBatch, exportArtifactsZip, type BatchFormat, type BatchMode } from '../services/exportService';
 import { generateJson, generateJsonStream } from '../services/agentOrchestrator';
 import { extractPartialFields } from '../services/partialJson';
@@ -51,10 +51,8 @@ import Markdown from './Markdown';
 import BackButton from './BackButton';
 import ThinkingTrace from './ThinkingTrace';
 import ArtifactProgress from './ArtifactProgress';
-import MermaidView from './MermaidView';
 import SwimlaneView from './SwimlaneView';
-import { generateSwimlane, type SwimlaneSpec } from '../services/swimlaneService';
-import GovernanceCanvas from './GovernanceCanvas';
+import { generateSwimlane, buildProvenance as buildSwimlaneProvenance, type SwimlaneSpec } from '../services/swimlaneService';
 import DiagramChatEditor from './DiagramChatEditor';
 import EditableDiagram from './EditableDiagram';
 import GovCopilot from './GovCopilot';
@@ -297,8 +295,12 @@ const GovernanceCenter: React.FC<Props> = ({ documents, settings, language, onBa
   const [diagrams, setDiagrams] = useState<GovDiagram[]>([]);
   const [activeDiag, setActiveDiag] = useState<GovDiagram | null>(null);
   const [diagBusy, setDiagBusy] = useState<GovDiagramKind | null>(null);
+  // P18 — staged progress (attempt N of MAX_TRIES) for the busy kind's AI round-trips,
+  // and the honest "not enough data" message when generation is skipped (see the
+  // diagramService/swimlaneService empty-section guards).
+  const [diagProgress, setDiagProgress] = useState<{ attempt: number; maxTries: number } | null>(null);
+  const [diagSkipMsg, setDiagSkipMsg] = useState('');
   const [diagFocus, setDiagFocus] = useState('');   // HWK-C4: scope new diagrams to a dept/procedure ('' = whole org)
-  const [diagView, setDiagView] = useState<'svg' | 'canvas' | 'chat'>('svg');   // V37 — 3-way: read-only SVG / drag canvas / natural-language chat editor
   const [savingCanvas, setSavingCanvas] = useState(false);
 
   // reference project form
@@ -1023,39 +1025,38 @@ ${content.slice(0, 8000)}`;
   const handleGenDiagram = async (kind: GovDiagramKind, focus?: string) => {
     if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
     abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
-    setDiagBusy(kind); setDiagView('svg');
+    setDiagBusy(kind); setDiagProgress(null); setDiagSkipMsg('');
+    // P18 — staged progress: each kind is up to 3 sequential AI round-trips
+    // (retry-on-invalid-Mermaid), previously shown only as a static spinner.
+    const onProgress = (info: { attempt: number; maxTries: number }) => setDiagProgress(info);
     try {
       let diag: GovDiagram;
       // HWK-C4: an optional focus scopes the RACI / swimlane / process diagram to a specific
       // department or procedure; the scope is appended to the title so it's identifiable.
       const focusLabel = focus ? ` — ${focus}` : '';
       if (kind === 'swimlane') {
-        const spec = await generateSwimlane(model, { language: ar ? 'ar' : 'en', focus, signal: ac.signal });
-        diag = { id: uid('diag'), tenantId, kind, title: spec.title + focusLabel, mermaid: '', swimlane: spec, updatedAt: Date.now() };
+        const spec = await generateSwimlane(model, { language: ar ? 'ar' : 'en', focus, signal: ac.signal, onProgress });
+        // P18 — the model slice this diagram was actually generated from, surfaced in the
+        // gallery as a «مبني على: …» line (GovDiagram.sourceRef was declared, never set).
+        diag = { id: uid('diag'), tenantId, kind, title: spec.title + focusLabel, mermaid: '', swimlane: spec, sourceRef: buildSwimlaneProvenance(model, ar), updatedAt: Date.now() };
       } else {
-        const { title, mermaid } = await generateMermaid(model, kind, { language: ar ? 'ar' : 'en', focus, signal: ac.signal });
+        const { title, mermaid } = await generateMermaid(model, kind, { language: ar ? 'ar' : 'en', focus, signal: ac.signal, onProgress });
         // V29 — a saved org-chart snapshot (shown in the diagrams library & embedded into the
         // DOCX/PDF export) must reflect the owner's override when present, not only the
         // deterministic chart. Other kinds keep the freshly generated Mermaid untouched.
         const resolved = kind === 'orgchart' ? resolveOrgChartMermaid(model) : mermaid;
-        diag = { id: uid('diag'), tenantId, kind, title: title + focusLabel, mermaid: resolved, updatedAt: Date.now() };
+        diag = { id: uid('diag'), tenantId, kind, title: title + focusLabel, mermaid: resolved, sourceRef: buildProvenance(model, ar), updatedAt: Date.now() };
       }
       setActiveDiag(diag);
       try { await saveDiagram(diag); await loadAll(); } catch { /* Firestore optional in dev */ }
     } catch (e: any) {
-      alertMsg(t('فشل توليد المخطط: ', 'Diagram generation failed: ') + (e?.message || e));
-    } finally { setDiagBusy(null); }
-  };
-
-  const handleConvertToCanvas = () => {
-    if (!activeDiag) return;
-    let nodes = activeDiag.flowNodes, edges = activeDiag.flowEdges;
-    if (!nodes?.length) {
-      const g = mermaidToFlow(activeDiag.mermaid);
-      nodes = g.nodes; edges = g.edges;
-      setActiveDiag({ ...activeDiag, flowNodes: nodes, flowEdges: edges });
-    }
-    setDiagView('canvas');
+      const msg = String(e?.message || e || '');
+      // P18 — an empty required model section is a deliberate, honest skip (see the
+      // diagramService/swimlaneService guards), not a failure — show it inline instead
+      // of the scary "generation failed" alert.
+      if (msg.startsWith('INSUFFICIENT_DATA:')) setDiagSkipMsg(msg.replace(/^INSUFFICIENT_DATA:\s*/, ''));
+      else if (!ac.signal.aborted) alertMsg(t('فشل توليد المخطط: ', 'Diagram generation failed: ') + msg);
+    } finally { setDiagBusy(null); setDiagProgress(null); }
   };
 
   const handleSaveCanvas = async (nodes: any[], edges: any[], mermaid: string) => {
@@ -1107,7 +1108,7 @@ ${content.slice(0, 8000)}`;
   const handleDeleteDiagram = async (id: string) => {
     if (!(await toast.confirm(t('حذف هذا المخطط؟', 'Delete this diagram?'), { danger: true }))) return;
     await deleteDiagram(id);
-    if (activeDiag?.id === id) { setActiveDiag(null); setDiagView('svg'); }
+    if (activeDiag?.id === id) setActiveDiag(null);
     await loadAll();
   };
 
@@ -3605,8 +3606,12 @@ ${content.slice(0, 8000)}`;
           {/* STAGE 2 — diagrams & canvas */}
           {!showProjects && stage === 2 && buildTab === 'diagrams' && (
             <section className="space-y-5">
-              <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><circle cx="12" cy="12" r="10"/><path d="M8.56 2.75c4.37 6.03 6.02 9.42 8.03 17.72m2.54-15.38c-3.72 4.35-8.94 5.66-16.88 5.85m19.5 1.9c-3.5-.93-6.63-.82-8.94 0-2.58.92-5.01 2.86-7.44 6.32"/></svg>} title={t('الدياجرامات والـCanvas', 'Diagrams & canvas')}
-                desc={t('ولّد مخططات SVG عالية الجودة من النموذج، ثم حوّلها لـCanvas تفاعلي تحرّكه وتعدّله وتربطه.', 'Generate high-quality SVG diagrams from the model, then turn them into an interactive canvas you can drag, edit and connect.')} />
+              {/* P18 — the description used to promise the bespoke Canvas tab (drag/connect);
+                  that tab is gone (see the "active diagram" render below, now EditableDiagram
+                  everywhere), so this now describes what the gallery actually does: generate
+                  + edit by chatting. */}
+              <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><circle cx="12" cy="12" r="10"/><path d="M8.56 2.75c4.37 6.03 6.02 9.42 8.03 17.72m2.54-15.38c-3.72 4.35-8.94 5.66-16.88 5.85m19.5 1.9c-3.5-.93-6.63-.82-8.94 0-2.58.92-5.01 2.86-7.44 6.32"/></svg>} title={t('الدياجرامات', 'Diagrams')}
+                desc={t('ولّد مخططات SVG عالية الجودة من النموذج، ثم عدّلها بالكلام بلغة طبيعية.', 'Generate high-quality SVG diagrams from the model, then edit them by chatting in natural language.')} />
               {!model && <div className="text-xs text-amber-600">{t('ابنِ الهيكل التنظيمي أولاً.', 'Build the org structure first.')}</div>}
 
               {/* Editing the live model now lives in مرحلة «الهيكل التنظيمي» — one home only.
@@ -3649,6 +3654,32 @@ ${content.slice(0, 8000)}`;
                   </button>
                 ))}
               </div>
+
+              {/* P18 — staged progress (attempt N of the retry budget) + cancel, replacing the
+                  static disabled-button spinner. Reuses the app's hw-progress/hw-progress-bar. */}
+              {diagBusy && (
+                <div className="flex items-center gap-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 px-3 py-2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0 animate-spin text-emerald-600"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M22 12a10 10 0 0 1-10 10"/></svg>
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="text-[12px] font-bold text-emerald-700 dark:text-emerald-300 truncate">
+                      {t(
+                        `توليد ${DIAG_KINDS.find(k => k.kind === diagBusy)?.ar} — محاولة ${diagProgress?.attempt ?? 1} من ${diagProgress?.maxTries ?? 3}`,
+                        `Generating ${DIAG_KINDS.find(k => k.kind === diagBusy)?.en} — attempt ${diagProgress?.attempt ?? 1} of ${diagProgress?.maxTries ?? 3}`,
+                      )}
+                    </div>
+                    <div className="hw-progress"><div className="hw-progress-bar transition-all duration-300" style={{ width: `${Math.round(((diagProgress?.attempt ?? 1) / (diagProgress?.maxTries ?? 3)) * 100)}%` }} /></div>
+                  </div>
+                  <button onClick={() => abortRef.current?.abort()} className="hw-btn hw-btn-xs hw-btn-danger-ghost shrink-0">{t('إلغاء', 'Cancel')}</button>
+                </div>
+              )}
+              {/* P18 — an empty required model section (e.g. RACI with 0 authorities) is a
+                  deliberate, honest skip of the AI call — see the service-layer guards. */}
+              {diagSkipMsg && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20 px-3 py-2 text-[12px] font-bold text-amber-700 dark:text-amber-300">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  <span>{diagSkipMsg}</span>
+                </div>
+              )}
               <button onClick={() => gotoStage(7)}
                 className="w-full text-start rounded-xl border border-dashed border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-800 px-3 py-2 text-[11px] text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1 shrink-0"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>{t('المخطط الهيكلي يُبنى ويُحرَّر في مرحلة «الهيكل التنظيمي» — اضغط للانتقال إليها (مصدر واحد، بلا تكرار).', 'The org chart is built & edited in the "Org structure" stage — click to go there (single source, no duplication).')}
@@ -3659,7 +3690,8 @@ ${content.slice(0, 8000)}`;
                 <div className="flex flex-wrap gap-2">
                   {diagrams.map(d => (
                     <span key={d.id} className={`hw-tab-pill inline-flex items-center gap-1 cursor-pointer ${activeDiag?.id === d.id ? 'hw-tab-active' : ''}`}
-                      onClick={() => { setActiveDiag(d); setDiagView('svg'); }}>
+                      title={d.sourceRef ? t(`مبني على: ${d.sourceRef}`, `Based on: ${d.sourceRef}`) : undefined}
+                      onClick={() => setActiveDiag(d)}>
                       {DIAG_KINDS.find(k => k.kind === d.kind)?.icon} {d.title}
                       <button onClick={(e) => { e.stopPropagation(); handleDeleteDiagram(d.id); }} className="ms-1 opacity-60 hover:opacity-100" aria-label="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
                     </span>
@@ -3667,22 +3699,27 @@ ${content.slice(0, 8000)}`;
                 </div>
               )}
 
-              {/* active diagram */}
+              {/* active diagram — P18: routed through EditableDiagram (the app's single
+                  diagram module, PR #87) for BOTH branches, same as the org-chart widget
+                  in the Org-structure stage above. The bespoke SVG/Canvas/Chat switcher
+                  this replaced hand-rolled MermaidView + DiagramChatEditor + GovernanceCanvas;
+                  persistence still goes through the SAME handleSaveDiagramMermaid /
+                  handleSaveDiagramSwimlane callbacks the bespoke chat tab used. */}
               {activeDiag && (
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center gap-2">
                     {/* V23 — exit the open diagram back to the diagram gallery. */}
                     <BackButton onClick={() => setActiveDiag(null)} ar={ar} titleLabel={t('رجوع إلى المخططات', 'Back to diagrams')} />
                     <h3 className="font-black text-slate-800">{activeDiag.title}</h3>
-                    {activeDiag.kind !== 'swimlane' && (
-                      <div className="ms-auto flex gap-1 bg-slate-200 rounded-xl p-1">
-                        <button onClick={() => setDiagView('svg')} className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 ${diagView === 'svg' ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg> SVG</button>
-                        <button onClick={handleConvertToCanvas} className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 ${diagView === 'canvas' ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Canvas</button>
-                        {/* V37 — edit the process/procedure diagram by chatting in natural language, at parity with the org chart. */}
-                        <button onClick={() => setDiagView('chat')} className={`px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 ${diagView === 'chat' ? 'bg-white text-emerald-700 shadow' : 'text-slate-600'}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> {t('بالكلام', 'Chat')}</button>
-                      </div>
-                    )}
                   </div>
+                  {/* P18 — compact provenance caption: which model sections this diagram was
+                      actually generated from (GovDiagram.sourceRef, populated in handleGenDiagram). */}
+                  {activeDiag.sourceRef && (
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                      <span>{t('مبني على: ', 'Based on: ')}{activeDiag.sourceRef}</span>
+                    </div>
+                  )}
                   {activeDiag.kind === 'swimlane' && activeDiag.swimlane ? (
                     <EditableDiagram
                       key={activeDiag.id}
@@ -3692,25 +3729,15 @@ ${content.slice(0, 8000)}`;
                       onSaveSwimlane={handleSaveDiagramSwimlane}
                       saving={savingCanvas}
                     />
-                  ) : diagView === 'chat' ? (
-                    <DiagramChatEditor
+                  ) : (
+                    <EditableDiagram
                       key={activeDiag.id}
                       language={language}
-                      initialMermaid={activeDiag.mermaid}
                       title={activeDiag.title}
-                      onSave={handleSaveDiagramMermaid}
+                      mermaid={activeDiag.mermaid}
+                      onSaveMermaid={handleSaveDiagramMermaid}
                       saving={savingCanvas}
                     />
-                  ) : diagView === 'canvas' ? (
-                    <GovernanceCanvas
-                      language={language}
-                      initialNodes={activeDiag.flowNodes || []}
-                      initialEdges={activeDiag.flowEdges || []}
-                      onSave={handleSaveCanvas}
-                      saving={savingCanvas}
-                    />
-                  ) : (
-                    <MermaidView mermaid={activeDiag.mermaid} title={activeDiag.title} language={language} />
                   )}
                 </div>
               )}
