@@ -23,6 +23,10 @@ import {
   stats as copilotStats, ingestFiles as copilotIngest, listConversations, getConversation, saveConversation, deleteConversation,
   // P5/D2 — real-company grounding; P5/D7 — mermaid-fence detection for the export bypass.
   buildGrounding, hasMermaidFence,
+  // P12 — the outgoing-message contract: FORMAT_HINT is the mermaid/table
+  // formatting directive; askMessagePayload/stageChatMessagePayload decide
+  // which paths get it (see copilotClient.ts for why /ask must NOT).
+  FORMAT_HINT, askMessagePayload, stageChatMessagePayload,
   type CopilotConvSummary,
 } from '../services/copilotClient';
 import { generateGroundedDocument } from '../services/geminiService';
@@ -73,6 +77,18 @@ interface Msg {
   srcRefs?: CiteRef[];  // ordered [مصدر N] → {doc, heading} for inline citations
   webSources?: { title: string; uri: string }[]; // live Google-Search citations (research docs)
   searchHtml?: string;  // Google "search suggestions" HTML (must be displayed when grounding)
+  // P12 — live done/total for the /draft/stream progress bar. Distinct from
+  // `steps` (which only tracks STAGE transitions): a single stage like
+  // "drafting" emits many progress events as sections complete, and this is
+  // what lets the bubble render a real percent + "section N of M" counter
+  // instead of a static label. Transient, not persisted.
+  draftProgress?: { stage: string; label: string; done: number; total: number };
+  // P12 — set when a stream errored/aborted AFTER tokens already rendered, so
+  // the partial text isn't silently left looking like a finished answer.
+  // `onRetry` re-runs the same turn from scratch; both are transient/local
+  // (never serialized — see serializeMsgs).
+  interrupted?: boolean;
+  onRetry?: () => void;
 }
 
 export interface ProposedActionLite {
@@ -238,6 +254,34 @@ const GcThinking: React.FC<{ label: string }> = ({ label }) => (
   </div>
 );
 
+// P12 — real percent + section counter for the long-running /draft/stream
+// timeline. Reuses the app's existing .hw-progress/.hw-progress-bar bar (see
+// ArtifactProgress.tsx, same classes) instead of a second bespoke progress
+// bar. Sits alongside StepTimeline: StepTimeline narrates STAGE transitions
+// ("outline done ✓, now drafting…"), this narrates the granular done/total
+// the backend reports WITHIN the running stage (e.g. "section 3 of 8").
+const GcDraftProgress: React.FC<{
+  progress: { stage: string; label: string; done: number; total: number };
+  ar: boolean;
+  t: (a: string, e: string) => string;
+}> = ({ progress, ar, t }) => {
+  const total = Math.max(0, progress.total || 0);
+  const done = Math.max(0, total > 0 ? Math.min(progress.done || 0, total) : progress.done || 0);
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  return (
+    <div className="mb-2 rounded-lg border border-[var(--hw-border)] bg-white dark:bg-slate-800/60 px-3 py-2" dir={ar ? 'rtl' : 'ltr'}>
+      <div className="flex items-baseline justify-between gap-2 mb-1.5">
+        <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 truncate">{progress.label}</span>
+        <span className="text-[11px] font-bold text-[color:var(--hw-brand)] tabular-nums shrink-0">{pct}%</span>
+      </div>
+      <div className="hw-progress"><div className="hw-progress-bar" style={{ width: `${pct}%` }} /></div>
+      {total > 0 && (
+        <p className="text-[10.5px] text-slate-400 dark:text-slate-500 mt-1">{t(`القسم ${done} من ${total}`, `Section ${done} of ${total}`)}</p>
+      )}
+    </div>
+  );
+};
+
 // Document-creation intent: does the user want a real, document-grade draft of
 // ANY kind (not a short Q&A)? P5 addendum — this used to be a bare-noun regex
 // (`LONG_RE`) here, so a plain QUESTION mentioning any governance noun (e.g.
@@ -293,9 +337,6 @@ const detectExportIntent = (text: string): { kind: 'pdf' | 'docx' | 'xlsx' | 'pp
   return null;
 };
 
-const FORMAT_HINT =
-  '\n\n[تعليمات التنسيق — لا تذكرها في الرد: إذا تطلّب الجواب رسمًا بيانيًا أو هيكلاً تنظيميًا أو مخطط تدفّق أو علاقات، فأخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (graph TD / flowchart). لا ترسم المخططات بالحروف أو ASCII أبداً. لا تضع وسوم [مصدر N] أو أقواس مربّعة داخل تسميات عُقد mermaid (تُفسد الرسم)؛ ضع الاستشهادات في النص خارج المخطط فقط. قدّم البيانات الجدولية كجداول Markdown. لا تذكر اسم أداة الرسم (مثل mermaid) داخل نص الوثيقة — اكتفِ بإدراج المخطط نفسه.]';
-
 // HWK-A4: a panel-scoped error boundary. Without it, a render error inside the
 // copilot panel escapes to the app-level ErrorBoundary, which unmounts the
 // whole GovernanceCenter — to the user, the run "did a refresh and disappeared".
@@ -339,6 +380,11 @@ const GovCopilot: React.FC<Props> = (props) => {
   const [exporting, setExporting] = useState<string | null>(null);
   // Document canvas — the open doc (by message id) + in-session edited-HTML cache
   // so reopening a document shows the user's edits.
+  // NOTE (P12/MINOR-modularity, out of this PR's scope): this open/track/persist
+  // "canvas session" state machine duplicates GovernanceCenter's
+  // openArtifactInCanvas/saveCanvasArtHtml (a richer strategy — Firestore-backed,
+  // not just localStorage). Left as-is here; unifying the two into a shared
+  // useCanvasSession hook is a separate modularity lane, not a GovCopilot-only fix.
   const [canvasDoc, setCanvasDoc] = useState<{ id: string; md: string } | null>(null);
   const canvasEditsRef = useRef<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
@@ -544,23 +590,31 @@ const GovCopilot: React.FC<Props> = (props) => {
   const scrollDown = () => requestAnimationFrame(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; });
 
   // Retrieve top-k uploaded-file excerpts for this question.
-  const buildFileContext = async (q: string, signal: AbortSignal): Promise<{ ctx: string; count: number; sources: string[] }> => {
+  // P12 — also return `refs`: one {doc, heading} pair per distinct source doc,
+  // in retrieval order. This is the same {doc, heading} shape the backend
+  // labels "مصدر N" and toCiteRefs consumes; the local (Python-backend-disabled)
+  // fallback previously only kept a bare doc-name Set (`sources`), so its
+  // generated docs never got srcRefs / clickable citations like the
+  // backend-enabled branches do (see the runGeneration call site below).
+  const buildFileContext = async (q: string, signal: AbortSignal): Promise<{ ctx: string; count: number; sources: string[]; refs: { doc: string; heading?: string }[] }> => {
     const chunks = chunksRef.current;
-    if (!chunks || !chunks.length) return { ctx: '', count: 0, sources: [] };
+    if (!chunks || !chunks.length) return { ctx: '', count: 0, sources: [], refs: [] };
     try {
       const rc = await retrieve(q, chunks, 12, signal);
-      if (!rc.length) return { ctx: '', count: 0, sources: [] };
+      if (!rc.length) return { ctx: '', count: 0, sources: [], refs: [] };
       const docs = new Set<string>();
+      const refs: { doc: string; heading?: string }[] = [];
       let used = 0;
       const parts: string[] = [];
       for (const r of rc) {
         const c = r.chunk;
         const piece = `[${c.docName}${c.headingPath ? ' › ' + c.headingPath : ''}]\n${c.text}`;
         if (used + piece.length > 9000) break;
-        parts.push(piece); used += piece.length + 2; docs.add(c.docName);
+        parts.push(piece); used += piece.length + 2;
+        if (!docs.has(c.docName)) { docs.add(c.docName); refs.push({ doc: c.docName, heading: c.headingPath || undefined }); }
       }
-      return { ctx: parts.join('\n\n'), count: docs.size, sources: [...docs] };
-    } catch { return { ctx: '', count: 0, sources: [] }; }
+      return { ctx: parts.join('\n\n'), count: docs.size, sources: [...docs], refs };
+    } catch { return { ctx: '', count: 0, sources: [], refs: [] }; }
   };
 
   // Bridge: the Python copilot has its own RAG store, separate from Firestore.
@@ -840,28 +894,37 @@ const GovCopilot: React.FC<Props> = (props) => {
           const doc = await copilotDraftStream(
             { corpus, request: q + FORMAT_HINT, language, target_pages: opts?.targetPages, plan: planPayload, ...grounding },
             ev => {
-              if (ev.stage === lastStage) return;
-              lastStage = ev.stage;
               const [ar2, en2] = STAGE_LABELS[ev.stage] ?? ['جاري المعالجة…', 'Processing…'];
               const label = t(ar2, en2);
-              // HWK-A2: render each stage as a live timeline step — mark the
-              // previously-running step done, then upsert this stage as running,
-              // so the user sees "did X ✓, did Y ✓, now doing Z…".
+              const stageChanged = ev.stage !== lastStage;
+              lastStage = ev.stage;
+              // P12 — ev.done/ev.total are per-SECTION counters: a single stage
+              // like "drafting" emits many events as sections complete. The old
+              // `if (ev.stage === lastStage) return` dedup dropped every one of
+              // those after the first, so a 4+ chunk draft never advanced past
+              // "drafting the document sections…" for 7-8 min. Now every event
+              // updates draftProgress (percent + "section N of M", rendered by
+              // GcDraftProgress below); the timeline (`steps`) still only mutates
+              // on an actual stage change, so it keeps showing "did X ✓, now Y…".
               patch(m => {
-                const prior = m.steps.map(s => s.status === 'running' ? { ...s, status: 'done' as const } : s);
-                const exists = prior.some(s => s.step === ev.stage);
-                const steps: ProgressStep[] = exists
-                  ? prior.map(s => s.step === ev.stage ? { ...s, label, status: 'running' as const } : s)
-                  : [...prior, { id: nid(), step: ev.stage, label, status: 'running' as const }];
-                return { ...m, steps };
+                let steps = m.steps;
+                if (stageChanged) {
+                  const prior = m.steps.map(s => s.status === 'running' ? { ...s, status: 'done' as const } : s);
+                  const exists = prior.some(s => s.step === ev.stage);
+                  steps = exists
+                    ? prior.map(s => s.step === ev.stage ? { ...s, label, status: 'running' as const } : s)
+                    : [...prior, { id: nid(), step: ev.stage, label, status: 'running' as const }];
+                }
+                return { ...m, steps, draftProgress: { stage: ev.stage, label, done: ev.done, total: ev.total } };
               });
               scrollDown();
             },
             ac.signal,
           );
           const docs = [...new Set(doc.sources.map(s => s.doc).filter(Boolean))];
-          // Generation finished → close out every step in the timeline.
-          patch(m => ({ ...m, thinking: false, streaming: false, text: doc.markdown, sources: docs, srcRefs: toCiteRefs(doc.sources), steps: m.steps.map(s => s.status === 'running' || s.status === 'pending' ? { ...s, status: 'done' as const } : s) }));
+          // Generation finished → close out every step in the timeline and drop
+          // the live progress readout (the message is done; nothing left to show).
+          patch(m => ({ ...m, thinking: false, streaming: false, text: doc.markdown, sources: docs, srcRefs: toCiteRefs(doc.sources), steps: m.steps.map(s => s.status === 'running' || s.status === 'pending' ? { ...s, status: 'done' as const } : s), draftProgress: undefined }));
         } else {
           // HWK-A5: route /ask through the unified generation-progress contract.
           const onAsk: GenerationProgressHandler = ev => {
@@ -873,9 +936,14 @@ const GovCopilot: React.FC<Props> = (props) => {
           // P5/D2 — send the same real-company grounding on /ask too (forward-
           // compatible; see copilotClient.askStream's doc comment on today's
           // backend not yet consuming it).
+          // P12/CRITICAL — `message` MUST be the raw question (askMessagePayload
+          // is the identity — no FORMAT_HINT), or every message exceeds the
+          // backend's 40-char smalltalk gate and the conversational carve-out is
+          // unreachable. `history` was already raw (Msg.text never carries the
+          // hint — it's appended only at send time), so no change needed there.
           await copilotAsk(
             {
-              corpus, message: q + FORMAT_HINT, history: history.map(h => ({ role: h.role, content: h.parts?.[0]?.text || '' })),
+              corpus, message: askMessagePayload(q), history: history.map(h => ({ role: h.role, content: h.parts?.[0]?.text || '' })),
               conversation_id: convIdRef.current, ...buildGrounding(model, { language }),
             },
             toAskCallbacks(onAsk),
@@ -884,8 +952,12 @@ const GovCopilot: React.FC<Props> = (props) => {
         }
         return;
       }
-      const { ctx, count, sources } = await buildFileContext(q, ac.signal);
-      if (sources.length) patch(m => ({ ...m, sources }));
+      const { ctx, count, sources, refs } = await buildFileContext(q, ac.signal);
+      // P12/MAJOR — populate srcRefs here too (toCiteRefs on the {doc, heading}
+      // refs), matching the backend-enabled branches above, so a document
+      // generated via this local fallback keeps its per-claim citation mapping
+      // instead of losing clickable citations in the canvas/citation UI.
+      if (sources.length) patch(m => ({ ...m, sources, srcRefs: refs.length ? toCiteRefs(refs) : m.srcRefs }));
       // HWK-A5: route stageChat through the same unified generation-progress contract.
       const onStage: GenerationProgressHandler = ev => {
         if (ev.type === 'thought') { patch(m => ({ ...m, thoughts: [...m.thoughts, { id: nid(), text: ev.text }] })); scrollDown(); }
@@ -895,7 +967,7 @@ const GovCopilot: React.FC<Props> = (props) => {
       };
       await stageChat(
         {
-          stage: stageKey, model, history, message: q + FORMAT_HINT, language, signal: ac.signal,
+          stage: stageKey, model, history, message: stageChatMessagePayload(q), language, signal: ac.signal,
           extraContext, mode, fileContext: ctx, fileCount: count, longForm: isLongFormRequest(q) || !!opts?.targetPages,
           targetPages: opts?.targetPages,
           stateSnapshot,
@@ -908,7 +980,24 @@ const GovCopilot: React.FC<Props> = (props) => {
       // timeline step to error, not leave it spinning. Either way the error is
       // surfaced IN the panel — it never bubbles up to reload/unmount the page.
       const isAbort = e instanceof DOMException && e.name === 'AbortError';
-      patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || (isAbort ? t('أُلغيت العملية.', 'Cancelled.') : t('تعذّر الرد.', 'Failed.')), steps: m.steps.map(s => s.status === 'running' ? { ...s, status: isAbort ? ('done' as const) : ('error' as const) } : s) }));
+      // P12/MAJOR — `text: m.text || failText` only ever kicked in when the
+      // bubble was still EMPTY; a stream that already rendered tokens before
+      // erroring/aborting kept its partial text with zero indication it was
+      // truncated, so the user couldn't tell it apart from a finished answer.
+      // Mark it `interrupted` (with a retry that re-runs this exact turn) so
+      // the bubble shows a visible notice instead of a silently-truncated
+      // "finished" answer — the partial text itself is still kept verbatim.
+      patch(m => {
+        const hadText = !!m.text.trim();
+        return {
+          ...m,
+          thinking: false, streaming: false,
+          text: m.text || (isAbort ? t('أُلغيت العملية.', 'Cancelled.') : t('تعذّر الرد.', 'Failed.')),
+          interrupted: hadText,
+          onRetry: hadText ? () => { runGeneration(q, att, opts).catch(() => {}); } : undefined,
+          steps: m.steps.map(s => s.status === 'running' ? { ...s, status: isAbort ? ('done' as const) : ('error' as const) } : s),
+        };
+      });
       if (!isAbort) console.error('[GovCopilot] generation error:', e);
     } finally {
       att.forEach(a => URL.revokeObjectURL(a.url));   // free object URLs
@@ -1376,6 +1465,12 @@ const GovCopilot: React.FC<Props> = (props) => {
                 {m.sender === 'agent' && (m.thoughts.length > 0 || (m.thinking && m.steps.length === 0)) && (
                   <ThinkingTrace thoughts={m.thoughts} active={m.thinking} language={language || 'ar'} />
                 )}
+                {/* P12 — the real percent/section-counter readout for a running
+                    /draft/stream (see GcDraftProgress); only while this turn is
+                    still live, otherwise it lingers on the finished message. */}
+                {m.sender === 'agent' && m.thinking && m.draftProgress && (
+                  <GcDraftProgress progress={m.draftProgress} ar={ar} t={t} />
+                )}
                 {m.sender === 'agent' && m.steps.length > 0 && (
                   <StepTimeline steps={m.steps} active={m.thinking} language={language || 'ar'} />
                 )}
@@ -1396,6 +1491,25 @@ const GovCopilot: React.FC<Props> = (props) => {
                           <div className="flex items-center gap-2 mt-2.5 text-[11px] text-[color:var(--hw-text-subtle)]">
                             <GeminiSpark className="w-3.5 h-3.5 gc-spark-breathe" />
                             <span className="inline-flex items-center gap-1"><span className="gc-dot" /><span className="gc-dot" /><span className="gc-dot" /></span>
+                          </div>
+                        )}
+                        {/* P12/MAJOR — a stream that errored/aborted mid-run after
+                            tokens already rendered used to leave the partial text
+                            with no indication it was cut short. Surface it and
+                            offer to redo the exact same turn, without discarding
+                            what already streamed in. */}
+                        {m.interrupted && (
+                          <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-amber-300/60 bg-amber-50 dark:bg-amber-900/15 dark:border-amber-700/40 px-2.5 py-1.5 text-[11.5px] text-amber-700 dark:text-amber-300">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
+                              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                              <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+                            </svg>
+                            <span className="flex-1">{t('انقطع الرد — أعد المحاولة', 'Response was interrupted — retry')}</span>
+                            {m.onRetry && (
+                              <button type="button" onClick={m.onRetry} className="hw-btn hw-btn-subtle hw-btn-xs !rounded-full shrink-0">
+                                {t('إعادة المحاولة', 'Retry')}
+                              </button>
+                            )}
                           </div>
                         )}
                       </>

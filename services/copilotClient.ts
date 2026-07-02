@@ -104,6 +104,30 @@ export interface AskCallbacks {
   onError?: (err: unknown) => void;
 }
 
+// ---------------------------------------------------------------------------
+// P12 — outgoing message payloads for /ask vs. the local stageChat fallback.
+//
+// /ask is gated by the backend's smalltalk carve-out (agent.py
+// _SMALLTALK_MAX_CHARS = 40): a short greeting/thanks gets a quick reply
+// instead of the full grounded RAG+citation treatment. GovCopilot used to
+// append this ~473-char FORMAT_HINT to EVERY /ask message, so every real
+// message — even "مرحبا" — exceeded 40 chars and the smalltalk branch was
+// unreachable from the real UI. /ask must receive the user's RAW question;
+// the backend already carries its own formatting/conversation rules in its
+// system prompts. The in-app stageChat fallback (no Python backend, no
+// smalltalk gate) still needs the mermaid/table formatting directive, so it
+// keeps appending FORMAT_HINT.
+// ---------------------------------------------------------------------------
+export const FORMAT_HINT =
+  '\n\n[تعليمات التنسيق — لا تذكرها في الرد: إذا تطلّب الجواب رسمًا بيانيًا أو هيكلاً تنظيميًا أو مخطط تدفّق أو علاقات، فأخرِجه حصراً ككتلة ```mermaid``` بصياغة Mermaid صحيحة (graph TD / flowchart). لا ترسم المخططات بالحروف أو ASCII أبداً. لا تضع وسوم [مصدر N] أو أقواس مربّعة داخل تسميات عُقد mermaid (تُفسد الرسم)؛ ضع الاستشهادات في النص خارج المخطط فقط. قدّم البيانات الجدولية كجداول Markdown. لا تذكر اسم أداة الرسم (مثل mermaid) داخل نص الوثيقة — اكتفِ بإدراج المخطط نفسه.]';
+
+/** The /ask `message` field — the raw user question, no FORMAT_HINT. */
+export const askMessagePayload = (q: string): string => q;
+
+/** The local stageChat fallback's message — keeps the formatting directive
+ *  (that path has no smalltalk gate to break). */
+export const stageChatMessagePayload = (q: string): string => q + FORMAT_HINT;
+
 export interface CopilotSource {
   label: string;
   doc: string;
@@ -166,6 +190,47 @@ export interface CopilotConversation {
  *  these fields are inert on today's backend. Sending them is forward-compatible
  *  (harmless extra JSON keys) for when /ask adopts grounding; the ACTIVE fix is
  *  on /draft and /draft/stream, which already honor it end-to-end. */
+// ---------------------------------------------------------------------------
+// P12 — SSE frame parsing was duplicated almost verbatim between askStream and
+// _consumeDraftStream (accumulate into a buffer, split on '\n\n', strip
+// 'data: ', JSON.parse each line). One shared parser now backs both, so any
+// protocol fix (e.g. tolerating a stray non-JSON keep-alive line) is made
+// once. Exported for direct unit testing.
+// ---------------------------------------------------------------------------
+/** Read an SSE body to completion, calling `onEvent` with each parsed JSON
+ *  data payload in order. A malformed data line is skipped, not thrown. If
+ *  `onEvent` throws, the error propagates to the caller (used by
+ *  _consumeDraftStream to reject on a backend 'error' frame). */
+export async function parseSSE(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (ev: any) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const handle = (line: string) => {
+    const payload = line.replace(/^data:\s?/, '').trim();
+    if (!payload) return;
+    let ev: any;
+    try { ev = JSON.parse(payload); } catch { return; }
+    onEvent(ev);
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      frame.split('\n').forEach(handle);
+    }
+  }
+  if (buffer.trim()) buffer.split('\n').forEach(handle);
+}
+
 export async function askStream(
   params: { corpus: string; message: string; history?: { role: string; content: string }[]; conversation_id?: string } & CopilotGrounding,
   cb: AskCallbacks,
@@ -179,34 +244,13 @@ export async function askStream(
   });
   if (!res.ok || !res.body) throw new Error(`copilot /ask failed: ${res.status}`);
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
   let full = '';
-
-  const handle = (line: string) => {
-    const payload = line.replace(/^data:\s?/, '').trim();
-    if (!payload) return;
-    let ev: any;
-    try { ev = JSON.parse(payload); } catch { return; }
-    if (ev.type === 'sources') cb.onSources?.(ev.sources || []);
-    else if (ev.type === 'delta') { full += ev.text || ''; cb.onAnswer?.(ev.text || ''); }
-    else if (ev.type === 'done') { full = ev.text || full; cb.onDone?.(full); }
-  };
-
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buffer.indexOf('\n\n')) !== -1) {
-        const frame = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
-        frame.split('\n').forEach(handle);
-      }
-    }
-    if (buffer.trim()) buffer.split('\n').forEach(handle);
+    await parseSSE(res.body, ev => {
+      if (ev.type === 'sources') cb.onSources?.(ev.sources || []);
+      else if (ev.type === 'delta') { full += ev.text || ''; cb.onAnswer?.(ev.text || ''); }
+      else if (ev.type === 'done') { full = ev.text || full; cb.onDone?.(full); }
+    });
   } catch (e) {
     cb.onError?.(e);
     throw e;
@@ -285,30 +329,12 @@ async function _consumeDraftStream(
   body: ReadableStream<Uint8Array>,
   onProgress: DraftProgressCb,
 ): Promise<CopilotDoc> {
-  const reader = body.getReader();
-  const dec = new TextDecoder();
-  let buf = '';
   let doc: CopilotDoc | undefined;
-  const handle = (line: string) => {
-    const raw = line.replace(/^data:\s?/, '').trim();
-    if (!raw) return;
-    let ev: any;
-    try { ev = JSON.parse(raw); } catch { return; }
+  await parseSSE(body, ev => {
     if (ev.type === 'progress') onProgress(ev as DraftProgressEvent);
     else if (ev.type === 'done' && ev.doc) doc = ev.doc as CopilotDoc;
     else if (ev.type === 'error') throw new Error(`copilot /draft/stream: ${ev.detail || 'error'}`);
-  };
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf('\n\n')) !== -1) {
-      buf.slice(0, idx).split('\n').forEach(handle);
-      buf = buf.slice(idx + 2);
-    }
-  }
-  if (buf.trim()) buf.split('\n').forEach(handle);
+  });
   if (!doc) throw new Error('copilot /draft/stream: no document received');
   return doc;
 }
