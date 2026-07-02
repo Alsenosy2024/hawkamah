@@ -10,9 +10,10 @@
 // deployed app's behavior is unchanged. The corpus id == the front-end tenantId,
 // so both stacks read the same uploaded files.
 
-import { parseTargetPages } from './governanceChat';
+import { parseTargetPages, dedupeList, currentStateDigest, type CopilotPlanPayload } from './governanceChat';
 import { draftPacing } from './generationProgress';
 import { downloadBlob } from './exportService';
+import type { CompanyGovernanceModel, Language } from '../types';
 
 const BASE = (import.meta.env.VITE_COPILOT_API as string | undefined)?.replace(/\/$/, '') || '';
 
@@ -29,6 +30,71 @@ function withTargetPages<T extends { request: string; target_pages?: number }>(p
 
 export function copilotEnabled(): boolean {
   return !!BASE;
+}
+
+// ---------------------------------------------------------------------------
+// P5/D2 — grounding (V9/BE-3 contract, now honored end-to-end by the backend).
+//
+// GovCopilot holds the live CompanyGovernanceModel but used to send only
+// {corpus, request/message, language, target_pages} — none of the real
+// company/org_units/roles/departments/current_state keys the backend's
+// `_grounding_from_body` reads (copilot/hawkama_copilot/api.py). This builds
+// that payload from the model, with minimal per-item shapes (matching exactly
+// what the backend GroundingContext stores: org_units→{id,name,parentId},
+// roles→{id,title,unitId}) so a large org chart doesn't bloat every request.
+// ---------------------------------------------------------------------------
+
+export interface CopilotGrounding {
+  company?: string;
+  org_units?: { id: string; name: string; parentId?: string }[];
+  roles?: { id: string; title: string; unitId: string }[];
+  departments?: string[];
+  current_state?: string;
+}
+
+/** Build the grounding payload from the live governance model. `plan`
+ *  departments (when the confirmed wizard plan is driving the request) win
+ *  over departments derived from org units, mirroring the backend's own
+ *  plan-overrides-departments behavior (generation.py `_plan_grounding`).
+ *  Returns `{}` for a null/empty model, so an ungrounded request attaches no
+ *  grounding at all — the ungrounded path stays byte-for-byte unchanged. */
+export function buildGrounding(
+  model: CompanyGovernanceModel | null | undefined,
+  opts?: { plan?: CopilotPlanPayload; language?: Language },
+): CopilotGrounding {
+  if (!model) return {};
+  const g: CopilotGrounding = {};
+  if (model.companyName) g.company = model.companyName;
+  const orgUnits = (model.orgUnits || []).filter(u => u?.id && u?.name);
+  if (orgUnits.length) {
+    g.org_units = orgUnits.map(u => ({ id: u.id, name: u.name, parentId: u.parentId || undefined }));
+  }
+  const roles = (model.roles || []).filter(r => r?.id && r?.title);
+  if (roles.length) g.roles = roles.map(r => ({ id: r.id, title: r.title, unitId: r.unitId }));
+  const departments = opts?.plan?.departments?.length
+    ? opts.plan.departments
+    : dedupeList((model.orgUnits || []).map(u => u?.name));
+  if (departments.length) g.departments = departments;
+  const current_state = currentStateDigest(model, opts?.language);
+  if (current_state) g.current_state = current_state;
+  return g;
+}
+
+// P5/D7 — the Python /export endpoint's markdown renderer has NO image support
+// at all (verified against copilot/hawkama_copilot/exporters/markdown_ast.py:
+// its `_inline()` regex strips `![alt](url)` down to bare alt text, and no
+// exporter — docx/pdf/pptx/xlsx — ever branches on an "image" block type), so
+// it dumps every ```mermaid fence as raw, literal diagram source into Word and
+// PowerPoint output. Pre-rasterizing a diagram to a data-URI and sending THAT
+// markdown to the backend would NOT embed an image — the backend would just as
+// silently strip it to alt text (worse: a multi-MB request for nothing).
+// Detect mermaid-fenced content here so the caller (GovCopilot.exportAs) can
+// route a diagram-bearing DOCX/PPTX export through the in-app exporters
+// instead — they already rasterize + embed real diagram images — bypassing the
+// backend only for the formats/content it genuinely cannot render.
+const MERMAID_FENCE_RE = /```\s*mermaid\b/i;
+export function hasMermaidFence(markdown: string): boolean {
+  return MERMAID_FENCE_RE.test(markdown || '');
 }
 
 export interface AskCallbacks {
@@ -91,9 +157,17 @@ export interface CopilotConversation {
 }
 
 /** Stream a grounded answer from the Python agent (SSE). Maps server events to
- *  the same callback shape GovCopilot already uses for stageChat. */
+ *  the same callback shape GovCopilot already uses for stageChat.
+ *
+ *  P5/D2: accepts the same CopilotGrounding fields as draft/draftStream so the
+ *  wire contract is consistent. NOTE — verified against
+ *  copilot/hawkama_copilot/api.py `ask()` and agent.py `ask_stream`/`_ask_prompt`:
+ *  the /ask endpoint does not currently call `_grounding_from_body` at all, so
+ *  these fields are inert on today's backend. Sending them is forward-compatible
+ *  (harmless extra JSON keys) for when /ask adopts grounding; the ACTIVE fix is
+ *  on /draft and /draft/stream, which already honor it end-to-end. */
 export async function askStream(
-  params: { corpus: string; message: string; history?: { role: string; content: string }[]; conversation_id?: string },
+  params: { corpus: string; message: string; history?: { role: string; content: string }[]; conversation_id?: string } & CopilotGrounding,
   cb: AskCallbacks,
   signal?: AbortSignal,
 ): Promise<string> {
@@ -140,9 +214,16 @@ export async function askStream(
   return full;
 }
 
-/** Generate one large multi-page document (the "اطلب صياغة كاملة" path). */
+/** Generate one large multi-page document (the "اطلب صياغة كاملة" path).
+ *
+ *  P5/D1+D2: `plan` (the confirmed wizard plan, mapped via
+ *  governanceChat.planToPayload) bypasses the backend's keyword deliverable
+ *  routing entirely; the CopilotGrounding fields (company/org_units/roles/
+ *  departments/current_state) ground the draft in the real company instead of
+ *  generic boilerplate. Both are optional — omitting them keeps the request
+ *  byte-for-byte what it was before. */
 export async function draft(
-  params: { corpus: string; request: string; language?: string; target_pages?: number },
+  params: { corpus: string; request: string; language?: string; target_pages?: number; plan?: CopilotPlanPayload } & CopilotGrounding,
   signal?: AbortSignal,
 ): Promise<CopilotDoc> {
   const res = await fetch(`${BASE}/draft`, {
@@ -165,7 +246,7 @@ export async function draft(
  * endpoint and draft() are untouched, so this is non-regressing.
  */
 export async function draftStream(
-  params: { corpus: string; request: string; language?: string; target_pages?: number },
+  params: { corpus: string; request: string; language?: string; target_pages?: number; plan?: CopilotPlanPayload } & CopilotGrounding,
   onProgress: DraftProgressCb,
   signal?: AbortSignal,
 ): Promise<CopilotDoc> {
@@ -240,7 +321,7 @@ async function _consumeDraftStream(
 // V4/V7: cadence and total come from draftPacing(target_pages) so the heartbeat
 // reflects the (correctly-scoped) effort — a small doc advances faster.
 async function _draftWithHeartbeat(
-  params: { corpus: string; request: string; language?: string; target_pages?: number },
+  params: { corpus: string; request: string; language?: string; target_pages?: number; plan?: CopilotPlanPayload } & CopilotGrounding,
   onProgress: DraftProgressCb,
   signal?: AbortSignal,
 ): Promise<CopilotDoc> {
@@ -290,6 +371,13 @@ export async function exportDoc(
   });
   if (!res.ok) throw new Error(`copilot /export failed: ${res.status}`);
   const blob = await res.blob();
+  // P5/D5 — downloadBlob() silently REFUSES a 0-byte blob (console.warn only,
+  // no throw), which used to let this function resolve "successfully" on an
+  // empty export. downloadBlob is shared by many other export call sites
+  // (exportService.ts), so rather than change its contract for all of them, we
+  // check here and throw — the caller (GovCopilot.exportAs) now propagates this
+  // so the chat/UI shows the real failure instead of a false "file ready ✓".
+  if (!blob || blob.size === 0) throw new Error(`copilot /export produced an empty file for format '${format}'`);
   const safe = title.replace(/[^\w؀-ۿ \-]+/g, '_').slice(0, 80).trim() || 'document';
   // Route through exportService's hardened downloadBlob (FE-4): it refuses a
   // 0-byte blob and keeps the anchor + object URL alive past a.click() with a
