@@ -39,10 +39,6 @@ export interface DashboardKpis {
 /** RIASEC order is canonical (Holland's hexagon): R-I-A-S-E-C. */
 export const RIASEC_ORDER: RiasecKey[] = ['R', 'I', 'A', 'S', 'E', 'C'];
 
-/** Placeholder profile shown when no assessment carries a `riasec` block yet,
- *  so an empty dashboard still reads sensibly. Mirrors the legacy default. */
-const RIASEC_FALLBACK: Record<RiasecKey, number> = { R: 45, I: 78, A: 30, S: 62, E: 85, C: 50 };
-
 /** Local-day bucket key, e.g. "Jun 06" — matches the legacy slice(4, 10). */
 const dayKey = (d: Date): string => d.toDateString().slice(4, 10);
 
@@ -64,6 +60,10 @@ export function computeKpis(allAssessments: any[] = [], logins: any[] = []): Das
   return { totalCandidates, avgScore, approvalRatio, totalLogins };
 }
 
+/** Aggregates real `reportData.riasec` values across assessments. Returns an
+ *  EMPTY array (never a fake placeholder) when no assessment in the dataset
+ *  carries the field yet — callers must render an explicit "no data" state
+ *  rather than plotting invented numbers as if they were real. */
 export function computeRiasec(allAssessments: any[] = []): RiasecDatum[] {
   const sums: Record<RiasecKey, number> = { R: 0, I: 0, A: 0, S: 0, E: 0, C: 0 };
   let processed = 0;
@@ -81,8 +81,8 @@ export function computeRiasec(allAssessments: any[] = []): RiasecDatum[] {
     }
   }
 
-  const src = processed === 0 ? RIASEC_FALLBACK : sums;
-  return RIASEC_ORDER.map(key => ({ key, value: src[key] }));
+  if (processed === 0) return [];
+  return RIASEC_ORDER.map(key => ({ key, value: sums[key] }));
 }
 
 export function computeScoreBuckets(allAssessments: any[] = []): ScoreBucket[] {

@@ -375,7 +375,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     if (dbActiveTab === 'logins' || dbActiveTab === 'analytics') {
       loadLogins();
     }
-    if (dbActiveTab === 'consultations') {
+    // Mirror the logins condition above: the analytics timeline merges
+    // consultation-request events too (buildActivityTimeline), so a fresh
+    // session landing on 'analytics' must load them here — waiting for the
+    // separate 'Consults' tab left the timeline silently missing this event
+    // kind until an admin happened to click that tab first.
+    if (dbActiveTab === 'consultations' || dbActiveTab === 'analytics') {
       loadConsultations();
     }
   }, [dbActiveTab]);
