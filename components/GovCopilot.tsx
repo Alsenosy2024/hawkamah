@@ -7,8 +7,9 @@ import {
   proposeBuildPlan, planToBuildRequest, shouldOpenBuildWizard,
   addPlanItem, removePlanItem, toggleComponent, clampPlanPages,
   // P5/D1 + D3 — the requested-length parser, the structured plan→backend
-  // mapper, and the web-research-need detector.
-  parseTargetPages, planToPayload, needsWebResearch,
+  // mapper, the web-research-need detector, and the long-form/authoring-intent
+  // detector (replaces the old bare-noun LONG_RE).
+  parseTargetPages, planToPayload, needsWebResearch, isLongFormRequest,
   type BuildPlan,
   type GovStageKey, type GovCopilotMode, type GovStateSnapshot,
 } from '../services/governanceChat';
@@ -237,9 +238,14 @@ const GcThinking: React.FC<{ label: string }> = ({ label }) => (
 );
 
 // Document-creation intent: does the user want a real, document-grade draft of
-// ANY kind (not a short Q&A)? Broadened so the copilot creates any document type
-// just by asking — creation verbs + a wide doc-type vocabulary (AR + EN).
-const LONG_RE = /(كامل|كاملة|مفصّل|مفصل|تفصيل|استراتيج|سياسة|لائحة|دليل|إجراء|اجراء|عملية|عمليات|صياغة|اكتب|أكتب|حرّر|حرر|وثيق|وثيقة|مستند|كمّل|كمل|أكمل|اكمل|استمر|تابع|واصل|أطول|أنشئ|انشئ|أنشِئ|جهّز|جهز|صمّم|صمم|أعدّ|نموذج|مذكرة|تقرير|خطة|خطّة|عقد|اتفاقية|محضر|خطاب|ميثاق|مصفوفة|قالب|استمارة|توصيف وظيفي|full|complete|draft|strategy|policy|regulation|manual|procedure|process|write|detailed|continue|expand|longer|create|generate|prepare|design|report|plan|contract|agreement|memo|minutes|letter|proposal|presentation|matrix|template|charter|document)/i;
+// ANY kind (not a short Q&A)? P5 addendum — this used to be a bare-noun regex
+// (`LONG_RE`) here, so a plain QUESTION mentioning any governance noun (e.g.
+// «هل عندنا سياسة لتضارب المصالح؟») matched via «سياسة» alone and hijacked
+// GovCopilot.runGeneration's draftStream-vs-ask branch into the 7-8 min /draft
+// path with zero authoring intent. Replaced with `isLongFormRequest`, imported
+// from governanceChat (unit-testable there; see its doc comment for the exact
+// repro + the fix: verb+noun / continuation / explicit page count — never a
+// bare noun alone).
 
 // Output-formatting directive sent to the model (not shown in the UI bubble):
 // any diagram must be a real Mermaid code block — never ASCII art — and tabular
@@ -676,7 +682,7 @@ const GovCopilot: React.FC<Props> = (props) => {
     // only when the user turned the wizard ON (any doc request) OR clearly asked
     // to build (an explicit build command), preserving the V5/V16 flow exactly.
     if (raw && !att.length && mode === 'ask' && !plan && !planBusy && !building
-        && shouldOpenBuildWizard({ wizardOn, text: raw, longForm: LONG_RE.test(raw) })) {
+        && shouldOpenBuildWizard({ wizardOn, text: raw, longForm: isLongFormRequest(raw) })) {
       setInput('');
       await openPlan(q);
       return;
@@ -775,7 +781,7 @@ const GovCopilot: React.FC<Props> = (props) => {
       // (Google Search) document, merged with the user's own files. Front-end
       // path (Gemini google skill), independent of the backend. Degrades to the
       // normal draft on any failure.
-      if (!att.length && LONG_RE.test(q) && needsWebResearch(q)) {
+      if (!att.length && isLongFormRequest(q) && needsWebResearch(q)) {
         patch(m => ({ ...m, thoughts: [...m.thoughts, { id: nid(), text: t('يبحث في الويب لتجميع أحدث المعلومات…', 'Searching the web for the latest information…') }] }));
         scrollDown();
         try {
@@ -811,7 +817,7 @@ const GovCopilot: React.FC<Props> = (props) => {
           scrollDown();
           try { await copilotIngest(corpus, att.map(a => a.file)); } catch { /* non-fatal */ }
         }
-        if (LONG_RE.test(q)) {
+        if (isLongFormRequest(q)) {
           // Long-form drafting runs 7-8 min; narrate the stages so the panel is
           // never silent (HWK-A1). draftStream() relays real backend events when
           // /draft/stream is deployed, else a timer-based heartbeat. Dedupe by
@@ -889,7 +895,7 @@ const GovCopilot: React.FC<Props> = (props) => {
       await stageChat(
         {
           stage: stageKey, model, history, message: q + FORMAT_HINT, language, signal: ac.signal,
-          extraContext, mode, fileContext: ctx, fileCount: count, longForm: LONG_RE.test(q) || !!opts?.targetPages,
+          extraContext, mode, fileContext: ctx, fileCount: count, longForm: isLongFormRequest(q) || !!opts?.targetPages,
           targetPages: opts?.targetPages,
           stateSnapshot,
         },
