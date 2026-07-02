@@ -29,6 +29,7 @@ import {
 import { createSharedDoc, loadTenantDocComments, snapshotByteLength, mergeClientComments } from '../services/sharedDocService';
 import { artifactToMarkdown } from '../services/canvasDocument';
 import DocumentCanvas from './DocumentCanvas';
+import { useCanvasSession } from '../hooks/useCanvasSession';
 import {
   buildModel, generateGovernanceDoc, generateBulkDoc, generateGapFix, editArtifact,
   industryLens, referenceProjectsBlock,
@@ -52,6 +53,7 @@ import Markdown from './Markdown';
 import BackButton from './BackButton';
 import ThinkingTrace from './ThinkingTrace';
 import ArtifactProgress from './ArtifactProgress';
+import StepTimeline from './StepTimeline';
 import SwimlaneView from './SwimlaneView';
 import { generateSwimlane, buildProvenance as buildSwimlaneProvenance, type SwimlaneSpec } from '../services/swimlaneService';
 // P16-I — still needed here: the org-structure Stage-4 live node/edge editor
@@ -564,17 +566,10 @@ ${content.slice(0, 8000)}`;
   // current-state report) open in the SAME canvas — the single export surface.
   // Unlike `canvasRec` these aren't library records (no share/comments); the
   // canvas renders them and exposes its Word/PDF/PPTX/Excel suite.
-  // D2: which backing state (if any) `canvasArt` was opened from, so edits saved
-  // from the canvas (onSave) can be written back onto that SAME state and
-  // survive a close/reopen — see openArtifactInCanvas / saveCanvasArtHtml.
-  // J — typed to also allow GovernanceDocument (adds `citations`): openArtifactInCanvas
-  // is called with a real GovernanceDocument for the 'gendoc' kind (handleGenerate /
-  // "افتح في الكانفس"), and artifactToMarkdown reads `d.citations?.[s.id]` off
-  // whatever object it's given. Widening the STATE type makes that citations flow
-  // explicit/type-checked instead of relying on GeneratedArtifact's structural
-  // subtyping to silently carry the extra field through at runtime.
-  const [canvasArt, setCanvasArt] = useState<GeneratedArtifact | GovernanceDocument | null>(null);
-  const [canvasArtKind, setCanvasArtKind] = useState<'charter' | 'gendoc' | 'diagnostic' | null>(null);
+  // P17/MAJOR-modularity: `canvasArt`/`canvasArtKind` (declared just below, near
+  // openArtifactInCanvas/saveCanvasArtHtml — moved there since the shared
+  // useCanvasSession hook now backs them) are DERIVED from that hook so every
+  // existing read site here is unchanged; only the state's source moved.
   // D2: identity of the fallback library record for the CURRENTLY open untagged
   // artifact (risk register / roadmap), + the last html actually written to it.
   // DocumentCanvas calls onSave after EVERY smart-edit action, not just an
@@ -1965,45 +1960,48 @@ ${content.slice(0, 8000)}`;
     () => (canvasRec ? artifactToMarkdown(canvasRec) : ''),
     [canvasRec],
   );
-  // V25: open a generated process artifact in the canvas (the single export
-  // surface). A GeneratedArtifact already matches `ArtifactLike`, so the SAME
-  // artifactToMarkdown bridge feeds DocumentCanvas — no separate exporter. We
-  // clear any open library record so only one canvas overlay shows at a time.
-  // D2: `kind` tags which backing React state to write saved edits back into
-  // (see saveCanvasArtHtml) — 'charter'/'gendoc'/'diagnostic' each have one, the
-  // risk register / roadmap don't (they're pure functions of `model`, not stored state).
-  const openArtifactInCanvas = (art: GeneratedArtifact, kind: 'charter' | 'gendoc' | 'diagnostic' | null = null) => {
-    setCanvasRec(null); setCanvasArt(art); setCanvasArtKind(kind);
-    canvasArtLibRef.current = null; canvasArtLastHtmlRef.current = '';   // new artifact/session → fresh fallback state
-  };
-  const canvasArtMarkdown = useMemo(
-    () => (canvasArt ? artifactToMarkdown(canvasArt) : ''),
-    [canvasArt],
-  );
+  // V25 + P17: a generated process artifact open in the SAME canvas (the single
+  // export surface). Open/track/persist mechanics are shared with GovCopilot's
+  // canvas via hooks/useCanvasSession.ts (GovCopilot injects a localStorage
+  // backend there); GovernanceCenter keeps its OWN Firestore/kind-routed
+  // backend, injected below as the persist callback — only the generic
+  // mechanics moved into the hook.
+  // J — typed to also allow GovernanceDocument (adds `citations`):
+  // openArtifactInCanvas is called with a real GovernanceDocument for the
+  // 'gendoc' kind (handleGenerate / "افتح في الكانفس"), and artifactToMarkdown
+  // reads `d.citations?.[s.id]` off whatever object it's given. Widening the
+  // hook's meta type makes that citations flow explicit/type-checked instead
+  // of relying on GeneratedArtifact's structural subtyping to silently carry
+  // the extra field through at runtime.
+  type CanvasArtKind = 'charter' | 'gendoc' | 'diagnostic' | null;
+  type CanvasArtMeta = GeneratedArtifact | GovernanceDocument;
   // D2 fix (V11/V25 persistence gap) — wire onSave for the artifact-canvas
   // surface so smart-edit / typed edits survive close→reopen instead of
   // vanishing silently. Charter and the generated doc are real React state we
   // can write the edited html back into directly (mirrors how saveCanvasHtml
   // persists onto a library record). The risk register / roadmap have NO
   // backing store at all — `riskArt`/`roadmapArt` are recomputed fresh from
-  // `model` on every render (see the useMemo above) — so for those (and any
-  // other untagged artifact) we fall back to auto-saving the edited snapshot
-  // into the document library, exactly like the library canvas already does.
-  // nextCanvasArtLibSave (pure, unit-tested) keeps that fallback idempotent:
-  // onSave fires after every smart-edit action, not just an explicit Save, so
-  // without it a run of edits would mint a new record + toast on every call.
-  const saveCanvasArtHtml = async (html: string) => {
-    if (!canvasArt) return;
-    const next: GeneratedArtifact = { ...canvasArt, canvasHtml: html };
-    setCanvasArt(next);
-    if (canvasArtKind === 'charter') { setCharterArt(next); return; }
-    if (canvasArtKind === 'gendoc') { setGenDoc(next as GovernanceDocument); return; }
+  // `model` on every render — so for those (and any other untagged artifact)
+  // we fall back to auto-saving the edited snapshot into the document library,
+  // exactly like the library canvas already does. nextCanvasArtLibSave (pure,
+  // unit-tested) keeps that fallback idempotent: onSave fires after every
+  // smart-edit action, not just an explicit Save, so without it a run of
+  // edits would mint a new record + toast on every call.
+  const canvasArtSession = useCanvasSession<CanvasArtKind, CanvasArtMeta>(async (_id, html, kind, meta, _cache) => {
+    if (!meta) return;
+    const next: GeneratedArtifact = { ...meta, canvasHtml: html };
+    // Reactive echo so `canvasArt` (derived below) reflects the edit immediately —
+    // mirrors the unconditional `setCanvasArt(next)` this replaced, which ran
+    // first, for every kind, before this routing.
+    canvasArtSession.updateMeta(html, next);
+    if (kind === 'charter') { setCharterArt(next); return; }
+    if (kind === 'gendoc') { setGenDoc(next as GovernanceDocument); return; }
     // MAJOR fix — the diagnostic report has a real backing store (assessments/{id},
     // written by triggerAutoSurveyReport), unlike the risk register/roadmap; write
     // edits back onto that SAME record's reportData.canvasHtml instead of falling
     // through to the "no dedicated storage" library-fallback branch below, which
     // used to mint an orphan library copy of the report on every edit session.
-    if (canvasArtKind === 'diagnostic') {
+    if (kind === 'diagnostic') {
       if (!latestDiagnostic?.id) return;
       const updated = { ...latestDiagnostic, reportData: { ...latestDiagnostic.reportData, canvasHtml: html } };
       try {
@@ -2016,10 +2014,10 @@ ${content.slice(0, 8000)}`;
     }
     const decision = nextCanvasArtLibSave(html, canvasArtLibRef.current, canvasArtLastHtmlRef.current, () => uid('govdoc'));
     if (decision.status === 'skip') return;   // identical to the last saved snapshot — no-op
-    const { id, createdAt } = decision.state;
+    const { id: recId, createdAt } = decision.state;
     try {
       const rec: GovDocumentRecord = {
-        id, tenantId, kind: 'governance',
+        id: recId, tenantId, kind: 'governance',
         title: next.title, goal: next.goal,
         status: 'draft', version: model?.version || 1,
         createdAt, updatedAt: new Date().toISOString(),
@@ -2040,7 +2038,28 @@ ${content.slice(0, 8000)}`;
     } catch (e: any) {
       alertMsg(t('فشل حفظ التعديلات: ', 'Failed to save edits: ') + (e?.message || e));
     }
+  });
+  // `canvasArt`/`canvasArtKind` are DERIVED from the hook so every existing
+  // read site below (title/goal bindings, the kind-tagged "افتح في الكانفس"
+  // buttons) keeps working unchanged.
+  const canvasArt: CanvasArtMeta | null = canvasArtSession.doc
+    ? { ...canvasArtSession.doc.meta, canvasHtml: canvasArtSession.doc.html }
+    : null;
+  const canvasArtKind = canvasArtSession.doc?.kind ?? null;
+  const canvasArtMarkdown = canvasArtSession.doc?.md ?? '';
+  // V25: open a generated process artifact in the canvas (the single export
+  // surface). A GeneratedArtifact already matches `ArtifactLike`, so the SAME
+  // artifactToMarkdown bridge feeds DocumentCanvas — no separate exporter. We
+  // clear any open library record so only one canvas overlay shows at a time.
+  // D2: `kind` tags which backing React state to write saved edits back into
+  // (see the persist callback above) — 'charter'/'gendoc'/'diagnostic' each
+  // have one, the risk register / roadmap don't (pure functions of `model`).
+  const openArtifactInCanvas = (art: GeneratedArtifact, kind: CanvasArtKind = null) => {
+    setCanvasRec(null);
+    canvasArtLibRef.current = null; canvasArtLastHtmlRef.current = '';   // new artifact/session → fresh fallback state
+    canvasArtSession.open('canvas-art', artifactToMarkdown(art), kind, art.canvasHtml, art);
   };
+  const saveCanvasArtHtml = (html: string) => canvasArtSession.save(html);
   // Persist the live canvas edits onto the record so they survive reload + flow
   // into a client share. Guarded against the Firestore ~1MiB document limit (a
   // diagram-heavy doc already carries PNGs) — over budget we keep the sections
@@ -2778,50 +2797,38 @@ ${content.slice(0, 8000)}`;
             <button onClick={stop} className="hw-btn hw-btn-sm hw-btn-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>{t('إيقاف', 'Stop')}</button>
           </div>
           {progress && (
-            <div className="mt-1.5">
-              {(['ingest','embed','sentiment','entities'] as const).includes(progress.phase as any) && (
-                <div className="flex items-center gap-1 mb-1.5 flex-wrap">
-                  {([
-                    { k: 'ingest', ar: 'تقطيع', en: 'Chunk' },
-                    { k: 'embed', ar: 'متجهات', en: 'Embed' },
-                    { k: 'sentiment', ar: 'النبرة', en: 'Sentiment' },
-                    { k: 'entities', ar: 'الكيانات', en: 'Entities' },
-                  ] as const).map((p, idx, arr) => {
-                    const order = arr.findIndex(x => x.k === progress.phase);
-                    const state = idx < order ? 'done' : idx === order ? 'active' : 'todo';
-                    return (
-                      <span key={p.k} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${state === 'active' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : state === 'done' ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
-                        {state === 'done' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5 inline-block me-0.5"><polyline points="20 6 9 17 4 12"/></svg> : null}{ar ? p.ar : p.en}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-              {/* HWK-B6: structure-build pills (digest → extract → dedup → match)
-                  so the long synchronous build narrates its stage and the bar moves. */}
-              {(['build_digest','build_extract','build_dedup','match'] as const).includes(progress.phase as any) && (
-                <div className="flex items-center gap-1 mb-1.5 flex-wrap">
-                  {([
-                    { k: 'build_digest', ar: 'الأدلة', en: 'Evidence' },
-                    { k: 'build_extract', ar: 'الاستخراج', en: 'Extract' },
-                    { k: 'build_dedup', ar: 'التنظيف', en: 'Dedup' },
-                    { k: 'match', ar: 'المطابقة', en: 'Match' },
-                  ] as const).map((p, idx, arr) => {
-                    const order = arr.findIndex(x => x.k === progress.phase);
-                    const state = idx < order ? 'done' : idx === order ? 'active' : 'todo';
-                    return (
-                      <span key={p.k} className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${state === 'active' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : state === 'done' ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
-                        {state === 'done' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5 inline-block me-0.5"><polyline points="20 6 9 17 4 12"/></svg> : null}{ar ? p.ar : p.en}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-              <div className="text-[11px] text-slate-600 mb-1">{progress.label}</div>
-              <div className="h-2 bg-emerald-100 rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-500 transition-all" style={{ width: `${progress.total ? Math.round(progress.current / progress.total * 100) : 0}%` }} />
-              </div>
-            </div>
+            // P17/MINOR-modularity: was two bespoke, near-identical done/
+            // active/todo phase-pill rows (ingest group, HWK-B6 build group)
+            // plus a bespoke label + bar — now renders through the
+            // generalized ArtifactProgress (title/phases props), which used
+            // to only support the long-artifact pipeline's own phase set.
+            <ArtifactProgress
+              progress={progress}
+              sections={[]}
+              language={language}
+              // The busy row just above already names the operation (spinner + `busy`
+              // text) — a generic, non-redundant header here instead of repeating it.
+              title={{ ar: 'التقدم', en: 'Progress' }}
+              phases={
+                (['ingest', 'embed', 'sentiment', 'entities'] as const).includes(progress.phase as any)
+                  ? [
+                      { key: 'ingest', ar: 'تقطيع', en: 'Chunk' },
+                      { key: 'embed', ar: 'متجهات', en: 'Embed' },
+                      { key: 'sentiment', ar: 'النبرة', en: 'Sentiment' },
+                      { key: 'entities', ar: 'الكيانات', en: 'Entities' },
+                    ]
+                  // HWK-B6: structure-build pills (digest → extract → dedup → match)
+                  // so the long synchronous build narrates its stage and the bar moves.
+                  : (['build_digest', 'build_extract', 'build_dedup', 'match'] as const).includes(progress.phase as any)
+                  ? [
+                      { key: 'build_digest', ar: 'الأدلة', en: 'Evidence' },
+                      { key: 'build_extract', ar: 'الاستخراج', en: 'Extract' },
+                      { key: 'build_dedup', ar: 'التنظيف', en: 'Dedup' },
+                      { key: 'match', ar: 'المطابقة', en: 'Match' },
+                    ]
+                  : undefined
+              }
+            />
           )}
         </div>
       )}
@@ -4228,20 +4235,16 @@ ${content.slice(0, 8000)}`;
                     </div>
                     <div className="text-[11px] text-slate-500 dark:text-slate-400">{t('يبني كل المجموعات (سياسات، إجراءات، إدارات، صلاحيات، مؤشرات) جزءاً جزءاً مع مراجعة كل جزء — أدق من خطة واحدة ضخمة.', 'Builds every set (policies, procedures, departments, authorities, KPIs) chunk by chunk with a review of each — more accurate than one mega-plan.')}</div>
                     {genAllChunks.length > 0 && (
-                      <div className="space-y-1">
-                        {genAllChunks.map((c) => (
-                          <div key={c.scope} className="flex items-center gap-2 text-[12px] rounded-lg bg-amber-50/70 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-2.5 py-1.5">
-                            <span className="shrink-0 w-4 text-center">
-                              {c.status === 'done' ? <span className="text-emerald-600">✓</span>
-                                : c.status === 'running' ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin inline-block text-amber-600"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M22 12a10 10 0 0 1-10 10"/></svg>
-                                : c.status === 'error' ? <span className="text-rose-500">!</span>
-                                : <span className="text-slate-300">○</span>}
-                            </span>
-                            <span className={`font-bold ${c.status === 'done' ? 'text-emerald-700 dark:text-emerald-300' : c.status === 'error' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-200'}`}>{c.label}</span>
-                            {c.note && <span className="ms-auto text-[10px] text-slate-400">{c.note}</span>}
-                          </div>
-                        ))}
-                      </div>
+                      // P17/MINOR-modularity: was a bespoke done/running/pending/error
+                      // row list (its own icon glyphs + amber pill styling) — now
+                      // renders through the shared StepTimeline ('bare' variant since
+                      // this card already has its own border + header above).
+                      <StepTimeline
+                        steps={genAllChunks.map(c => ({ id: c.scope, step: c.scope, label: c.label, status: c.status, note: c.note }))}
+                        active={genAllRunning}
+                        language={language}
+                        variant="bare"
+                      />
                     )}
                   </div>
 
@@ -4933,7 +4936,7 @@ ${content.slice(0, 8000)}`;
           subtitle={canvasArt.goal || t('وثيقة حوكمة', 'Governance document')}
           brand={companyName ? `${companyName} · AILIGENT` : 'AILIGENT'}
           date={t('بتاريخ ', 'Dated ') + new Date().toLocaleDateString(ar ? 'ar-EG' : 'en-GB')}
-          onClose={() => { setCanvasArt(null); setCanvasArtKind(null); canvasArtLibRef.current = null; canvasArtLastHtmlRef.current = ''; }}
+          onClose={() => { canvasArtSession.close(); canvasArtLibRef.current = null; canvasArtLastHtmlRef.current = ''; }}
           onSave={saveCanvasArtHtml}
         />
       )}

@@ -21,6 +21,10 @@
 
 import { isMermaidBlock } from './mermaidDetect';
 import { escapeHtmlBidi } from './markdownAst';
+// P17/MAJOR-modularity: primitives byte-identical across this parser and its
+// siblings (components/Markdown.tsx, services/markdownAst.ts) — see
+// services/markdownShared.ts for which pieces qualified and why.
+import { stripLeadingBidi, isHrLine, splitTableRow as splitRow, isTableDividerLine, ORDERED_LIST_RE, UNORDERED_LIST_RE, PARAGRAPH_STOP_RE } from './markdownShared';
 
 export type Lang = 'ar' | 'en';
 export type ChartKind = 'donut' | 'bar';
@@ -479,9 +483,6 @@ export function buildCanvasHtml(spec: DocSpec): string {
 //  canvas pages. Mirrors the block grammar of components/Markdown.tsx.
 // ===========================================================================
 
-const splitRow = (line: string): string[] =>
-  line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
-
 // Detect which table column (if any) is a "status" column → tag pills.
 function detectTagCol(headers: string[], rows: string[][]): number | undefined {
   const STATUS_HEAD = /(الحالة|الحاله|status|state|risk|المخاطر|الخطورة|الأولوية|priority)/i;
@@ -500,19 +501,6 @@ export interface MdToSpecOptions {
   brand?: string;
   srcRefs?: SrcRef[];   // pre-resolved citation map (overrides any ```srcrefs``` fence)
 }
-
-// CRITICAL fix — bidi-control characters (LRM U+200E, RLM U+200F, ALM U+061C, the
-// LRE/RLE/PDF/LRO/RLO embedding controls U+202A-U+202E, and the LRI/RLI/FSI/PDI
-// isolates U+2066-U+2069) a producer may prefix a line with to force its visual
-// direction — e.g. services/governanceArtifacts.ts's bullet builders emit
-// `${RLM}- text`. Sitting BEFORE the Markdown prefix (-, #, |, >, a digit) hides
-// it from every `^`-anchored block-type regex below, so the line falls through to
-// a garbled paragraph instead of a real bullet/heading/table/quote. Stripped ONLY
-// from the FRONT of each line, right before block-type detection AND before
-// extracting that block's content — never touched mid-line, where a control
-// character may be an intentional bidi cue inside the text itself.
-const BIDI_CONTROLS_RE = /^[\u200E\u200F\u061C\u202A-\u202E\u2066-\u2069]+/;
-const stripLeadingBidi = (s: string): string => s.replace(BIDI_CONTROLS_RE, '');
 
 // MAJOR fix — the backend's own auto-generated table of contents (generation.py's
 // _stitch: "## الفهرس" / "## Table of Contents" followed by a numbered list of
@@ -591,7 +579,7 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
     }
 
     // horizontal rule → skip (sections already paginate)
-    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { i++; continue; }
+    if (isHrLine(line)) { i++; continue; }
 
     // D4 — a standalone image line: ![alt](url), including a data: URI (how
     // artifactToMarkdown embeds a rasterized diagram/figure). MUST run before the
@@ -605,7 +593,7 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
     }
 
     // table (header row + separator row)
-    if (line.includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(stripLeadingBidi(lines[i + 1])) && lines[i + 1].includes('-')) {
+    if (line.includes('|') && i + 1 < lines.length && isTableDividerLine(stripLeadingBidi(lines[i + 1])) && lines[i + 1].includes('-')) {
       const headers = splitRow(line);
       i += 2;
       const rows: string[][] = [];
@@ -640,17 +628,17 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
     }
 
     // ordered list
-    if (/^\s*\d+[.)]\s+/.test(line)) {
+    if (ORDERED_LIST_RE.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*\d+[.)]\s+/.test(stripLeadingBidi(lines[i]))) { items.push(stripLeadingBidi(lines[i]).replace(/^\s*\d+[.)]\s+/, '')); i++; }
+      while (i < lines.length && ORDERED_LIST_RE.test(stripLeadingBidi(lines[i]))) { items.push(stripLeadingBidi(lines[i]).replace(ORDERED_LIST_RE, '')); i++; }
       blocks.push({ type: 'list', ordered: true, items });
       continue;
     }
 
     // unordered list
-    if (/^\s*[-*•]\s+/.test(line)) {
+    if (UNORDERED_LIST_RE.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*[-*•]\s+/.test(stripLeadingBidi(lines[i]))) { items.push(stripLeadingBidi(lines[i]).replace(/^\s*[-*•]\s+/, '')); i++; }
+      while (i < lines.length && UNORDERED_LIST_RE.test(stripLeadingBidi(lines[i]))) { items.push(stripLeadingBidi(lines[i]).replace(UNORDERED_LIST_RE, '')); i++; }
       blocks.push({ type: 'list', ordered: false, items });
       continue;
     }
@@ -662,9 +650,9 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
     const buf: string[] = [];
     while (
       i < lines.length && stripLeadingBidi(lines[i]).trim()
-      && !/^(#{1,6}\s|```|\s*[-*•]\s|\s*\d+[.)]\s|\s*>\s)/.test(stripLeadingBidi(lines[i]))
-      && !/^\s*([-*_])\1{2,}\s*$/.test(stripLeadingBidi(lines[i]))
-      && !(lines[i].includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(stripLeadingBidi(lines[i + 1])))
+      && !PARAGRAPH_STOP_RE.test(stripLeadingBidi(lines[i]))
+      && !isHrLine(stripLeadingBidi(lines[i]))
+      && !(lines[i].includes('|') && i + 1 < lines.length && isTableDividerLine(stripLeadingBidi(lines[i + 1])))
     ) { buf.push(stripLeadingBidi(lines[i])); i++; }
     if (buf.length) blocks.push({ type: 'paragraph', text: buf.join(' ') });
     else i++;

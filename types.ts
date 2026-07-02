@@ -221,6 +221,10 @@ export interface ProgressStep {
   step: string;     // stable key (the backend/heartbeat stage name) — used to upsert
   label: string;    // bilingual display text already resolved for the active language
   status: 'pending' | 'running' | 'done' | 'error';
+  // P17/MINOR-modularity: optional trailing annotation (e.g. an error hint or a
+  // count) rendered end-aligned on the row — used by GovernanceCenter's
+  // bulk-generation chunk list, which StepTimeline now also renders.
+  note?: string;
 }
 
 export interface ProposedAction {
