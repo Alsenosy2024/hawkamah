@@ -9,7 +9,7 @@
 // ===========================================================================
 
 import { Type } from '@google/genai';
-import { generateJson } from './agentOrchestrator';
+import { generateJson, generateJsonStream } from './agentOrchestrator';
 import type {
   Language, GeneratedArtifact, ArtifactSection,
   WorkEnvironmentAnswers, WorkEnvironmentReport, ProjectSurveySettings,
@@ -56,6 +56,11 @@ export interface SurveyResponseRecord {
 export interface SurveyAggregate {
   count: number;
   analyzedCount: number;
+  // [CRITICAL fix] real vs. AI-simulated split — MUST be disclosed on every
+  // aggregate artifact so a board-facing export can never read as 100% real
+  // employee sentiment when part of the pool was synthetically generated.
+  simulatedCount: number;
+  realCount: number;
   avgOverall: number;
   avgIso: number;
   avgEfqm: number;
@@ -106,14 +111,41 @@ export function computeAggregate(records: SurveyResponseRecord[]): SurveyAggrega
   const topChallenges = Array.from(challengeCount.values())
     .sort((a, b) => b.count - a.count).slice(0, 12);
 
+  const simulatedCount = records.filter(r => r.simulated).length;
+
   return {
     count: records.length,
     analyzedCount: analyzed.length,
+    simulatedCount,
+    realCount: records.length - simulatedCount,
     avgOverall: avg(analyzed.map(r => r.envReportData!.overallScore)),
     avgIso: avg(analyzed.map(r => r.envReportData!.isoComplianceRate)),
     avgEfqm: avg(analyzed.map(r => r.envReportData!.efqmExcellenceRate)),
     infraDist, sentimentDist, deptDist, topChallenges,
   };
+}
+
+/**
+ * [CRITICAL fix] Mandatory, unmissable disclosure of the real/simulated split.
+ * Rendered as the FIRST section of every aggregate artifact — never buried in
+ * the statistics block — so a reader can never mistake a blended data set for
+ * 100% real employee sentiment.
+ */
+export function methodologyDisclosure(agg: SurveyAggregate, ar: boolean): string {
+  if (agg.simulatedCount === 0) {
+    return ar
+      ? `تستند هذه الإحصاءات إلى ${agg.count} استجابة **حقيقية بالكامل** من موظفين فعليين. لا توجد أي استجابات محاكاة بالذكاء الاصطناعي ضمن هذا التقرير.`
+      : `This report is based on ${agg.count} **fully real** responses from actual employees. No AI-simulated respondents are included.`;
+  }
+  return ar
+    ? [
+        `⚠️ **تنويه إلزامي حول مصدر البيانات:** يتضمن هذا التقرير **${agg.simulatedCount} رداً محاكى بالذكاء الاصطناعي** (شخصيات افتراضية) من إجمالي ${agg.count} استجابة — أي ${agg.realCount} رد حقيقي فقط من موظفين فعليين.`,
+        `الإحصاءات والسرد التحليلي أدناه يمزجان بين البيانات الواقعية والمولَّدة اصطناعياً. **لا يجوز** تقديم هذا التقرير كتمثيل كامل أو دقيق لمشاعر الموظفين الفعليين دون توضيح هذه النسبة صراحةً لأي جهة تطّلع عليه.`,
+      ].join('\n\n')
+    : [
+        `⚠️ **Mandatory data-source disclosure:** this report includes **${agg.simulatedCount} AI-simulated response(s)** (synthetic personas) out of ${agg.count} total — only ${agg.realCount} are real employee responses.`,
+        `The statistics and narrative below blend real and synthetically-generated data. This report **must not** be presented as a full or accurate representation of actual employee sentiment without disclosing this split to anyone who reviews it.`,
+      ].join('\n\n');
 }
 
 // ---- helpers -----------------------------------------------------------------
@@ -149,6 +181,8 @@ const aggregateNarrativeSchema = {
 function statsBlock(agg: SurveyAggregate, ar: boolean): string {
   return [
     ar ? `عدد المشاركين: ${agg.count} (مُحلَّل: ${agg.analyzedCount})` : `Respondents: ${agg.count} (analyzed: ${agg.analyzedCount})`,
+    ar ? `مصدر البيانات: ${agg.realCount} حقيقي / ${agg.simulatedCount} محاكى بالذكاء الاصطناعي`
+       : `Data source: ${agg.realCount} real / ${agg.simulatedCount} AI-simulated`,
     ar ? `متوسط الرضا العام: ${agg.avgOverall}/100` : `Avg overall: ${agg.avgOverall}/100`,
     ar ? `متوسط مطابقة ISO 9001: ${agg.avgIso}%` : `Avg ISO 9001: ${agg.avgIso}%`,
     ar ? `متوسط تميّز EFQM: ${agg.avgEfqm}%` : `Avg EFQM: ${agg.avgEfqm}%`,
@@ -166,14 +200,57 @@ export interface AggregateParams {
   mode: 'full' | 'brief';
   language: Language;
   orgContext?: string;
+  // [MINOR fix] optional ingested-document grounding (same pattern as
+  // SimulateParams.chunkContext) — lets the narrative cite the tenant's real
+  // policy/procedure documents instead of reasoning from the profile string alone.
+  chunkContext?: string;
   signal?: AbortSignal;
+  // [MAJOR fix] staged progress for the UI (busy label + section-count bar).
+  onPhase?: (msg: string, done: number, total: number) => void;
+  // [CRITICAL fix] let a caller produce a report over REAL responses only —
+  // the default (false/undefined) still includes simulated responses, but
+  // ALWAYS discloses the split via methodologyDisclosure below.
+  excludeSimulated?: boolean;
 }
+
+// Best-effort, pure section-count estimator for a still-streaming
+// `{ executiveSummary, sections:[{title,body}, ...] }` JSON body. Each section
+// object starts with a "title" key, so counting occurrences is a reasonable
+// live proxy for "sections started so far" — NOT exact (mirrors the same
+// best-effort spirit as services/partialJson.ts), only used to drive a
+// progress bar, never to parse the authoritative result.
+export function countStreamedSections(accumulatedText: string): number {
+  const m = accumulatedText.match(/"title"\s*:/g);
+  return m ? m.length : 0;
+}
+
+const aggregateNarrativeSchemaWithCitations = {
+  type: Type.OBJECT,
+  properties: {
+    executiveSummary: { type: Type.STRING },
+    sections: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: { title: { type: Type.STRING }, body: { type: Type.STRING } },
+        required: ['title', 'body'],
+      },
+    },
+    // [MINOR fix] distinct source-document names actually drawn upon, from the
+    // `[docName › heading]` tags in the ingested-chunk context. Optional/not
+    // required so a model that omits it never breaks generation.
+    citedSources: { type: Type.ARRAY, items: { type: Type.STRING } },
+  },
+  required: ['executiveSummary', 'sections'],
+};
 
 /** Full or brief aggregate report over ALL responses → GeneratedArtifact. */
 export async function buildAggregateArtifact(p: AggregateParams): Promise<GeneratedArtifact> {
   const ar = p.language === 'ar';
-  const agg = computeAggregate(p.records);
+  const records = p.excludeSimulated ? p.records.filter(r => !r.simulated) : p.records;
+  const agg = computeAggregate(records);
   const stats = statsBlock(agg, ar);
+  const disclosure = methodologyDisclosure(agg, ar);
 
   const full = p.mode === 'full';
   const wantSections = full
@@ -181,31 +258,74 @@ export async function buildAggregateArtifact(p: AggregateParams): Promise<Genera
         ? ['ملخص تنفيذي', 'تحليل الإجراءات والسياسات', 'تقييم البنية الرقمية', 'التحديات والمشكلات الجوهرية', 'العلاقات وبيئة العمل', 'الطموحات واتجاهات التطوير', 'قراءة مؤشرات ISO و EFQM', 'توصيات الإدارة التنفيذية', 'خارطة طريق إعادة الهيكلة']
         : ['Executive Summary', 'Procedures & Policies', 'Digital Infrastructure', 'Core Challenges', 'Workplace Relationships', 'Aspirations & Development', 'ISO & EFQM Indicators', 'Management Recommendations', 'Restructuring Roadmap'])
     : (ar ? ['ملخص تنفيذي موجز', 'أبرز 3 تحديات', 'أهم 3 توصيات'] : ['Brief Executive Summary', 'Top 3 Challenges', 'Top 3 Recommendations']);
+  const totalSections = wantSections.length;
+
+  p.onPhase?.(ar ? 'إعداد الإحصاءات المجمّعة…' : 'Compiling aggregated statistics…', 0, totalSections);
 
   const prompt = [
     ar ? `أنت مستشار جودة وحوكمة (ISO 9001 + EFQM). حلّل نتائج "استبيان تقييم بيئة العمل" لشركة «${p.companyName}».`
        : `You are a quality & governance consultant (ISO 9001 + EFQM). Analyze the work-environment survey for "${p.companyName}".`,
     p.orgContext ? (ar ? '=== سياق الشركة ===\n' + p.orgContext.slice(0, 2000) : '=== Company context ===\n' + p.orgContext.slice(0, 2000)) : '',
+    p.chunkContext ? (ar ? '=== مقتطفات من مستندات الشركة المفهرسة (استشهد بها عند أي ادّعاء عن سياسات/إجراءات قائمة) ===\n' + p.chunkContext.slice(0, 6000)
+                          : '=== Ingested company documents (cite these when claiming an existing policy/procedure) ===\n' + p.chunkContext.slice(0, 6000)) : '',
     ar ? '=== إحصاءات مجمّعة (مصدر الحقيقة — لا تخالفها) ===' : '=== Aggregated statistics (ground truth) ===',
     stats,
     ar ? '=== عينات من إجابات الموظفين ===' : '=== Sample employee answers ===',
-    sampleAnswers(p.records, full ? 6 : 3),
+    sampleAnswers(records, full ? 6 : 3),
     full
       ? (ar ? `اكتب تقريراً تنفيذياً مفصّلاً. أعد JSON فيه executiveSummary وأقسام بعناوين: ${wantSections.join('، ')}. كل قسم فقرتان على الأقل بنقاط عملية مستندة للإحصاءات والعينات. عربي فصيح.`
             : `Write a detailed executive report. Return JSON with executiveSummary and sections titled: ${wantSections.join(', ')}.`)
       : (ar ? `اكتب تقريراً موجزاً جداً. أعد JSON فيه executiveSummary (فقرة) وأقسام: ${wantSections.join('، ')} (نقاط مختصرة). عربي فصيح.`
             : `Write a very brief report. Return JSON with executiveSummary and sections: ${wantSections.join(', ')} (concise bullets).`),
+    p.chunkContext
+      ? (ar ? 'عند ذكر أي إجراء أو سياسة إدارية قائمة فعلاً في الشركة، استشهد بالمصدر بذكر اسم المستند بين قوسين كما ورد أعلاه (مثال: (سياسة الموارد البشرية)). إن لم تتوفر أدلة موثقة لادّعاء معيّن فاذكر ذلك صراحةً بدلاً من الافتراض. أعد أيضاً حقل citedSources بأسماء المستندات التي استندت إليها فعلياً.'
+             : 'When claiming an existing company procedure/policy, cite the source by naming the document in parentheses as it appears above (e.g. (HR Policy)). If no documented evidence supports a claim, say so explicitly instead of assuming. Also return a citedSources field listing the document names you actually drew upon.')
+      : '',
   ].filter(Boolean).join('\n\n');
 
-  let narrative: { executiveSummary: string; sections: Array<{ title: string; body: string }> };
+  const schema = p.chunkContext ? aggregateNarrativeSchemaWithCitations : aggregateNarrativeSchema;
+  let narrative: { executiveSummary: string; sections: Array<{ title: string; body: string }>; citedSources?: string[] };
   try {
-    narrative = await generateJson(prompt, aggregateNarrativeSchema, { signal: p.signal, temperature: 0.45 });
+    if (p.signal?.aborted) throw new Error('ABORTED');
+    p.onPhase?.(ar ? 'توليد السرد التحليلي…' : 'Generating narrative…', 0, totalSections);
+    try {
+      // Stream first so the UI can show real section-by-section progress; the
+      // blocking generateJson ladder below is the fallback on any stream failure
+      // (mirrors the same stream-first/blocking-fallback pattern used elsewhere
+      // in the app for long-report generation).
+      const streamed = await generateJsonStream<typeof narrative>(prompt, schema, {
+        signal: p.signal,
+        temperature: 0.45,
+        onText: (acc) => {
+          const done = Math.min(countStreamedSections(acc), totalSections);
+          p.onPhase?.(ar ? `كتابة الأقسام (${done}/${totalSections})…` : `Writing sections (${done}/${totalSections})…`, done, totalSections);
+        },
+      });
+      if (!streamed || !Array.isArray(streamed.sections) || !streamed.executiveSummary) {
+        throw new Error('incomplete streamed narrative');
+      }
+      narrative = streamed;
+    } catch (streamErr) {
+      if (p.signal?.aborted) throw new Error('ABORTED');
+      narrative = await generateJson(prompt, schema, { signal: p.signal, temperature: 0.45 });
+    }
+    p.onPhase?.(ar ? 'اكتمل التوليد' : 'Generation complete', totalSections, totalSections);
   } catch (e) {
+    // A cancellation must propagate — never fabricate a "successful" artifact
+    // out from under a user who explicitly stopped the run.
+    if (p.signal?.aborted || (e as Error)?.message === 'ABORTED') throw new Error('ABORTED');
     console.error('aggregate narrative failed', e);
     narrative = { executiveSummary: ar ? 'تعذّر توليد السرد التحليلي؛ التقرير يعرض الإحصاءات المجمّعة فقط.' : 'Narrative generation failed; statistics only.', sections: [] };
   }
 
   const sections: ArtifactSection[] = [];
+  // [CRITICAL fix] the real/simulated disclosure leads EVERY aggregate artifact —
+  // ahead of even the statistics — so it can never be missed or scrolled past.
+  sections.push({
+    id: 'methodology', status: 'done',
+    title: ar ? 'منهجية التقرير ومصدر البيانات' : 'Report Methodology & Data Source',
+    content: disclosure,
+  });
   // lead with a hard statistics section (always present, deterministic)
   sections.push({
     id: 'stats', status: 'done',
@@ -215,6 +335,13 @@ export async function buildAggregateArtifact(p: AggregateParams): Promise<Genera
   (narrative.sections || []).forEach((s, i) => sections.push({
     id: `sec_${i}`, status: 'done', title: s.title, content: s.body,
   }));
+  if (narrative.citedSources?.length) {
+    sections.push({
+      id: 'sources', status: 'done',
+      title: ar ? 'المصادر المستشهد بها' : 'Cited Sources',
+      content: narrative.citedSources.map(s => `- ${s}`).join('\n'),
+    });
+  }
 
   return {
     title: ar

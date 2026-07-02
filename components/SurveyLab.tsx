@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import type { AdminSettings, Language, GovProject } from '../types';
+import type { AdminSettings, Language, GovProject, GeneratedArtifact } from '../types';
 import { compileChunkContext, activeProjectSurvey } from '../services/governanceService';
 import { runSurveySimulation } from '../services/surveySimulation';
 import {
@@ -7,7 +7,10 @@ import {
   type SurveyResponseRecord,
 } from '../services/surveyReport';
 import { exportDocx } from '../services/exportService';
+import { artifactToMarkdown } from '../services/canvasDocument';
+import DocumentCanvas from './DocumentCanvas';
 import { useToast } from './ToastProvider';
+import { useArtifactExport } from '../hooks/useArtifactExport';
 
 interface Props {
   language: Language;
@@ -44,16 +47,22 @@ const SurveyLab: React.FC<Props> = ({ language, settings, allAssessments, onRefr
   };
 
   // ---- responses for this tenant (environment surveys) ----
-  const [onlySimulated, setOnlySimulated] = useState(false);
+  // [CRITICAL fix] tri-state filter (was a single "simulated only" checkbox) so a
+  // consultant can also produce a REAL-only export, not just all-vs-simulated-only.
+  // The export itself always discloses the real/simulated split regardless of this
+  // filter (see surveyReport.methodologyDisclosure) — this only narrows the pool.
+  const [responseFilter, setResponseFilter] = useState<'all' | 'real' | 'simulated'>('all');
   const responses: SurveyResponseRecord[] = useMemo(() => {
     return (allAssessments || []).filter((a: any) => {
       if (!a?.workplaceAnswers) return false;
-      if (onlySimulated && !a.simulated) return false;
+      if (responseFilter === 'simulated' && !a.simulated) return false;
+      if (responseFilter === 'real' && a.simulated) return false;
       // scope to active tenant when tagged; untagged (legacy real) shown too
       if (a.tenantId && a.tenantId !== tenantId) return false;
       return true;
     });
-  }, [allAssessments, onlySimulated, tenantId]);
+  }, [allAssessments, responseFilter, tenantId]);
+  const simulatedInPool = useMemo(() => responses.filter((r: any) => r.simulated).length, [responses]);
 
   // ---- simulation ----
   const [count, setCount] = useState(20);
@@ -63,21 +72,45 @@ const SurveyLab: React.FC<Props> = ({ language, settings, allAssessments, onRefr
 
   const runSim = async () => {
     if (running) return;
+    let chunkContext = '';
+    try { chunkContext = await compileChunkContext(tenantId, 8000); } catch { /* optional */ }
+    // [MAJOR fix] warn before generating with an empty chunk bank — without it
+    // the model invents concrete-sounding company specifics (systems, procedures,
+    // challenges) from nothing but the manual company-profile string.
+    if (!chunkContext.trim()) {
+      const ok = await toast.confirm(
+        ar
+          ? 'لا توجد مستندات مفهرسة لهذه الشركة — ستكون الشخصيات والإجابات المولَّدة عامة وغير مبنية على واقع شركتك الفعلي (لا سياسات أو أنظمة أو تحديات حقيقية). هل تريد المتابعة؟'
+          : 'No indexed documents for this tenant — generated personas and answers will be generic and NOT grounded in your company\'s real specifics (no real policies, systems, or challenges). Continue anyway?',
+        { confirmLabel: ar ? 'متابعة' : 'Continue', cancelLabel: ar ? 'إلغاء' : 'Cancel', danger: true },
+      );
+      if (!ok) return;
+    }
     setRunning(true);
     setProgress({ msg: ar ? 'بدء…' : 'Starting…', done: 0, total: count });
     const ac = new AbortController(); acRef.current = ac;
     try {
-      let chunkContext = '';
-      try { chunkContext = await compileChunkContext(tenantId, 8000); } catch { /* optional */ }
       const res = await runSurveySimulation(
         { count, tenantId, companyName, orgContext, chunkContext, language, analyze: true, signal: ac.signal },
         (msg, done, total) => setProgress({ msg, done, total }),
       );
-      toast.success(ar ? `اكتملت المحاكاة: ${res.saved} استجابة محفوظة (${res.analyzed} محلَّلة).`
-                       : `Simulation done: ${res.saved} saved (${res.analyzed} analyzed).`);
+      // [MAJOR fix] a total failure now throws (see simulateRespondents), so
+      // reaching here with saved < requested means a PARTIAL failure — report
+      // it honestly instead of a blanket success toast.
+      if (res.saved === 0) {
+        toast.error(ar ? 'فشلت المحاكاة: لم يُحفظ أي رد.' : 'Simulation failed: no responses were saved.');
+      } else if (res.saved < res.requested) {
+        toast.warning(ar
+          ? `تم توليد ${res.saved} من ${res.requested} استجابة فقط (${res.analyzed} محلَّلة) — بعض الدفعات فشلت. راجع سجل الأخطاء.`
+          : `Only ${res.saved} of ${res.requested} responses were generated (${res.analyzed} analyzed) — some batches failed. Check the console log.`);
+      } else {
+        toast.success(ar ? `اكتملت المحاكاة: ${res.saved} استجابة محفوظة (${res.analyzed} محلَّلة).`
+                         : `Simulation done: ${res.saved} saved (${res.analyzed} analyzed).`);
+      }
       onRefreshAssessments?.();
     } catch (e: any) {
-      toast.error((ar ? 'فشل المحاكاة: ' : 'Simulation failed: ') + (e?.message || e));
+      if (e?.message === 'ABORTED') toast.info(ar ? 'تم إلغاء المحاكاة.' : 'Simulation cancelled.');
+      else toast.error((ar ? 'فشل المحاكاة: ' : 'Simulation failed: ') + (e?.message || e));
     } finally {
       setRunning(false); setProgress(null); acRef.current = null;
     }
@@ -85,33 +118,60 @@ const SurveyLab: React.FC<Props> = ({ language, settings, allAssessments, onRefr
   const cancelSim = () => { acRef.current?.abort(); };
 
   // ---- exports ----
-  const [busy, setBusy] = useState<string | null>(null);
-  const guard = async (key: string, fn: () => Promise<void>) => {
-    if (busy) return;
-    setBusy(key);
-    try { await fn(); }
-    catch (e: any) { toast.error((ar ? 'فشل التصدير: ' : 'Export failed: ') + (e?.message || e)); }
-    finally { setBusy(null); }
+  const exp = useArtifactExport(language);
+
+  // [MAJOR fix] staged progress + cancel for the (potentially long) aggregate
+  // narrative generation — mirrors the AbortController+progress pattern already
+  // used above for simulation.
+  const [aggProgress, setAggProgress] = useState<{ msg: string; done: number; total: number } | null>(null);
+  const aggAcRef = React.useRef<AbortController | null>(null);
+  const cancelAggregate = () => { aggAcRef.current?.abort(); };
+
+  const generateAggregate = async (mode: 'full' | 'brief'): Promise<GeneratedArtifact> => {
+    const ac = new AbortController(); aggAcRef.current = ac;
+    let chunkContext = '';
+    try { chunkContext = await compileChunkContext(tenantId, 8000); } catch { /* optional */ }
+    try {
+      return await buildAggregateArtifact({
+        records: responses, companyName, mode, language, orgContext, chunkContext,
+        signal: ac.signal,
+        onPhase: (msg, done, total) => setAggProgress({ msg, done, total }),
+      });
+    } finally {
+      setAggProgress(null); aggAcRef.current = null;
+    }
   };
 
-  const exportAggregate = (mode: 'full' | 'brief') => guard(mode, async () => {
+  const exportAggregate = (mode: 'full' | 'brief') => exp.run(mode, async () => {
     if (!responses.length) { toast.error(ar ? 'لا توجد استجابات للتصدير.' : 'No responses.'); return; }
-    const art = await buildAggregateArtifact({ records: responses, companyName, mode, language, orgContext });
+    const art = await generateAggregate(mode);
     await exportDocx(art, exportOpts);
-    toast.success(ar ? 'تم تصدير التقرير.' : 'Report exported.');
-  });
+  }, { exclusive: true, successMessage: ar ? 'تم تصدير التقرير.' : 'Report exported.' });
 
-  const exportSurveyDef = () => guard('survey', async () => {
+  // [MAJOR fix] canvas preview/edit affordance — the SAME openArtifactInCanvas
+  // pattern GovernanceCenter uses for charter/risk-register/roadmap artifacts,
+  // so an AI-authored survey narrative gets an in-app preview/edit step before
+  // being finalized as a downloadable file. Direct export (above) stays available.
+  const [canvasArt, setCanvasArt] = useState<GeneratedArtifact | null>(null);
+  const openAggregateInCanvas = (mode: 'full' | 'brief') => exp.run(`canvas_${mode}`, async () => {
+    if (!responses.length) { toast.error(ar ? 'لا توجد استجابات للتصدير.' : 'No responses.'); return; }
+    const art = await generateAggregate(mode);
+    setCanvasArt(art);
+  }, { exclusive: true });
+  const canvasMarkdown = useMemo(() => (canvasArt ? artifactToMarkdown(canvasArt) : ''), [canvasArt]);
+  const saveCanvasArtHtml = (html: string) => {
+    setCanvasArt(prev => (prev ? { ...prev, canvasHtml: html } : prev));
+  };
+
+  const exportSurveyDef = () => exp.run('survey', async () => {
     const art = buildSurveyDefinitionArtifact(survey, companyName, language);
     await exportDocx(art, exportOpts);
-    toast.success(ar ? 'تم تصدير نموذج الاستبيان.' : 'Survey exported.');
-  });
+  }, { exclusive: true, successMessage: ar ? 'تم تصدير نموذج الاستبيان.' : 'Survey exported.' });
 
-  const exportOne = (rec: SurveyResponseRecord) => guard(`one_${rec.id}`, async () => {
+  const exportOne = (rec: SurveyResponseRecord) => exp.run(`one_${rec.id}`, async () => {
     const art = buildSingleResponseArtifact(rec, language);
     await exportDocx(art, exportOpts);
-    toast.success(ar ? 'تم تصدير الرد.' : 'Response exported.');
-  });
+  }, { exclusive: true, successMessage: ar ? 'تم تصدير الرد.' : 'Response exported.' });
 
   const sentBadge = (s?: string) => {
     const map: Record<string, string> = {
@@ -198,28 +258,81 @@ const SurveyLab: React.FC<Props> = ({ language, settings, allAssessments, onRefr
       </div>
 
       {/* export toolbar */}
-      <div className="hw-card p-3.5 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-bold text-slate-400 me-0.5">
-          {ar ? 'التصدير' : 'Export'}
-        </span>
-        <div className="w-px h-4 bg-slate-200 mx-1" />
-        <button disabled={!!busy} onClick={() => exportAggregate('full')}
-          className="hw-btn hw-btn-subtle hw-btn-sm disabled:opacity-40">
-          {busy === 'full' ? (ar ? 'جارٍ...' : 'Exporting...') : (ar ? 'تقرير مفصّل' : 'Detailed report')}
-        </button>
-        <button disabled={!!busy} onClick={() => exportAggregate('brief')}
-          className="hw-btn hw-btn-primary hw-btn-sm disabled:opacity-40">
-          {busy === 'brief' ? (ar ? 'جارٍ...' : 'Exporting...') : (ar ? 'تقرير موجز' : 'Brief report')}
-        </button>
-        <button disabled={!!busy} onClick={exportSurveyDef}
-          className="hw-btn hw-btn-ghost hw-btn-sm disabled:opacity-40">
-          {busy === 'survey' ? (ar ? 'جارٍ...' : 'Exporting...') : (ar ? 'تصدير الاستبيان' : 'Export survey')}
-        </button>
-        <label className="ms-auto flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 cursor-pointer select-none">
-          <input type="checkbox" checked={onlySimulated} onChange={e => setOnlySimulated(e.target.checked)}
-            className="rounded-sm border-slate-300 text-emerald-600 focus:ring-emerald-500 focus:ring-offset-0" />
-          {ar ? 'المحاكاة فقط' : 'Simulated only'}
-        </label>
+      <div className="hw-card p-3.5 space-y-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-bold text-slate-400 me-0.5">
+            {ar ? 'التصدير' : 'Export'}
+          </span>
+          <div className="w-px h-4 bg-slate-200 mx-1" />
+          <button disabled={exp.anyBusy} onClick={() => exportAggregate('full')}
+            className="hw-btn hw-btn-subtle hw-btn-sm disabled:opacity-40">
+            {exp.isBusy('full') ? (ar ? 'جارٍ...' : 'Exporting...') : (ar ? 'تقرير مفصّل' : 'Detailed report')}
+          </button>
+          <button disabled={exp.anyBusy} onClick={() => openAggregateInCanvas('full')} title={ar ? 'افتح التقرير المفصّل في الكانفس للتحرير والتصدير (Word / PDF / PowerPoint / Excel)' : 'Open the detailed report in the canvas to edit and export (Word / PDF / PowerPoint / Excel)'}
+            className="hw-btn hw-btn-ghost hw-btn-sm disabled:opacity-40 !px-2">
+            {exp.isBusy('canvas_full') ? '...' : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            )}
+          </button>
+          <button disabled={exp.anyBusy} onClick={() => exportAggregate('brief')}
+            className="hw-btn hw-btn-primary hw-btn-sm disabled:opacity-40">
+            {exp.isBusy('brief') ? (ar ? 'جارٍ...' : 'Exporting...') : (ar ? 'تقرير موجز' : 'Brief report')}
+          </button>
+          <button disabled={exp.anyBusy} onClick={() => openAggregateInCanvas('brief')} title={ar ? 'افتح التقرير الموجز في الكانفس للتحرير والتصدير (Word / PDF / PowerPoint / Excel)' : 'Open the brief report in the canvas to edit and export (Word / PDF / PowerPoint / Excel)'}
+            className="hw-btn hw-btn-ghost hw-btn-sm disabled:opacity-40 !px-2">
+            {exp.isBusy('canvas_brief') ? '...' : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            )}
+          </button>
+          <button disabled={exp.anyBusy} onClick={exportSurveyDef}
+            className="hw-btn hw-btn-ghost hw-btn-sm disabled:opacity-40">
+            {exp.isBusy('survey') ? (ar ? 'جارٍ...' : 'Exporting...') : (ar ? 'تصدير الاستبيان' : 'Export survey')}
+          </button>
+          {aggProgress && (
+            <button onClick={cancelAggregate} className="hw-btn hw-btn-danger hw-btn-sm">
+              {ar ? 'إيقاف' : 'Stop'}
+            </button>
+          )}
+          {/* [CRITICAL fix] tri-state filter (was "simulated only" checkbox) — lets a
+              consultant scope the export pool to real-only, not just all-vs-simulated. */}
+          <div className="ms-auto flex items-center gap-1 rounded-md border border-slate-200 p-0.5">
+            {([
+              { key: 'all' as const, ar: 'الكل', en: 'All' },
+              { key: 'real' as const, ar: 'حقيقي فقط', en: 'Real only' },
+              { key: 'simulated' as const, ar: 'محاكاة فقط', en: 'Simulated only' },
+            ]).map(opt => (
+              <button key={opt.key} onClick={() => setResponseFilter(opt.key)}
+                className={`px-2 py-1 rounded-sm text-[10px] font-bold transition-colors duration-150 ${
+                  responseFilter === opt.key ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-slate-50'
+                }`}>
+                {ar ? opt.ar : opt.en}
+              </button>
+            ))}
+          </div>
+        </div>
+        {aggProgress && (
+          <div className="space-y-1.5 pt-1">
+            <div className="flex justify-between text-[11px] font-semibold text-slate-500">
+              <span>{aggProgress.msg}</span>
+              {aggProgress.total > 0 && <span className="tabular-nums">{aggProgress.done}/{aggProgress.total}</span>}
+            </div>
+            {aggProgress.total > 0 && (
+              <div className="hw-progress">
+                <div className="hw-progress-bar transition-all duration-200"
+                  style={{ width: `${Math.round((aggProgress.done / aggProgress.total) * 100)}%` }} />
+              </div>
+            )}
+          </div>
+        )}
+        {/* [CRITICAL fix] up-front disclosure of the pool the export buttons above
+            will actually run over, before the consultant even clicks export. */}
+        {simulatedInPool > 0 && (
+          <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
+            {ar
+              ? `⚠️ يتضمن نطاق التصدير الحالي ${simulatedInPool} رداً محاكى بالذكاء الاصطناعي من إجمالي ${responses.length}. سيوضّح التقرير المُصدَّر هذه النسبة صراحةً.`
+              : `⚠️ The current export scope includes ${simulatedInPool} AI-simulated response(s) out of ${responses.length}. The exported report will disclose this split explicitly.`}
+          </p>
+        )}
       </div>
 
       {/* responses table */}
@@ -261,6 +374,12 @@ const SurveyLab: React.FC<Props> = ({ language, settings, allAssessments, onRefr
                             S
                           </span>
                         )}
+                        {r.simulated && r.grounded === false && (
+                          <span title={ar ? 'شخصية عامة — لم تُبنَ على مستندات الشركة (لم يوجد فهرس مستندات وقت التوليد)' : 'Generic persona — not grounded in company documents (no indexed docs at generation time)'}
+                            className="inline-block w-4 h-4 rounded-sm bg-amber-50 text-amber-600 text-[9px] font-bold text-center leading-4">
+                            ⚠
+                          </span>
+                        )}
                         {r.userName || '—'}
                       </div>
                     </td>
@@ -278,9 +397,9 @@ const SurveyLab: React.FC<Props> = ({ language, settings, allAssessments, onRefr
                       {r.envReportData?.efqmExcellenceRate != null ? `${Math.round(r.envReportData.efqmExcellenceRate)}%` : '—'}
                     </td>
                     <td className="px-3 py-2.5 text-center">
-                      <button disabled={!!busy} onClick={() => exportOne(r)}
+                      <button disabled={exp.anyBusy} onClick={() => exportOne(r)}
                         className="hw-btn hw-btn-ghost hw-btn-sm text-[10px] disabled:opacity-40">
-                        {busy === `one_${r.id}` ? '...' : (ar ? 'الرد' : 'Resp')}
+                        {exp.isBusy(`one_${r.id}`) ? '...' : (ar ? 'الرد' : 'Resp')}
                       </button>
                     </td>
                   </tr>
@@ -290,6 +409,23 @@ const SurveyLab: React.FC<Props> = ({ language, settings, allAssessments, onRefr
           </div>
         )}
       </div>
+
+      {/* [MAJOR fix] canvas preview/edit for the aggregate artifact — same
+          DocumentCanvas surface GovernanceCenter uses; owns its own Word/PDF/
+          PowerPoint/Excel export once open, direct export above stays available. */}
+      {canvasArt && (
+        <DocumentCanvas
+          markdown={canvasMarkdown}
+          initialHtml={canvasArt.canvasHtml}
+          title={canvasArt.title}
+          language={language}
+          subtitle={canvasArt.goal || (ar ? 'تقرير استبيان' : 'Survey report')}
+          brand={companyName ? `${companyName} · AILIGENT` : 'AILIGENT'}
+          date={(ar ? 'بتاريخ ' : 'Dated ') + new Date().toLocaleDateString(ar ? 'ar-EG' : 'en-GB')}
+          onClose={() => setCanvasArt(null)}
+          onSave={saveCanvasArtHtml}
+        />
+      )}
     </div>
   );
 };

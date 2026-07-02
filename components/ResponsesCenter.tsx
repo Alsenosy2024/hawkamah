@@ -11,8 +11,9 @@ import { analyzeWorkEnvironment } from '../services/geminiService';
 import { streamChat } from '../services/agentOrchestrator';
 import { buildSingleResponseArtifact, buildAggregateArtifact, buildEmployeeUnifiedArtifact } from '../services/surveyReport';
 import { exportDocx, exportPdfDirect } from '../services/exportService';
+import { compileChunkContext } from '../services/governanceService';
 import { UI, badge } from '../services/designTokens';
-import { useToast } from './ToastProvider';
+import { useArtifactExport } from '../hooks/useArtifactExport';
 import { SURVEY_FIELDS } from '../services/surveyReport';
 
 interface Props {
@@ -26,15 +27,15 @@ type AnalysisState = 'idle' | 'loading' | 'done' | 'error';
 const ResponsesCenter: React.FC<Props> = ({ tenantId, language, companyName }) => {
   const ar = language === 'ar';
   const t = (a: string, e: string) => ar ? a : e;
-  const toast = useToast();
 
   const [responses, setResponses] = useState<PublicSurveyResponse[]>([]);
   const [loadState, setLoadState] = useState<'loading' | 'done' | 'error'>('loading');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [analysisState, setAnalysisState] = useState<Record<string, AnalysisState>>({});
   const [analyses, setAnalyses] = useState<Record<string, WorkEnvironmentReport>>({});
-  const [exportingId, setExportingId] = useState<string | null>(null);
-  const [exportingAll, setExportingAll] = useState(false);
+  // [MINOR fix] one shared busy/toast wrapper (was 3 hand-rolled copies of the
+  // same try/export/catch/toast shape — see hooks/useArtifactExport.ts).
+  const exp = useArtifactExport(language);
 
   // Tabs
   const [activeTab, setActiveTab] = useState<'env' | 'employee'>('env');
@@ -43,22 +44,15 @@ const ResponsesCenter: React.FC<Props> = ({ tenantId, language, companyName }) =
   const [empResponses, setEmpResponses] = useState<EmployeeResponse[]>([]);
   const [empLoadState, setEmpLoadState] = useState<'loading' | 'done' | 'error'>('loading');
   const [empExpanded, setEmpExpanded] = useState<string | null>(null);
-  const [empExporting, setEmpExporting] = useState<string | null>(null); // `${id}:${fmt}` being exported
 
   // N7 — ONE unified report (competency + work-environment) per employee, DOCX or PDF.
-  const exportEmp = async (emp: EmployeeResponse, fmt: 'docx' | 'pdf') => {
-    setEmpExporting(`${emp.id}:${fmt}`);
-    try {
-      const art = buildEmployeeUnifiedArtifact(emp, language);
-      const opts = { language, companyName: emp.companyName || companyName };
-      if (fmt === 'pdf') await exportPdfDirect(art, opts);
-      else await exportDocx(art, opts);
-    } catch (e: any) {
-      toast.error(t('فشل التصدير: ', 'Export failed: ') + (e?.message || e));
-    } finally {
-      setEmpExporting(null);
-    }
-  };
+  // (default error-prefix "فشل التصدير: " / "Export failed: " matches the prior copy)
+  const exportEmp = (emp: EmployeeResponse, fmt: 'docx' | 'pdf') => exp.run(`emp_${emp.id}_${fmt}`, async () => {
+    const art = buildEmployeeUnifiedArtifact(emp, language);
+    const opts = { language, companyName: emp.companyName || companyName };
+    if (fmt === 'pdf') await exportPdfDirect(art, opts);
+    else await exportDocx(art, opts);
+  });
 
   useEffect(() => {
     if (!tenantId) { setEmpLoadState('done'); return; }
@@ -102,43 +96,35 @@ const ResponsesCenter: React.FC<Props> = ({ tenantId, language, companyName }) =
     }
   }, [language, companyName, t]);
 
-  const exportOne = async (r: PublicSurveyResponse) => {
-    setExportingId(r.id);
-    try {
-      const rec = {
-        workplaceAnswers: r.answers,
-        envReportData: (r.analysis as WorkEnvironmentReport | undefined) ?? null,
-      };
-      const art = buildSingleResponseArtifact(rec, language);
-      await exportDocx(art);
-    } catch (e: any) {
-      toast.error(t('فشل التصدير: ', 'Export failed: ') + (e?.message || e));
-    } finally {
-      setExportingId(null);
-    }
-  };
+  const exportOne = (r: PublicSurveyResponse) => exp.run(`one_${r.id}`, async () => {
+    const rec = {
+      workplaceAnswers: r.answers,
+      envReportData: (r.analysis as WorkEnvironmentReport | undefined) ?? null,
+    };
+    const art = buildSingleResponseArtifact(rec, language);
+    await exportDocx(art);
+  });
 
-  const exportAll = async () => {
+  const exportAll = () => exp.run('all', async () => {
     if (!responses.length) return;
-    setExportingAll(true);
-    try {
-      const records = responses.map(r => ({
-        workplaceAnswers: r.answers,
-        envReportData: (r.analysis as WorkEnvironmentReport | undefined) ?? null,
-      }));
-      const art = await buildAggregateArtifact({
-        records,
-        companyName: companyName || '',
-        mode: 'full',
-        language,
-      });
-      await exportDocx(art);
-    } catch (e: any) {
-      toast.error(t('فشل تصدير الكل: ', 'Bulk export failed: ') + (e?.message || e));
-    } finally {
-      setExportingAll(false);
-    }
-  };
+    const records = responses.map(r => ({
+      workplaceAnswers: r.answers,
+      envReportData: (r.analysis as WorkEnvironmentReport | undefined) ?? null,
+    }));
+    // [MINOR fix] ground the aggregate narrative in the tenant's ingested
+    // documents (same pattern as SimulateParams.chunkContext) instead of
+    // reasoning from the response sample alone.
+    let chunkContext = '';
+    try { chunkContext = await compileChunkContext(tenantId, 8000); } catch { /* optional */ }
+    const art = await buildAggregateArtifact({
+      records,
+      companyName: companyName || '',
+      mode: 'full',
+      language,
+      chunkContext,
+    });
+    await exportDocx(art);
+  }, { errorPrefix: { ar: 'فشل تصدير الكل: ', en: 'Bulk export failed: ' } });
 
   const askCopilot = async () => {
     if (!copilotQ.trim() || copilotBusy) return;
@@ -200,8 +186,8 @@ const ResponsesCenter: React.FC<Props> = ({ tenantId, language, companyName }) =
           </p>
         </div>
         {activeTab === 'env' && responses.length > 0 && (
-          <button className="hw-btn hw-btn-primary hw-btn-sm" disabled={exportingAll} onClick={exportAll}>
-            {exportingAll ? t('جارٍ التصدير…', 'Exporting…') : t('تصدير تقرير شامل', 'Export Full Report')}
+          <button className="hw-btn hw-btn-primary hw-btn-sm" disabled={exp.isBusy('all')} onClick={exportAll}>
+            {exp.isBusy('all') ? t('جارٍ التصدير…', 'Exporting…') : t('تصدير تقرير شامل', 'Export Full Report')}
           </button>
         )}
       </div>
@@ -314,17 +300,17 @@ const ResponsesCenter: React.FC<Props> = ({ tenantId, language, companyName }) =
                   <div className="flex items-center gap-2 pt-1">
                     <button
                       onClick={() => exportEmp(emp, 'docx')}
-                      disabled={empExporting === `${emp.id}:docx`}
+                      disabled={exp.isBusy(`emp_${emp.id}_docx`)}
                       className="hw-btn hw-btn-primary hw-btn-sm disabled:opacity-50"
                     >
-                      {empExporting === `${emp.id}:docx` ? t('جارٍ…', '…') : t('تقرير موحّد Word', 'Unified Word')}
+                      {exp.isBusy(`emp_${emp.id}_docx`) ? t('جارٍ…', '…') : t('تقرير موحّد Word', 'Unified Word')}
                     </button>
                     <button
                       onClick={() => exportEmp(emp, 'pdf')}
-                      disabled={empExporting === `${emp.id}:pdf`}
+                      disabled={exp.isBusy(`emp_${emp.id}_pdf`)}
                       className="hw-btn hw-btn-ghost hw-btn-sm disabled:opacity-50"
                     >
-                      {empExporting === `${emp.id}:pdf` ? t('جارٍ…', '…') : t('تقرير موحّد PDF', 'Unified PDF')}
+                      {exp.isBusy(`emp_${emp.id}_pdf`) ? t('جارٍ…', '…') : t('تقرير موحّد PDF', 'Unified PDF')}
                     </button>
                   </div>
                 </div>
@@ -470,10 +456,10 @@ const ResponsesCenter: React.FC<Props> = ({ tenantId, language, companyName }) =
                     <div className="flex gap-2">
                       <button
                         className="hw-btn hw-btn-ghost hw-btn-sm disabled:opacity-50"
-                        disabled={exportingId === r.id}
+                        disabled={exp.isBusy(`one_${r.id}`)}
                         onClick={() => exportOne(r)}
                       >
-                        {exportingId === r.id ? t('جارٍ التصدير…', 'Exporting…') : t('تصدير هذا الرد (DOCX)', 'Export Response (DOCX)')}
+                        {exp.isBusy(`one_${r.id}`) ? t('جارٍ التصدير…', 'Exporting…') : t('تصدير هذا الرد (DOCX)', 'Export Response (DOCX)')}
                       </button>
                     </div>
                   </div>
