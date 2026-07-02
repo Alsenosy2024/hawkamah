@@ -80,13 +80,18 @@ function retryAfterMs(e: any): number {
 }
 
 /** Retry an async op with exponential backoff. Retries only transient errors
- *  (429/5xx/network), honors Retry-After, and aborts fast. Throws last error. */
-async function withRetry<R>(
+ *  (429/5xx/network), honors Retry-After, and aborts fast. Throws last error.
+ *  `onAttempt(n, total)` fires before every attempt (n is 1-based) so callers
+ *  can surface a live "attempt N of total" progress label instead of a single
+ *  frozen one across an unbounded worst-case wait. */
+export async function withRetry<R>(
   fn: () => Promise<R>, attempts = 3, baseMs = 800, signal?: AbortSignal,
+  onAttempt?: (attempt: number, total: number) => void,
 ): Promise<R> {
   let lastErr: unknown;
   for (let a = 0; a < attempts; a++) {
     if (isAborted(signal)) throw new Error('aborted');
+    onAttempt?.(a + 1, attempts);
     try {
       return await fn();
     } catch (e) {
@@ -539,12 +544,23 @@ ${digest}${entitiesHint}${assessmentBlock}${sent.block}
   try {
     // HWK-B6: treat an empty extraction on a non-empty corpus as a retriable
     // failure so a single flaky response doesn't silently yield a blank model.
+    // P19: retries:0 + a bounded per-attempt timeoutMs so THIS is the only
+    // visible retry ladder — generateJson's own internal retries would
+    // otherwise multiply attempts (up to 3×3 = 9) behind one frozen label
+    // with no bound on how long a single hung call can stall the build.
     raw = await withRetry(async () => {
-      const r: any = await generateJson(prompt, modelSchema, { signal, temperature: 0.2 });
+      const r: any = await generateJson(prompt, modelSchema, { signal, temperature: 0.2, retries: 0, timeoutMs: 240_000 });
       const produced = (r?.orgUnits?.length || 0) + (r?.roles?.length || 0) + (r?.policies?.length || 0);
       if (chunks.length > 0 && produced === 0) throw new Error('استجابة فارغة من النموذج — إعادة المحاولة');
       return r;
-    }, 3, 900, signal);
+    }, 3, 900, signal, (attempt, total) => {
+      onProgress?.({
+        phase: 'build_extract', current: 2, total: BUILD_STEPS,
+        label: attempt === 1
+          ? 'استخراج البنية المؤسسية بالذكاء الاصطناعي (قد يستغرق دقيقة أو أكثر)…'
+          : `استخراج البنية المؤسسية بالذكاء الاصطناعي — محاولة ${attempt} من ${total} (قد يستغرق دقيقة أو أكثر)…`,
+      });
+    });
   } catch (e: any) {
     if (isAborted(signal)) throw new Error('aborted');
     // No evidence to build from → an empty model is a legitimate (not failed) outcome.
@@ -602,7 +618,7 @@ ${suppDigest}
 أعد JSON فقط.`;
       try {
         const suppRaw: any = await withRetry(
-          () => generateJson(suppPrompt, modelSchema, { signal, temperature: 0.15 }),
+          () => generateJson(suppPrompt, modelSchema, { signal, temperature: 0.15, retries: 0, timeoutMs: 240_000 }),
           2, 700, signal,
         );
         // Remap supplementary [S_N] evidence (local) → global chunk indices,
