@@ -3,6 +3,7 @@ import {
   isExplicitBuild,
   shouldOpenBuildWizard,
   isDocCreationRequest,
+  isLongFormRequest,
   needsWebResearch,
   fallbackBuildPlan,
   mergeProposalIntoFallback,
@@ -60,12 +61,17 @@ describe('isExplicitBuild — opens the wizard on explicit build commands', () =
     expect(isExplicitBuild('ما رأيك في الهيكل التنظيمي الحالي؟')).toBe(false);
     expect(isExplicitBuild('هل الهيكل التنظيمي يحتاج تعديلاً؟')).toBe(false);
     expect(isExplicitBuild('لماذا الهيكل التنظيمي معقد جداً؟')).toBe(false);
+    // Addendum — confirmed repros from independent verification: an explanation
+    // request and a comparison question, neither carrying a build verb.
+    expect(isExplicitBuild('اشرح لي الهيكل التنظيمي لشركتنا')).toBe(false);
+    expect(isExplicitBuild('ما الفرق بين الهيكل التنظيمي الوظيفي والمصفوفي؟')).toBe(false);
   });
   it('a build verb + the org structure IS an explicit build (D4b)', () => {
     expect(isExplicitBuild('اعمل الهيكل التنظيمي من جديد')).toBe(true);
     expect(isExplicitBuild('أنشئ الهيكل التنظيمي للشركة')).toBe(true);
     expect(isExplicitBuild('صمّم الهيكل التنظيمي المناسب')).toBe(true);
     expect(isExplicitBuild('ابنِ الهيكل التنظيمي')).toBe(true);   // unaffected bare-verb match
+    expect(isExplicitBuild('ولّد الهيكل التنظيمي من النموذج')).toBe(true);   // addendum: ولّد was missing
   });
 });
 
@@ -85,6 +91,36 @@ describe('isDocCreationRequest — genuine document-creation commands (P5/D4a)',
     expect(isDocCreationRequest('اكتب')).toBe(false);
     expect(isDocCreationRequest('')).toBe(false);
     expect(isDocCreationRequest(null)).toBe(false);
+  });
+});
+
+describe('isLongFormRequest — replaces the old bare-noun LONG_RE (P5 addendum, D3/D4a boundary)', () => {
+  it('the reported false-positive: a plain yes/no question with a bare noun must NOT be long-form', () => {
+    // Confirmed repro: this used to match the old LONG_RE via «سياسة» alone
+    // (no verb, no authoring intent) and hijacked the draftStream-vs-ask branch
+    // into a 7-8 min /draft for what is just a quick grounded question.
+    expect(isLongFormRequest('هل عندنا سياسة لتضارب المصالح؟')).toBe(false);
+  });
+  it('other bare-noun questions stay short too', () => {
+    expect(isLongFormRequest('ما هي أفضل ممارسات الحوكمة؟')).toBe(false);
+    expect(isLongFormRequest('هل التقرير الحالي كافٍ؟')).toBe(false);
+  });
+  it('a genuine authoring command (verb + document noun) IS long-form', () => {
+    expect(isLongFormRequest('اكتب لي دليل حوكمة كامل')).toBe(true);
+    expect(isLongFormRequest('أنشئ سياسة تضارب المصالح')).toBe(true);
+  });
+  it('an explicit page/length count alone IS long-form, even with no verb/noun', () => {
+    expect(isLongFormRequest('أعطني ذلك في 10 صفحات')).toBe(true);
+    expect(isLongFormRequest('اكتب عشر صفحات عن الموضوع')).toBe(true);
+  });
+  it('a continuation/expansion command alone IS long-form (extends an already-open document)', () => {
+    expect(isLongFormRequest('كمّل')).toBe(true);
+    expect(isLongFormRequest('أطول من فضلك')).toBe(true);
+    expect(isLongFormRequest('continue')).toBe(true);
+  });
+  it('is false for empty/null input', () => {
+    expect(isLongFormRequest('')).toBe(false);
+    expect(isLongFormRequest(null)).toBe(false);
   });
 });
 
