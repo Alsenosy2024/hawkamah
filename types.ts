@@ -274,6 +274,11 @@ export interface GeneratedArtifact {
   diagrams?: ArtifactDiagram[];   // embedded into PDF/Word exports
   createdAt: Date;
   complete: boolean;      // false when stopped/partial
+  // D2 — the live edited canvas HTML (designMode output) for a generated process
+  // artifact opened via "افتح في الكانفس" (charter / risk register / roadmap /
+  // generated doc). Mirrors GovDocumentRecord.canvasHtml so a reopen shows the
+  // owner's in-place edits instead of losing them on close.
+  canvasHtml?: string;
 }
 
 export type ArtifactPhase = 'outline' | 'section' | 'critique' | 'revise' | 'assemble' | 'done';
@@ -403,11 +408,31 @@ export interface SharedDocToken {
   tenantId: string;
   docId: string;              // source gov_document id (owner correlates comments)
   docTitle: string;
-  html: string;               // self-contained canvas HTML snapshot
   allowComments: boolean;     // owner may share view-only
-  accessCodeHash?: string;    // optional SHA-256 gate (V20 visual reviewer)
   createdAt: string;          // ISO
   createdByEmail?: string;
+
+  // Open share (no access code): the token lives in the world-readable
+  // `survey_tokens` collection by design, so a plaintext snapshot here is fine —
+  // there's no secret to protect.
+  html?: string;               // self-contained canvas HTML snapshot
+
+  // D1 fix — code-gated share, CURRENT scheme: the snapshot is AES-GCM encrypted
+  // client-side with a key derived from the access code (PBKDF2, random salt).
+  // `survey_tokens` stays world-readable (no rules change), but the plaintext
+  // html is never written — only ciphertext. A wrong code fails GCM
+  // authentication on decrypt; that failure IS the "wrong code" signal, so no
+  // separate hash of the code is stored either (nothing to offline-brute-force).
+  enc?: true;
+  htmlEnc?: string;            // base64 AES-GCM ciphertext (+ auth tag)
+  salt?: string;                // base64, random 16 bytes (PBKDF2 salt)
+  iv?: string;                  // base64, random 12 bytes (AES-GCM IV)
+  kdfIterations?: number;       // PBKDF2 iteration count (>=150_000)
+
+  // LEGACY code-gated shares (pre-D1): plaintext `html` + an unsalted SHA-256
+  // hash of the code. Kept read/verify-able ONLY for backward compatibility —
+  // no new share is ever minted in this shape (see sharedDocService.ts).
+  accessCodeHash?: string;
 }
 
 // A structured visual-review check a reviewer records over a shared document (V20).

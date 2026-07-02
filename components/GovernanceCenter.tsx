@@ -558,9 +558,13 @@ ${content.slice(0, 8000)}`;
   const [canvasRec, setCanvasRec] = useState<GovDocumentRecord | null>(null);
   // V25: a generated process artifact (charter / risk register / roadmap /
   // current-state report) open in the SAME canvas — the single export surface.
-  // Unlike `canvasRec` these aren't library records (no persist/share/comments);
-  // the canvas just renders them and exposes its Word/PDF/PPTX/Excel suite.
+  // Unlike `canvasRec` these aren't library records (no share/comments); the
+  // canvas renders them and exposes its Word/PDF/PPTX/Excel suite.
+  // D2: which backing state (if any) `canvasArt` was opened from, so edits saved
+  // from the canvas (onSave) can be written back onto that SAME state and
+  // survive a close/reopen — see openArtifactInCanvas / saveCanvasArtHtml.
   const [canvasArt, setCanvasArt] = useState<GeneratedArtifact | null>(null);
+  const [canvasArtKind, setCanvasArtKind] = useState<'charter' | 'gendoc' | null>(null);
   // V14/V20: client/reviewer comments + visual-review checks, by source doc id.
   // Loaded once per library refresh; empty (degrades silently) until the
   // `doc_comments` firestore rule is deployed.
@@ -750,7 +754,7 @@ ${content.slice(0, 8000)}`;
   const genCharter = async () => {
     if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
     setBusy(t('توليد الميثاق', 'Generating charter'));
-    try { const art = await buildCharter(model); setCharterArt(art); openArtifactInCanvas(art); }
+    try { const art = await buildCharter(model); setCharterArt(art); openArtifactInCanvas(art, 'charter'); }
     catch (e: any) { alertMsg(t('فشل توليد الميثاق: ', 'Charter failed: ') + (e?.message || e)); }
     finally { setBusy(''); }
   };
@@ -1627,6 +1631,9 @@ ${content.slice(0, 8000)}`;
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       sections: doc.sections, executiveSummary: doc.executiveSummary,
       diagrams: doc.diagrams, citations: doc.citations, comments: [],
+      // D2: carry over any live canvas edits (designMode HTML) so "Save to
+      // library" doesn't drop them — mirrors saveCanvasHtml's library flow.
+      ...((doc as GeneratedArtifact).canvasHtml ? { canvasHtml: (doc as GeneratedArtifact).canvasHtml } : {}),
     };
     await saveGovDocument(rec);
     await loadAll();
@@ -1773,11 +1780,52 @@ ${content.slice(0, 8000)}`;
   // surface). A GeneratedArtifact already matches `ArtifactLike`, so the SAME
   // artifactToMarkdown bridge feeds DocumentCanvas — no separate exporter. We
   // clear any open library record so only one canvas overlay shows at a time.
-  const openArtifactInCanvas = (art: GeneratedArtifact) => { setCanvasRec(null); setCanvasArt(art); };
+  // D2: `kind` tags which backing React state to write saved edits back into
+  // (see saveCanvasArtHtml) — 'charter'/'gendoc' have one, the risk register /
+  // roadmap don't (they're pure functions of `model`, not stored state).
+  const openArtifactInCanvas = (art: GeneratedArtifact, kind: 'charter' | 'gendoc' | null = null) => {
+    setCanvasRec(null); setCanvasArt(art); setCanvasArtKind(kind);
+  };
   const canvasArtMarkdown = useMemo(
     () => (canvasArt ? artifactToMarkdown(canvasArt) : ''),
     [canvasArt],
   );
+  // D2 fix (V11/V25 persistence gap) — wire onSave for the artifact-canvas
+  // surface so smart-edit / typed edits survive close→reopen instead of
+  // vanishing silently. Charter and the generated doc are real React state we
+  // can write the edited html back into directly (mirrors how saveCanvasHtml
+  // persists onto a library record). The risk register / roadmap have NO
+  // backing store at all — `riskArt`/`roadmapArt` are recomputed fresh from
+  // `model` on every render (see the useMemo above) — so for those (and any
+  // other untagged artifact) we fall back to auto-saving the edited snapshot
+  // into the document library, exactly like the library canvas already does,
+  // and tell the owner where it went so nothing is ever lost silently.
+  const saveCanvasArtHtml = async (html: string) => {
+    if (!canvasArt) return;
+    const next: GeneratedArtifact = { ...canvasArt, canvasHtml: html };
+    setCanvasArt(next);
+    if (canvasArtKind === 'charter') { setCharterArt(next); return; }
+    if (canvasArtKind === 'gendoc') { setGenDoc(next as GovernanceDocument); return; }
+    try {
+      const rec: GovDocumentRecord = {
+        id: uid('govdoc'), tenantId, kind: 'governance',
+        title: next.title, goal: next.goal,
+        status: 'draft', version: model?.version || 1,
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        sections: next.sections, executiveSummary: next.executiveSummary,
+        diagrams: next.diagrams, citations: {}, comments: [],
+        canvasHtml: html,
+      };
+      await saveGovDocument(rec);
+      await loadAll();
+      alertMsg(t(
+        `لا يوجد مكان تخزين مخصص لهذا النوع من الوثائق؛ حُفظت نسخة معدَّلة في مكتبة الوثائق باسم «${rec.title}».`,
+        `This document type has no dedicated storage; saved an edited copy to the document library as “${rec.title}”.`,
+      ));
+    } catch (e: any) {
+      alertMsg(t('فشل حفظ التعديلات: ', 'Failed to save edits: ') + (e?.message || e));
+    }
+  };
   // Persist the live canvas edits onto the record so they survive reload + flow
   // into a client share. Guarded against the Firestore ~1MiB document limit (a
   // diagram-heavy doc already carries PNGs) — over budget we keep the sections
@@ -3756,7 +3804,7 @@ ${content.slice(0, 8000)}`;
                         {/* V32 — the canvas is the single export surface. Open the generated
                             doc there (edit + Word / PDF / PowerPoint / Excel) instead of the old
                             direct Word/PDF buttons. Save-to-library below stays as-is. */}
-                        <button onClick={() => openArtifactInCanvas(genDoc)} title={t('افتح الوثيقة في الكانفس للتحرير والتصدير (Word / PDF / PowerPoint / Excel)', 'Open the document in the canvas to edit and export (Word / PDF / PowerPoint / Excel)')} className="hw-btn hw-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('افتح في الكانفس', 'Open in canvas')}</button>
+                        <button onClick={() => openArtifactInCanvas(genDoc, 'gendoc')} title={t('افتح الوثيقة في الكانفس للتحرير والتصدير (Word / PDF / PowerPoint / Excel)', 'Open the document in the canvas to edit and export (Word / PDF / PowerPoint / Excel)')} className="hw-btn hw-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('افتح في الكانفس', 'Open in canvas')}</button>
                         <button onClick={handleSaveToLibrary} disabled={!!busy} className="hw-btn hw-btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>{t('حفظ', 'Save')}</button>
                         {(genDoc as any)._gapFix && (
                           <button onClick={approveGapFixToModel} disabled={!!busy} className="hw-btn hw-btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد في النموذج', 'Approve to model')}</button>
@@ -3954,7 +4002,7 @@ ${content.slice(0, 8000)}`;
                         {!charterArt ? (
                           <button onClick={genCharter} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M4.93 19.07l1.41-1.41M19.07 19.07l-1.41-1.41M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>{t('توليد وفتح في الكانفس', 'Generate & open in canvas')}</button>
                         ) : (
-                          <button onClick={() => openArtifactInCanvas(charterArt)} disabled={!!busy} title={t('افتح الميثاق في الكانفس للتحرير والتصدير (Word / PDF / PowerPoint / Excel)', 'Open the charter in the canvas to edit and export (Word / PDF / PowerPoint / Excel)')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center justify-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('افتح في الكانفس', 'Open in canvas')}</button>
+                          <button onClick={() => openArtifactInCanvas(charterArt, 'charter')} disabled={!!busy} title={t('افتح الميثاق في الكانفس للتحرير والتصدير (Word / PDF / PowerPoint / Excel)', 'Open the charter in the canvas to edit and export (Word / PDF / PowerPoint / Excel)')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center justify-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>{t('افتح في الكانفس', 'Open in canvas')}</button>
                         )}
                       </div>
                       {/* Risk register */}
@@ -4481,19 +4529,22 @@ ${content.slice(0, 8000)}`;
       )}
 
       {/* V25 — a generated process artifact (charter / risk register / roadmap /
-          current-state report) open in the SAME canvas. These aren't library
-          records, so there's no save/share/comments — just the canvas's
-          Word/PDF/PPTX/Excel export suite. Gated on `!canvasRec` so a library
-          record always takes precedence (never two overlapping overlays). */}
+          current-state report) open in the SAME canvas. No share/comments here,
+          but D2 wires onSave so smart-edit/typed edits persist (onto the source
+          state when there is one, else auto-saved to the library — see
+          saveCanvasArtHtml) instead of vanishing on close. Gated on `!canvasRec`
+          so a library record always takes precedence (never two overlays). */}
       {canvasArt && !canvasRec && (
         <DocumentCanvas
           markdown={canvasArtMarkdown}
+          initialHtml={canvasArt.canvasHtml}
           title={canvasArt.title}
           language={language}
           subtitle={canvasArt.goal || t('وثيقة حوكمة', 'Governance document')}
           brand={companyName ? `${companyName} · AILIGENT` : 'AILIGENT'}
           date={t('بتاريخ ', 'Dated ') + new Date().toLocaleDateString(ar ? 'ar-EG' : 'en-GB')}
-          onClose={() => setCanvasArt(null)}
+          onClose={() => { setCanvasArt(null); setCanvasArtKind(null); }}
+          onSave={saveCanvasArtHtml}
         />
       )}
     </div>
