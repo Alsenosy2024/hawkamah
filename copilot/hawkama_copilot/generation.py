@@ -100,6 +100,11 @@ class GroundingContext:
     departments: list[str] = field(default_factory=list)  # explicit department names
     criteria: list[str] = field(default_factory=list)     # benchmark criteria/standards
     current_state_md: str = ""                            # grounded diagnostic digest
+    # P1/D1 — the confirmed wizard plan's axes + free-text owner notes, folded in
+    # by _plan_grounding() so they reach the outline prompt AND every per-section
+    # drafting prompt (both go through brief(), below).
+    axes: list[str] = field(default_factory=list)
+    notes: str = ""
 
     @property
     def is_empty(self) -> bool:
@@ -110,6 +115,8 @@ class GroundingContext:
             or self.departments
             or self.criteria
             or self.current_state_md
+            or self.axes
+            or self.notes
         )
 
     def department_names(self) -> list[str]:
@@ -132,6 +139,8 @@ class GroundingContext:
             departments=tuple(self.department_names()),
             criteria=tuple(c for c in self.criteria if c),
             has_current_state=bool(self.current_state_md),
+            axes=tuple(a for a in self.axes if a),
+            notes=self.notes,
         )
 
 
@@ -149,6 +158,8 @@ def _as_grounding(ground: "GroundingContext | dict | None") -> GroundingContext 
             departments=list(ground.get("departments") or []),
             criteria=list(ground.get("criteria") or []),
             current_state_md=ground.get("current_state_md") or ground.get("current_state") or "",
+            axes=list(ground.get("axes") or []),
+            notes=ground.get("notes") or "",
         )
         return None if g.is_empty else g
     return None
@@ -173,18 +184,28 @@ _OUTLINE_SCHEMA = {
 }
 
 
-def _outline_cap(target_pages: int | None) -> int | None:
+# P1/D3 — moderate defaults for the "no target_pages at all" path. Previously an
+# absent target_pages fell all the way back to SETTINGS.gen_max_sections (40)
+# sections × a FLAT SETTINGS.gen_section_tokens (8192) per section — i.e. an
+# effectively unbounded ~40×8192 token document, the confirmed "asked small, got
+# 105 pages" defect. A caller that forgets target_pages now gets the SAME divide
+# math as the target_pages-given path, just anchored to a modest assumed length
+# (mirrors the wizard's own default: services/governanceChat.ts fallbackBuildPlan
+# defaults targetPages to ~12 when the request doesn't state one).
+_DEFAULT_TARGET_PAGES = 12
+_DEFAULT_SECTIONS_CAP = 14
+
+
+def _outline_cap(target_pages: int | None) -> int:
     """Section-count ceiling derived from the requested page count.
 
-    Without this the outline falls back to ``SETTINGS.gen_max_sections`` (40),
-    which is the dominant cause of "asked 10 pages → got ~100": a high section
-    count multiplied by a per-section token budget yields N× the intended length.
     A ~2-pages-per-section heuristic (plus a small constant for cover/TOC/sources)
-    keeps the count proportional to the ask, clamped to the global ceiling.
-    Returns ``None`` (use the default cap) when no page target was given.
+    keeps the count proportional to the ask, clamped to the global ceiling. When no
+    page target was given, falls back to the bounded ``_DEFAULT_SECTIONS_CAP``
+    (never the old unbounded ``SETTINGS.gen_max_sections``).
     """
     if not target_pages:
-        return None
+        return _DEFAULT_SECTIONS_CAP
     return min(SETTINGS.gen_max_sections, max(3, round(target_pages / 2) + 2))
 
 
@@ -194,13 +215,15 @@ def _section_token_budget(target_pages: int | None, num_sections: int = 1) -> in
     The whole-document budget (~720 output tokens per A4 page of Arabic body
     text, i.e. ~450 words × ~1.6 tokens/word) is computed ONCE and DIVIDED across
     the count-capped sections — never multiplied per section. This is the second
-    half of the page-count fix: total output now scales with ``target_pages``
-    instead of ``num_sections × full-doc budget``. Clamped to a sane window so a
-    section is never starved (floor) nor allowed to exceed the model ceiling.
+    half of the page-count fix: total output now scales with the (real or
+    assumed) target page count instead of ``num_sections × full-doc budget``.
+    Clamped to a sane window so a section is never starved (floor) nor allowed to
+    exceed the model ceiling. When no page target was given, the whole-document
+    budget is derived from ``_DEFAULT_TARGET_PAGES`` instead of the old flat
+    ``SETTINGS.gen_section_tokens`` fallback.
     """
-    if not target_pages:
-        return SETTINGS.gen_section_tokens
-    whole_doc = int(target_pages * 450 * 1.6)  # words→tokens, whole document
+    pages = target_pages or _DEFAULT_TARGET_PAGES
+    whole_doc = int(pages * 450 * 1.6)  # words→tokens, whole document
     per = whole_doc // max(1, num_sections)
     return max(1536, min(per, SETTINGS.gen_max_output_tokens))
 
@@ -232,7 +255,14 @@ def build_org_chart_mermaid(org_units: list[dict], roles: list[dict] | None = No
     """Deterministic org-chart Mermaid built PURELY from the org units (+ roles),
     mirroring the frontend `buildOrgChartMermaid` exactly: node ids by array order
     (``u0, u1, …``), ``parentId`` → tree edges, roles attached by ``unitId`` with a
-    dotted edge. Identical input → identical output, invents nothing (BE-3)."""
+    dotted edge. Identical input → identical output, invents nothing (BE-3).
+
+    P1/D4 — also mirrors the frontend's ROOT SYNTHESIS (services/diagramService.ts
+    `synthesizeRoot`): real org models often have MANY parentless top-level units,
+    which would otherwise render as disconnected mini-trees with no single head.
+    When the model isn't already single-rooted (zero or 2+ real roots), a
+    deterministic ``org_root`` node is synthesized and every former root hangs
+    under it, so the backend chart matches the frontend's byte-for-byte."""
     units = [u for u in (org_units or []) if isinstance(u, dict)]
     if not units:
         name = _mermaid_label(company) or "الجهة"
@@ -247,16 +277,51 @@ def build_org_chart_mermaid(org_units: list[dict], roles: list[dict] | None = No
     def present(uid) -> bool:
         return bool(uid) and uid in u_id
 
+    roles_list = [r for r in (roles or []) if isinstance(r, dict)]
+
+    # Root units = no real parent inside THIS model (parentId absent, dangling, or
+    # self-referential — `present()` is false for the first two, and the third is
+    # excluded explicitly). Exactly one root → already single-rooted, left as-is;
+    # zero or 2+ roots → synthesize one head so the chart stays one connected tree.
+    root_units = [u for u in units if not present(u.get("parentId")) or u.get("parentId") == u.get("id")]
+    synthesize_root = len(root_units) != 1
+    ROOT_ID = "org_root"
+
+    def root_label() -> str:
+        # Deterministic priority (array order, never a deputy): (1) a STRONG
+        # chief-exec title, (2) a loose "الرئيس" match — both excluding
+        # نائب/deputy/vice so a VP listed before the CEO can never win — (3) the
+        # first unit-less role, (4) the company name, (5) the literal CEO label.
+        deputy_re = re.compile(r"نائب|deputy|vice", re.IGNORECASE)
+        strong_re = re.compile(r"الرئيس\s+التنفيذي|المدير العام|\bCEO\b|chief executive", re.IGNORECASE)
+        loose_re = re.compile(r"الرئيس")
+
+        def not_deputy(t) -> bool:
+            return bool(t) and not deputy_re.search(t)
+
+        ceo = next((r for r in roles_list if not_deputy(r.get("title")) and strong_re.search(r.get("title") or "")), None)
+        if ceo is None:
+            ceo = next((r for r in roles_list if not_deputy(r.get("title")) and loose_re.search(r.get("title") or "")), None)
+        if ceo is None:
+            ceo = next((r for r in roles_list if not r.get("unitId")), None)
+        title = ceo.get("title") if ceo else None
+        return _mermaid_label(title or company or "الرئيس التنفيذي") or "الرئيس التنفيذي"
+
     lines = ["flowchart TD"]
     for i, u in enumerate(units):
         label = _mermaid_label(u.get("name") or u.get("id") or "")
         lines.append(f'  {u_id.get(u.get("id"), f"u{i}")}["{label}"]')
+    if synthesize_root:
+        lines.append(f'  {ROOT_ID}["{root_label()}"]')
     for u in units:
         pid = u.get("parentId")
         if present(pid) and pid != u.get("id"):
             lines.append(f"  {u_id[pid]} --> {u_id[u.get('id')]}")
+    if synthesize_root:
+        for u in root_units:
+            lines.append(f"  {ROOT_ID} --> {u_id[u.get('id')]}")
     if include_roles:
-        for ri, r in enumerate([r for r in (roles or []) if isinstance(r, dict)]):
+        for ri, r in enumerate(roles_list):
             if present(r.get("unitId")):
                 rid = f"r{ri}"
                 label = _mermaid_label(r.get("title") or r.get("id") or "")
@@ -831,6 +896,7 @@ def generate_deliverable(
     target_pages: int | None = None,
     ground: "GroundingContext | dict | None" = None,
     axis_findings: "list[AxisFinding] | None" = None,
+    extra_request: str | None = None,
     on_progress: ProgressCb | None = None,
 ) -> GeneratedDoc:
     """Generate one of the skill's prescribed deliverables (current_state,
@@ -841,6 +907,12 @@ def generate_deliverable(
       matrix as deterministic sections, and folds the diagnostic into the doc's
       grounding so the rest of the report derives from it.
     * ``org_structure`` pins the deterministic org chart/units (never free prose).
+
+    ``extra_request`` (P1/D1) is the user's original free-text ask when it was
+    routed here by KEYWORD detection (``detect_deliverable``) rather than by an
+    explicit structured plan — it used to be silently discarded once a keyword
+    matched a canned deliverable; it is now folded into the goal so the model
+    still sees what the owner actually asked for.
     """
     d: Deliverable | None = DELIVERABLES_BY_KEY.get(deliverable_key)
     if d is None:
@@ -851,6 +923,8 @@ def generate_deliverable(
     if deliverable_key == "department_pack" and department:
         title = f"حزمة تشغيل إدارة: {department}"
         goal = f"{d.goal_ar} الإدارة المستهدفة: {department}."
+    if extra_request and extra_request.strip():
+        goal = f"{goal}\n\nطلب المالك: {extra_request.strip()}"
 
     pinned: list[Section] = []
 
@@ -920,6 +994,77 @@ def detect_deliverable(request: str) -> str | None:
     return None
 
 
+def _plan_prescribed_sections(plan: dict) -> tuple[str, ...] | None:
+    comps = plan.get("components") if isinstance(plan, dict) else None
+    if not comps:
+        return None
+    out = [str(c).strip() for c in comps if str(c or "").strip()]
+    return tuple(out) or None
+
+
+def _plan_grounding(plan: dict, ground: GroundingContext | None) -> GroundingContext:
+    """Fold a confirmed build plan's departments/axes/notes into the grounding
+    context (P1/D1): ``plan.departments`` extend the real org departments (so
+    the wizard's edits reach ``GroundingContext.department_names()``, and in
+    turn the org-chart/dept-naming rules); ``plan.axes``/``plan.notes`` reach
+    ``GroundingContext.brief()`` — which is injected into the outline prompt AND
+    every per-section drafting prompt (see ``build_outline``/``_draft_section``)."""
+    departments = list(ground.departments) if ground else []
+    for d in plan.get("departments") or []:
+        d = str(d or "").strip()
+        if d and d not in departments:
+            departments.append(d)
+    axes = [str(a or "").strip() for a in (plan.get("axes") or []) if str(a or "").strip()]
+    notes = str(plan.get("notes") or "").strip()
+    if ground is None:
+        return GroundingContext(departments=departments, axes=axes, notes=notes)
+    return GroundingContext(
+        company=ground.company, org_units=ground.org_units, roles=ground.roles,
+        departments=departments, criteria=ground.criteria,
+        current_state_md=ground.current_state_md,
+        axes=axes or ground.axes, notes=notes or ground.notes,
+    )
+
+
+def _draft_from_plan(
+    rag: RagEngine,
+    request: str,
+    plan: dict,
+    *,
+    language: str,
+    target_pages: int | None,
+    ground: GroundingContext | None,
+    on_progress: ProgressCb | None,
+) -> GeneratedDoc:
+    """P1/D1 — honor the wizard's CONFIRMED structured plan end-to-end, bypassing
+    the keyword-based deliverable routing entirely.
+
+    Before this fix, ``draft_request`` matched a deliverable keyword against the
+    serialized plan text (every wizard build contains «وثيقة حوكمة», which always
+    matches the «حوكمة» key) and generated the CANNED catalog deliverable — its
+    own title and outline — discarding every confirmed field except page count.
+    A plan already carries an explicit title/sections/length, so it drives
+    ``generate_document`` directly instead of being re-guessed from prose."""
+    title = str(plan.get("title") or "").strip() or (request[:120].strip() or "وثيقة حوكمة")
+    pages = plan.get("pages")
+    try:
+        pages = int(pages) if pages else None
+    except (TypeError, ValueError):
+        pages = None
+    pages = pages or target_pages
+    if pages:
+        pages = max(1, min(200, pages))
+    prescribed = _plan_prescribed_sections(plan)
+    ground = _plan_grounding(plan, ground)
+    goal = f"إنتاج وثيقة حوكمة كاملة احترافية بعنوان «{title}» تلبي طلب المالك المؤكَّد."
+    return generate_document(
+        title, goal, rag,
+        prescribed=prescribed,
+        language=language, target_pages=pages,
+        ground=ground, on_progress=on_progress,
+    )
+
+
 def draft_request(
     rag: RagEngine,
     request: str,
@@ -927,13 +1072,25 @@ def draft_request(
     language: str = "ar",
     target_pages: int | None = None,
     ground: "GroundingContext | dict | None" = None,
+    plan: dict | None = None,
     on_progress: ProgressCb | None = None,
 ) -> GeneratedDoc:
     """Route a free-text request to a grounded deliverable or a free-form document.
 
     The grounded sibling of ``HawkamaAgent.draft``: same routing, but threads the
     ``ground`` context through so the HTTP layer can ground generation without
-    touching the agent."""
+    touching the agent.
+
+    ``plan`` (P1/D1) is the wizard's optional CONFIRMED structured plan
+    (``{title, pages, axes, departments, components, notes}``). When present it
+    takes over completely — no keyword routing — since it already states the
+    title/sections/length explicitly; see ``_draft_from_plan``."""
+    ground = _as_grounding(ground)
+    if plan:
+        return _draft_from_plan(
+            rag, request, plan, language=language, target_pages=target_pages,
+            ground=ground, on_progress=on_progress,
+        )
     key = detect_deliverable(request)
     if key:
         department = None
@@ -943,6 +1100,7 @@ def draft_request(
         return generate_deliverable(
             key, rag, department=department, language=language,
             target_pages=target_pages, ground=ground, on_progress=on_progress,
+            extra_request=request,
         )
     title = re.sub(r"^\s*(اكتب|صغ|أنشئ|انشئ|جهّز|أعدّ|write|generate|draft)\s*", "", request).strip()
     title = title[:120] or "وثيقة حوكمة"

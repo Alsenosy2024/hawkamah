@@ -350,13 +350,20 @@ def grounding_brief(
     departments: tuple[str, ...] | list[str] | None = None,
     criteria: tuple[str, ...] | list[str] | None = None,
     has_current_state: bool = False,
+    axes: tuple[str, ...] | list[str] | None = None,
+    notes: str = "",
 ) -> str:
     """A compact, real-input briefing injected into grounded prompts.
 
     Naming the company's ACTUAL departments/criteria in the system prompt is what
     stops the model from inventing generic ones — it must use these exact names.
     Returns "" when there is nothing concrete to assert (so ungrounded calls are
-    unchanged)."""
+    unchanged).
+
+    ``axes``/``notes`` (P1/D1) carry the confirmed build-wizard plan's governance
+    axes and free-text owner instructions into this SAME briefing block, so they
+    reach every grounded prompt (outline + each section) without a separate
+    injection point."""
     lines: list[str] = []
     if company:
         lines.append(f"المنظمة محل العمل: {company}.")
@@ -374,6 +381,11 @@ def grounding_brief(
             "تقرير الواقع الراهن للمنظمة متاحٌ ضمن السياق؛ استند إليه في رصد الفجوات "
             "والتوصيات بدل التعميم."
         )
+    ax = [a for a in (axes or []) if a]
+    if ax:
+        lines.append("المحاور الحوكمية المطلوب تغطيتها (طلب المالك): " + "، ".join(ax) + ".")
+    if notes and notes.strip():
+        lines.append("طلب المالك/توجيهات إلزامية (التزم بها في كل قسم): " + notes.strip())
     return "\n".join(lines)
 
 

@@ -4,25 +4,46 @@ python-docx has no high-level RTL switch, so we set the low-level OOXML bits
 directly: document-default bidi, per-paragraph `w:bidi`, right alignment, and the
 `w:rtl` run property. Default body font is Almarai (the project mandate for Word
 exports — do NOT swap to Thmanyah here). Tables get a navy header + zebra rows.
+
+The Almarai TTFs are also EMBEDDED into the fontTable so the document still
+renders in the brand face on a machine that doesn't have Almarai installed
+(mirrors the PDF exporter's vendored-font approach) — see ``_embed_font``.
 """
 
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.ns import qn
+from docx.opc.constants import CONTENT_TYPE as CT, RELATIONSHIP_TYPE as RT
+from docx.opc.oxml import serialize_part_xml
+from docx.opc.packuri import PackURI
+from docx.opc.part import Part
+from docx.oxml.ns import nsmap as OOXML_NS, qn
 from docx.shared import Pt, RGBColor
 from docx.oxml import OxmlElement
+from lxml import etree
 
 from .markdown_ast import Block, parse_markdown
 
 NAVY = RGBColor(0x1A, 0x35, 0x57)
 GOLD = RGBColor(0xC8, 0x91, 0x2A)
 DEFAULT_FONT = "Almarai"
+
+# Vendored inside the package (present in the container image), mirroring
+# pdf_export._PKG_FONTS.
+_FONT_DIR = Path(__file__).resolve().parents[1] / "fonts"
+# The OOXML spec's documented signal that an embedded font's bytes are stored
+# AS-IS (unobfuscated): Word reads an `application/x-font-ttf` font part as
+# plain TrueType data when its `w:fontKey` is this all-zero GUID. Real Word GUID
+# -XOR obfuscation is an optional, purely cosmetic anti-copy measure — not
+# required for the embed itself to work — so we skip re-implementing that
+# byte-shuffling algorithm here and use the simpler, equally spec-valid path.
+_UNOBFUSCATED_FONT_KEY = "00000000-0000-0000-0000-000000000000"
 
 
 def export_docx(markdown: str, title: str, *, font: str = DEFAULT_FONT, company: str = "") -> bytes:
@@ -33,9 +54,82 @@ def export_docx(markdown: str, title: str, *, font: str = DEFAULT_FONT, company:
     for b in parse_markdown(markdown):
         _emit_block(doc, b, font)
 
+    _embed_font(doc, font)
+
     buf = BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+# --------------------------------------------------------------------------- #
+# Font embedding (D5)                                                          #
+# --------------------------------------------------------------------------- #
+def _embed_font(doc: Document, font_name: str) -> None:
+    """Embed the Almarai TTF (regular + bold) into the docx's fontTable.
+
+    python-docx has no high-level font-embedding API, so this builds the OOXML
+    pieces directly: font-data parts for the TTFs, `<w:font>` entries in the
+    document's fontTable part referencing them, and the `w:embedTrueTypeFonts`
+    settings.xml flag that tells Word to actually use the embedded bytes rather
+    than substituting a locally-installed font.
+
+    python-docx's blank-document template already SHIPS an (unembedded) fontTable
+    part listing the theme fonts (Calibri, Cambria, …) — we reuse that existing
+    part rather than adding a second, competing one at the same partname. A
+    missing vendored TTF, or a non-Almarai `font_name`, is a silent no-op: the
+    document still renders, just without the embed (exactly the prior behavior).
+    """
+    if font_name != DEFAULT_FONT:
+        return  # only the project's mandated Almarai face is vendored
+    regular_path = _FONT_DIR / "Almarai-Regular.ttf"
+    if not regular_path.is_file():
+        return
+
+    package = doc.part.package
+    document_part = doc.part
+
+    try:
+        font_table_part = document_part.part_related_by(RT.FONT_TABLE)
+        root = etree.fromstring(font_table_part.blob)
+    except (KeyError, ValueError):
+        font_table_part = Part(PackURI("/word/fontTable.xml"), CT.WML_FONT_TABLE, b"", package)
+        document_part.relate_to(font_table_part, RT.FONT_TABLE)
+        root = etree.Element(qn("w:fonts"), nsmap={"w": OOXML_NS["w"], "r": OOXML_NS["r"]})
+
+    font_el = etree.SubElement(root, qn("w:font"))
+    font_el.set(qn("w:name"), font_name)
+
+    def embed(tag: str, path: Path) -> None:
+        if not path.is_file():
+            return
+        # `next_partname` walks the package's relationship graph, so each font
+        # data part must be related in BEFORE the next one is named, or two
+        # unrelated (not-yet-linked) parts both compute the same "next" name.
+        data_part = Part(
+            package.next_partname("/word/fonts/font%d.fntdata"), CT.X_FONT_TTF,
+            path.read_bytes(), package,
+        )
+        rid = font_table_part.relate_to(data_part, RT.FONT)
+        el = etree.SubElement(font_el, qn(tag))
+        el.set(qn("r:id"), rid)
+        el.set(qn("w:fontKey"), _UNOBFUSCATED_FONT_KEY)
+
+    embed("w:embedRegular", regular_path)
+    embed("w:embedBold", _FONT_DIR / "Almarai-Bold.ttf")
+    font_table_part._blob = serialize_part_xml(root)  # Part.blob has no public setter
+
+    # CT_Settings element order: embedTrueTypeFonts sits between printFormsData
+    # and embedSystemFonts — both absent from python-docx's template — so it must
+    # come right after w:zoom (the schema only constrains the relative order of
+    # PRESENT siblings).
+    settings_el = doc.settings.element
+    embed_flag = OxmlElement("w:embedTrueTypeFonts")
+    embed_flag.set(qn("w:val"), "true")
+    zoom_el = settings_el.find(qn("w:zoom"))
+    if zoom_el is not None:
+        zoom_el.addnext(embed_flag)
+    else:
+        settings_el.insert(0, embed_flag)
 
 
 # --------------------------------------------------------------------------- #
