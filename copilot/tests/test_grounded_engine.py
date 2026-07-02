@@ -121,6 +121,22 @@ def test_as_grounding_from_dict_and_empty():
 def test_grounding_is_empty():
     assert GroundingContext().is_empty
     assert not GroundingContext(company="x").is_empty
+    # P1/D1 — a plan's axes/notes alone are enough to make the context non-empty.
+    assert not GroundingContext(axes=["الاستراتيجية"]).is_empty
+    assert not GroundingContext(notes="ملاحظة المالك").is_empty
+
+
+def test_grounding_brief_includes_plan_axes_and_notes():
+    # P1/D1 — the confirmed wizard plan's axes + owner notes reach the SAME brief
+    # block injected into the outline prompt and every section-drafting prompt.
+    brief = GroundingContext(
+        axes=["الحوكمة المؤسسية", "الاستراتيجية"],
+        notes="التزم بإبراز دور مجلس الإدارة",
+    ).brief()
+    assert "الحوكمة المؤسسية" in brief and "الاستراتيجية" in brief
+    assert "التزم بإبراز دور مجلس الإدارة" in brief
+    # Empty axes/notes → no stray section (ungrounded/plan-less path unchanged).
+    assert grounding_brief() == ""
 
 
 # --------------------------------------------------------------------------- #
@@ -154,6 +170,70 @@ def test_org_chart_escapes_unsafe_label_chars():
     mer = build_org_chart_mermaid([{"id": "x", "name": 'إدارة [المشاريع] "أ"'}])
     assert "[المشاريع]" not in mer  # brackets/quotes stripped from the label
     assert '"إدارة المشاريع أ"' in mer
+
+
+# --------------------------------------------------------------------------- #
+# P1/D4 — org-chart root synthesis, mirroring the frontend's synthesizeRoot     #
+# (src/__tests__/orgChartBuilder.test.ts) so backend and frontend charts match #
+# --------------------------------------------------------------------------- #
+def test_org_chart_synthesizes_root_for_multiple_top_level_units():
+    units = [
+        {"id": "d1", "name": "إدارة المشتريات"},
+        {"id": "d2", "name": "الإدارة المالية"},
+        {"id": "d3", "name": "الموارد البشرية"},
+        {"id": "d1a", "name": "الشراء والتوريد", "parentId": "d1"},
+    ]
+    roles = [{"id": "r_ceo", "title": "الرئيس التنفيذي", "unitId": "d0"}]
+    mer = build_org_chart_mermaid(units, roles, include_roles=False)
+    assert mer.startswith("flowchart TD")
+    assert mer.count('org_root[') == 1
+    assert 'org_root["الرئيس التنفيذي"]' in mer
+    assert "org_root --> u0" in mer
+    assert "org_root --> u1" in mer
+    assert "org_root --> u2" in mer
+    # existing nesting preserved; the root is NOT linked to a sub-unit directly
+    assert "u0 --> u3" in mer
+    assert "org_root --> u3" not in mer
+
+
+def test_org_chart_root_synthesis_never_picks_a_deputy():
+    units = [{"id": "a", "name": "أ"}, {"id": "b", "name": "ب"}]
+    roles = [
+        {"id": "r_vp", "title": "نائب الرئيس للتطوير والاستراتيجية", "unitId": "a"},
+        {"id": "r_ceo", "title": "الرئيس التنفيذي", "unitId": "b"},
+    ]
+    mer = build_org_chart_mermaid(units, roles, include_roles=False)
+    assert 'org_root["الرئيس التنفيذي"]' in mer
+    assert "نائب الرئيس" not in mer
+
+
+def test_org_chart_root_synthesis_falls_back_to_company_then_literal_ceo():
+    units = [{"id": "a", "name": "أ"}, {"id": "b", "name": "ب"}]
+    mer = build_org_chart_mermaid(units, [], company="مجموعة كلمة", include_roles=False)
+    assert 'org_root["مجموعة كلمة"]' in mer
+
+    mer2 = build_org_chart_mermaid(units, [], company="", include_roles=False)
+    assert 'org_root["الرئيس التنفيذي"]' in mer2
+
+
+def test_org_chart_no_root_synthesis_for_single_existing_root():
+    # ORG_UNITS already has exactly one top-level unit (u_ceo) → unchanged tree.
+    mer = build_org_chart_mermaid(ORG_UNITS, ROLES, include_roles=False)
+    assert "org_root" not in mer
+
+
+def test_org_chart_root_synthesis_handles_zero_real_roots_cycle():
+    cyclic = [
+        {"id": "a", "name": "أ", "parentId": "b"},
+        {"id": "b", "name": "ب", "parentId": "a"},
+    ]
+    mer = build_org_chart_mermaid(cyclic, [], include_roles=False)
+    assert mer.count('org_root[') == 1
+
+
+def test_org_chart_root_synthesis_is_deterministic():
+    units = [{"id": "d1", "name": "أ"}, {"id": "d2", "name": "ب"}]
+    assert build_org_chart_mermaid(units) == build_org_chart_mermaid(units)
 
 
 def test_render_org_structure_md_has_chart_and_table():

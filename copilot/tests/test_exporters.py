@@ -86,6 +86,44 @@ def test_docx_is_valid_ooxml():
         assert "w:bidi" in doc_xml  # RTL applied
 
 
+def test_docx_embeds_almarai_font():
+    """P1/D5 — the docx exporter must EMBED the Almarai TTFs (mirrors the PDF
+    exporter's vendored-font approach), not just name the font, so the document
+    renders in-brand on a machine without Almarai installed."""
+    from hawkama_copilot.exporters import docx_export
+
+    assert (docx_export._FONT_DIR / "Almarai-Regular.ttf").is_file()
+    assert (docx_export._FONT_DIR / "Almarai-Bold.ttf").is_file()
+
+    data = export(MD, "دليل الحوكمة", "docx", company="شركة").data
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = z.namelist()
+        # no duplicate/competing parts (the template already ships a fontTable)
+        assert len(names) == len(set(names))
+        assert names.count("word/fontTable.xml") == 1
+
+        font_table = z.read("word/fontTable.xml").decode("utf-8")
+        assert 'w:name="Almarai"' in font_table
+        assert "w:embedRegular" in font_table and "w:embedBold" in font_table
+
+        font_data_parts = [n for n in names if n.startswith("word/fonts/") and n.endswith(".fntdata")]
+        assert len(font_data_parts) == 2  # regular + bold, non-empty TTF bytes
+        for n in font_data_parts:
+            assert len(z.read(n)) > 1000
+
+        settings_xml = z.read("word/settings.xml").decode("utf-8")
+        assert 'w:embedTrueTypeFonts w:val="true"' in settings_xml
+
+        content_types = z.read("[Content_Types].xml").decode("utf-8")
+        assert "application/x-font-ttf" in content_types
+
+    # The saved file must still be a valid, re-openable docx.
+    from docx import Document as _Document
+
+    reopened = _Document(io.BytesIO(data))
+    assert len(reopened.paragraphs) > 0
+
+
 def test_xlsx_has_table_sheet():
     data = export(MD, "دليل", "xlsx").data
     assert _is_zip(data)

@@ -149,6 +149,14 @@ async def ask(body: dict[str, Any]) -> StreamingResponse:
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+def _plan_from_body(body: dict[str, Any]) -> dict[str, Any] | None:
+    """The confirmed build-wizard plan (P1/D1): {title?, pages?, axes?, departments?,
+    components?, notes?}. Present → bypasses keyword deliverable routing entirely
+    (see generation.draft_request/_draft_from_plan). Absent → unchanged behavior."""
+    plan = body.get("plan")
+    return plan if isinstance(plan, dict) and plan else None
+
+
 @api.post("/draft", dependencies=[Depends(require_allowed_origin)])
 def draft(body: dict[str, Any]) -> dict[str, Any]:
     corpus = body.get("corpus", "default")
@@ -159,12 +167,14 @@ def draft(body: dict[str, Any]) -> dict[str, Any]:
     # Grounded path (V9/BE-3): when the body carries the company's real inputs we
     # route through generation.draft_request with a GroundingContext; otherwise the
     # routing is identical to agent.draft (same deliverable detection + free-form).
+    # P1/D1: an optional structured `plan` bypasses keyword routing entirely.
     doc = draft_request(
         agent.rag,
         request,
         language=body.get("language", "ar"),
         target_pages=body.get("target_pages"),
         ground=_grounding_from_body(body),
+        plan=_plan_from_body(body),
     )
     return _doc_payload(doc)
 
@@ -199,6 +209,7 @@ async def draft_stream(body: dict[str, Any]) -> StreamingResponse:
         )
 
     ground = _grounding_from_body(body)
+    plan = _plan_from_body(body)
 
     def worker() -> None:
         try:
@@ -208,6 +219,7 @@ async def draft_stream(body: dict[str, Any]) -> StreamingResponse:
                 language=body.get("language", "ar"),
                 target_pages=body.get("target_pages"),
                 ground=ground,
+                plan=plan,
                 on_progress=on_progress,
             )
             doc_holder.append(_doc_payload(doc))

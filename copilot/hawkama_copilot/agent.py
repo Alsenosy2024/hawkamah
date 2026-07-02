@@ -26,7 +26,7 @@ from google.genai import types
 from . import genai_client
 from .config import SETTINGS
 from .exporters import Exported, ManualDoc, export, render_manual
-from .generation import GeneratedDoc, generate_deliverable, generate_document
+from .generation import GeneratedDoc, GroundingContext, generate_deliverable, generate_document
 from .rag import Evidence, RagEngine
 from .skill import DELIVERABLES, DELIVERABLES_BY_KEY, system_prompt
 
@@ -205,6 +205,7 @@ class HawkamaAgent:
         *,
         language: str = "ar",
         target_pages: int | None = None,
+        ground: "GroundingContext | dict | None" = None,
         on_progress: Callable[[str, int, int], None] | None = None,
     ) -> GeneratedDoc:
         key = self.detect_deliverable(request)
@@ -215,14 +216,15 @@ class HawkamaAgent:
                 department = m.group(1).strip() if m else None
             return generate_deliverable(
                 key, self.rag, department=department, language=language,
-                target_pages=target_pages, on_progress=on_progress,
+                target_pages=target_pages, ground=ground, on_progress=on_progress,
+                extra_request=request,
             )
         # Free-form: derive a title/goal then generate.
         title = re.sub(r"^\s*(اكتب|صغ|أنشئ|انشئ|جهّز|أعدّ|write|generate|draft)\s*", "", request).strip()
         title = title[:120] or "وثيقة حوكمة"
         return generate_document(
             title, f"إنتاج وثيقة كاملة احترافية تلبي الطلب: {request}", self.rag,
-            language=language, target_pages=target_pages, on_progress=on_progress,
+            language=language, target_pages=target_pages, ground=ground, on_progress=on_progress,
         )
 
     def respond(self, message: str, history: list[dict] | None = None, **kw) -> AskResult | GeneratedDoc:
@@ -238,6 +240,7 @@ class HawkamaAgent:
         company: str = "",
         department_list: list[str] | None = None,
         language: str = "ar",
+        ground: "GroundingContext | dict | None" = None,
         on_progress: Callable[[str, int, int], None] | None = None,
     ) -> tuple[list[GeneratedDoc], str]:
         """Run every skill deliverable in gate order → one RTL HTML manual."""
@@ -249,12 +252,14 @@ class HawkamaAgent:
         for d in order:
             if on_progress:
                 on_progress(f"deliverable:{d.key}", done, total)
-            docs.append(generate_deliverable(d.key, self.rag, language=language))
+            docs.append(generate_deliverable(d.key, self.rag, language=language, ground=ground))
             done += 1
         for dept in department_list or []:
             if on_progress:
                 on_progress(f"department:{dept}", done, total)
-            docs.append(generate_deliverable("department_pack", self.rag, department=dept, language=language))
+            docs.append(generate_deliverable(
+                "department_pack", self.rag, department=dept, language=language, ground=ground,
+            ))
             done += 1
 
         manual = render_manual(
@@ -271,9 +276,16 @@ class HawkamaAgent:
         return export(doc.markdown, doc.title, fmt, company=company)
 
     # ----------------------------------------------- function-calling agent
-    def run_agent(self, instruction: str, max_steps: int = 6) -> AgentResult:
+    def run_agent(
+        self, instruction: str, max_steps: int = 6, *,
+        ground: "GroundingContext | dict | None" = None,
+    ) -> AgentResult:
         """A real Gemini function-calling loop. The model selects tools; we run
-        them and feed compact receipts back (large artifacts are kept aside)."""
+        them and feed compact receipts back (large artifacts are kept aside).
+
+        ``ground`` (P1/D2) is forwarded into the ``draft_document`` tool so the
+        agent's own drafting — previously always ungrounded — can derive from the
+        same company inputs the HTTP layer's /draft path already grounds with."""
         client = genai_client.get_client()
         artifacts: list[GeneratedDoc] = []
         trace: list[str] = []
@@ -291,7 +303,7 @@ class HawkamaAgent:
 
         def draft_document(request: str) -> str:
             """Draft a complete multi-page governance document for the request."""
-            doc = self.draft(request)
+            doc = self.draft(request, ground=ground)
             artifacts.append(doc)
             trace.append(f"draft_document({request!r}) → '{doc.title}' (~{doc.page_estimate}p)")
             return f"تم إنشاء «{doc.title}» (~{doc.page_estimate} صفحة، {len(doc.sections)} أقسام)."
