@@ -337,11 +337,56 @@ QUALITY_GATES: tuple[QualityGate, ...] = (
 
 
 def system_prompt(extra: str = "") -> str:
-    """Full agent system prompt: persona + grounding rule + optional context."""
+    """Full agent system prompt: persona + grounding rule + optional context.
+
+    NOTE (P10): this bare form also backs the document-GENERATION path
+    (generation.py's outline/section drafting, `system=... if ground else
+    system_prompt()`). It must stay byte-identical for that path — the
+    conversational register belongs ONLY on the /ask path, via
+    ``ask_system_prompt()`` below, never injected here."""
     parts = [PERSONA, GROUNDING_RULE, FORMATTING_RULE]
     if extra:
         parts.append(extra)
     return "\n\n".join(parts)
+
+
+# P10 — the conversational-register rule for the /ask path. A grounded ASK turn
+# must still cite [مصدر N] for facts (GROUNDING_RULE is untouched), but its REPLY
+# SIZE must track the user's message instead of always reading as a governance
+# report: a short question gets a short answer, and the copilot may ask ONE
+# clarifying question instead of guessing intent.
+CONVERSATION_RULE = (
+    "أنت في وضع محادثة. حجم الرد يتناسب مع رسالة المستخدم: سؤال قصير → جواب مباشر "
+    "موجز (فقرة أو اثنتان) مع الاستشهاد عند ذكر وقائع؛ لا تكتب تقريرًا أو وثيقة "
+    "كاملة في المحادثة إطلاقًا إلا إذا طُلب ذلك صراحة. تحاور بطبيعية: يجوز سؤال "
+    "توضيحي واحد عند الغموض بدل افتراض المقصود."
+)
+
+
+def ask_system_prompt() -> str:
+    """System prompt for the /ask (conversational Q&A) path ONLY — persona +
+    grounding + formatting + CONVERSATION_RULE. Scoped away from generation.py's
+    ``system_prompt()`` calls so document drafting keeps its report-length,
+    zero-clarifying-questions register untouched (see the NOTE on system_prompt)."""
+    return system_prompt(CONVERSATION_RULE)
+
+
+# P10 — a standalone-greeting/thanks turn gets NO persona, NO grounding block, NO
+# citations, NO document: just a short, warm, same-language reply that mentions
+# what the copilot can help with. Deliberately not composed from system_prompt()/
+# PERSONA — the whole point is to drop the consultant register for pure smalltalk.
+SMALLTALK_RULE = (
+    "المستخدم يفتح حديثًا وديًا فقط (تحية أو شكر) وليس سؤالًا عن حوكمة المنشأة. "
+    "رُدّ بنفس لغة رسالته بجملة أو جملتين دافئتين وطبيعيتين، ثم اذكر باختصار كيف "
+    "يمكنك المساعدة (الإجابة عن أسئلة حول ملفات ووثائق المنشأة وحوكمتها، أو بناء "
+    "مستندات ومخططات حوكمة). لا تستخدم عناوين، ولا استشهادات [مصدر N]، ولا جداول، "
+    "ولا وثيقة كاملة — سطر أو سطران فقط."
+)
+
+
+def smalltalk_system_prompt() -> str:
+    """Tiny system prompt used ONLY when HawkamaAgent._is_smalltalk() is True."""
+    return SMALLTALK_RULE
 
 
 def grounding_brief(

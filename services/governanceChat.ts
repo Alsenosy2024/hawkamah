@@ -147,6 +147,15 @@ const FORMAT_AR =
 const FORMAT_EN =
   'Formatting: clean structured Markdown — headings (#, ##), lists, tables (| ... |), rules (---), **bold**. Never emit stray hashtags or raw symbols. Sequence the content in clear sections.';
 
+// P10 — conversational register (dev-only fallback parity; the backend flag's ON
+// path carries the equivalent rule via ask_system_prompt/smalltalk_system_prompt
+// in copilot/hawkama_copilot/skill.py). Keeps a greeting from getting a full
+// document and keeps requirement-gathering to one question per turn.
+const REGISTER_AR =
+  'حجم الرد يتناسب مع رسالة المستخدم: تحية أو شكر يستحق ترحيباً موجزاً وعرضاً مختصراً للمساعدة فقط، لا وثيقة كاملة أبداً. عند جمع المتطلبات، اسأل سؤالاً واحداً في كل مرة بدل قائمة أسئلة دفعة واحدة.';
+const REGISTER_EN =
+  'Reply size should track the user\'s message: a greeting or thanks deserves a brief welcome and a short offer of help only, never a full document. When gathering requirements, ask one question at a time instead of a batch of questions.';
+
 // Fallback density bands — used ONLY when the user gives NO explicit page count
 // (a vague "اكتب سياسة كاملة"). When a count IS stated it wins (see
 // resolveLengthTarget / buildLengthDirective below), which is the V4 fix.
@@ -284,6 +293,7 @@ export async function stageChat(p: StageChatParams, cb: StreamCallbacks): Promis
     modeBrief,
     ar ? CAPABILITY_AR : CAPABILITY_EN,
     ar ? FORMAT_AR : FORMAT_EN,
+    ar ? REGISTER_AR : REGISTER_EN,
     buildLengthDirective(ar, !!p.longForm, targetPages),
     p.extraContext ? `سياق إضافي: ${p.extraContext}` : '',
     snap, // P0-2: authoritative live page state, before model/files
