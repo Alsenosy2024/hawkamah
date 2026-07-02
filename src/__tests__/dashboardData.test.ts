@@ -52,13 +52,16 @@ describe('computeKpis', () => {
 });
 
 describe('computeRiasec', () => {
-  it('returns the canonical R-I-A-S-E-C order', () => {
-    expect(computeRiasec([]).map(d => d.key)).toEqual(RIASEC_ORDER);
+  it('returns an empty array (never a fake profile) when no assessment carries a riasec block', () => {
+    // V33/D2 honesty fix: the chart must show an explicit "no data" state
+    // instead of plotting invented placeholder numbers as if they were real.
+    expect(computeRiasec([])).toEqual([]);
+    expect(computeRiasec([a({ reportData: {} }), a({ reportData: { totalScore: 90 } })])).toEqual([]);
   });
 
-  it('uses the fallback profile when no assessment carries a riasec block', () => {
-    const byKey = Object.fromEntries(computeRiasec([]).map(d => [d.key, d.value]));
-    expect(byKey).toEqual({ R: 45, I: 78, A: 30, S: 62, E: 85, C: 50 });
+  it('returns the canonical R-I-A-S-E-C order once real data exists', () => {
+    const data = [a({ reportData: { riasec: { R: 1, I: 2, A: 3, S: 4, E: 5, C: 6 } } })];
+    expect(computeRiasec(data).map(d => d.key)).toEqual(RIASEC_ORDER);
   });
 
   it('sums riasec values across assessments and ignores ones without it', () => {

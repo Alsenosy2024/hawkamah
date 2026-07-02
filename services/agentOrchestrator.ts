@@ -197,7 +197,13 @@ export async function generateJson<T = any>(
 export async function generateJsonStream<T = any>(
   prompt: string,
   responseSchema: any,
-  opts: { temperature?: number; signal?: AbortSignal; onText?: (accumulated: string) => void } = {},
+  opts: {
+    temperature?: number;
+    signal?: AbortSignal;
+    onText?: (accumulated: string) => void;
+    maxOutputTokens?: number;
+    thinkingLevel?: ThinkingLevel;
+  } = {},
 ): Promise<T> {
   const ai = getAI();
   let acc = '';
@@ -208,7 +214,15 @@ export async function generateJsonStream<T = any>(
       responseMimeType: 'application/json',
       responseSchema,
       temperature: opts.temperature ?? 0.2,
-      thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM },
+      // Mirrors generateJson's fix (see its docstring above): an unbounded
+      // thinking budget at MEDIUM can silently eat the WHOLE output budget,
+      // truncating the streamed JSON — extractJson then throws at stream end
+      // and the caller falls back to the blocking ladder, so the live
+      // preview never shows for exactly the long (comprehensive) runs that
+      // need it most. Explicit large budget + LOW thinking keeps the output
+      // budget intact.
+      maxOutputTokens: opts.maxOutputTokens ?? 32000,
+      thinkingConfig: { thinkingLevel: opts.thinkingLevel ?? ThinkingLevel.LOW },
     },
   });
 

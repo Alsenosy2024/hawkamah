@@ -223,33 +223,45 @@ export const RiasecBarChart: React.FC<{ data: RiasecDatum[]; language: Language 
       title={<>{ar ? 'توزيع سمات هولاند المهنية ' : 'RIASEC interest types '}<bdi>(RIASEC)</bdi></>}
       badge={ar ? 'أعمدة' : 'Bars'}
     >
-      <MeasuredChart className="h-64 w-full min-w-0">
-        <BarChart layout="vertical" data={rows} margin={{ top: 4, right: ar ? 12 : 36, left: ar ? 36 : 12, bottom: 4 }} barCategoryGap={10}>
-          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={GRID} />
-          <XAxis type="number" hide reversed={ar} domain={[0, 'dataMax']} />
-          <YAxis
-            type="category"
-            dataKey="label"
-            width={118}
-            orientation={ar ? 'right' : 'left'}
-            tickLine={false}
-            axisLine={false}
-            tick={<CategoryTick anchor={ar ? 'start' : 'end'} />}
-          />
-          <Tooltip
-            formatter={(value: any) => [`${value} ${ar ? 'نقطة' : 'pts'}`, ar ? 'تراكمي' : 'Total']}
-            cursor={{ fill: 'rgba(17,168,188,0.06)' }}
-          />
-          <Bar dataKey="value" fill={BRAND} radius={[4, 4, 4, 4]} maxBarSize={20}>
-            <LabelList dataKey="value" position={ar ? 'left' : 'right'} offset={8} fontSize={11} fontWeight={700} fill={INK} />
-          </Bar>
-        </BarChart>
-      </MeasuredChart>
-      <p className="text-[10px] text-slate-500 leading-relaxed text-center">
-        {ar
-          ? 'تراكم نقاط جدارات هولاند والاهتمامات المهنية للموظفين — مرتبة تنازلياً لتسهيل المقارنة.'
-          : 'Accumulated RIASEC interest points across employees — sorted for precise comparison.'}
-      </p>
+      {data.length === 0 ? (
+        <div className="h-64 flex items-center justify-center text-center px-4">
+          <p className="text-xs text-slate-400 font-medium">
+            {ar
+              ? 'لا توجد بيانات هولاند (RIASEC) بعد — ستظهر تلقائياً فور توفر تقارير تتضمنها.'
+              : 'No RIASEC data yet — it will appear automatically once reports include it.'}
+          </p>
+        </div>
+      ) : (
+        <>
+          <MeasuredChart className="h-64 w-full min-w-0">
+            <BarChart layout="vertical" data={rows} margin={{ top: 4, right: ar ? 12 : 36, left: ar ? 36 : 12, bottom: 4 }} barCategoryGap={10}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={GRID} />
+              <XAxis type="number" hide reversed={ar} domain={[0, 'dataMax']} />
+              <YAxis
+                type="category"
+                dataKey="label"
+                width={118}
+                orientation={ar ? 'right' : 'left'}
+                tickLine={false}
+                axisLine={false}
+                tick={<CategoryTick anchor={ar ? 'start' : 'end'} />}
+              />
+              <Tooltip
+                formatter={(value: any) => [`${value} ${ar ? 'نقطة' : 'pts'}`, ar ? 'تراكمي' : 'Total']}
+                cursor={{ fill: 'rgba(17,168,188,0.06)' }}
+              />
+              <Bar dataKey="value" fill={BRAND} radius={[4, 4, 4, 4]} maxBarSize={20}>
+                <LabelList dataKey="value" position={ar ? 'left' : 'right'} offset={8} fontSize={11} fontWeight={700} fill={INK} />
+              </Bar>
+            </BarChart>
+          </MeasuredChart>
+          <p className="text-[10px] text-slate-500 leading-relaxed text-center">
+            {ar
+              ? 'تراكم نقاط جدارات هولاند والاهتمامات المهنية للموظفين — مرتبة تنازلياً لتسهيل المقارنة.'
+              : 'Accumulated RIASEC interest points across employees — sorted for precise comparison.'}
+          </p>
+        </>
+      )}
     </ChartCard>
   );
 };

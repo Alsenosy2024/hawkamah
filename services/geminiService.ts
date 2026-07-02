@@ -534,6 +534,18 @@ const extendedAnalysisSchema = {
             type: Type.STRING,
             description: "Theoretical profile of candidate behaviors (Birkman) and personality style (Holland)."
         },
+        riasec: {
+            type: Type.OBJECT,
+            description: "OPTIONAL. Holland Codes RIASEC scores (0-100 each) that QUANTIFY the same behavioral/personality signal narrated in 'birkmanHollandSummary' — derive them from that summary rather than inventing unrelated numbers.",
+            properties: {
+                R: { type: Type.NUMBER, description: "Realistic (0-100)" },
+                I: { type: Type.NUMBER, description: "Investigative (0-100)" },
+                A: { type: Type.NUMBER, description: "Artistic (0-100)" },
+                S: { type: Type.NUMBER, description: "Social (0-100)" },
+                E: { type: Type.NUMBER, description: "Enterprising (0-100)" },
+                C: { type: Type.NUMBER, description: "Conventional (0-100)" }
+            }
+        },
         competencyScores: {
             type: Type.ARRAY,
             description: "List of key competencies assessed.",
@@ -741,6 +753,7 @@ export const analyzeAnswers = async (
       - 'gapReport' listing 2-4 critical competencies, the required benchmark (e.g. 80-90), the actual scored metric, and detailed training recommendations.
       - 'jobFitRatings' suggesting 2-3 other corporate positions in the hierarchy they are highly aligned with, alongside exact match percentages (0-100) and rationale referencing Birkman/Holland styles.
       - 'birkmanHollandSummary' containing diagnostic feedback explaining their behavioral traits and personality.
+      - 'riasec': six Holland-code scores (R/I/A/S/E/C, each 0-100) that quantify the SAME behavioral profile you narrate in 'birkmanHollandSummary' — always populate all six alongside it.
       ${mergeInstruction}
       ${structuredBlock}
 
