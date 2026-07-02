@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { orgStructureSectionMarkdown, isOrgStructureDoc } from '../../services/governanceEngine';
-import { buildOrgChartMermaid } from '../../services/diagramService';
+import { buildOrgChartMermaid, resolveOrgChartMermaid } from '../../services/diagramService';
 import type { CompanyGovernanceModel } from '../../types';
 
 // ===========================================================================
@@ -59,6 +59,37 @@ describe('orgStructureSectionMarkdown — pinned to the deterministic chart', ()
     const empty: CompanyGovernanceModel = { ...baseModel(), orgUnits: [] };
     const section = orgStructureSectionMarkdown(empty);
     expect(section).toContain('| — | — | — |');
+  });
+
+  // MAJOR fix (H) — the pinned section used to call buildOrgChartMermaid directly,
+  // ignoring a saved manual override (model.orgChartMermaid) the owner edited via
+  // the live/chat editor in Stage 4 — so a manual chart edit silently vanished from
+  // every generated document while still showing correctly on-screen (Stage 4 uses
+  // resolveOrgChartMermaid, which prefers the override). Now both use the SAME
+  // resolveOrgChartMermaid, so the document always matches whichever chart — override
+  // or deterministic — the owner is actually looking at.
+  it('embeds the manual chart OVERRIDE when one is set, not the raw deterministic chart', () => {
+    const model = baseModel();
+    const override = 'flowchart TD\n  X["مخطط معدَّل يدويًا"]';
+    const withOverride: CompanyGovernanceModel = { ...model, orgChartMermaid: override } as any;
+    const section = orgStructureSectionMarkdown(withOverride);
+    expect(section).toContain('```mermaid\n' + override + '\n```');
+    // the raw deterministic chart must NOT appear instead
+    expect(section).not.toContain(buildOrgChartMermaid(model));
+  });
+
+  it('the embedded chart always equals resolveOrgChartMermaid(model) — override-aware, matching what Stage 4 actually shows', () => {
+    const model = baseModel();
+    const override = 'flowchart TD\n  Y["نسخة أخرى"]';
+    const withOverride: CompanyGovernanceModel = { ...model, orgChartMermaid: override } as any;
+    expect(orgStructureSectionMarkdown(withOverride)).toContain('```mermaid\n' + resolveOrgChartMermaid(withOverride) + '\n```');
+    expect(orgStructureSectionMarkdown(model)).toContain('```mermaid\n' + resolveOrgChartMermaid(model) + '\n```');
+  });
+
+  it('falls back to the deterministic chart when no override is set (unchanged base behavior)', () => {
+    const model = baseModel();
+    const section = orgStructureSectionMarkdown(model);
+    expect(section).toContain('```mermaid\n' + buildOrgChartMermaid(model) + '\n```');
   });
 });
 

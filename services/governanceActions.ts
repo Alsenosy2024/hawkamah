@@ -7,7 +7,7 @@ import { generateJson } from './agentOrchestrator';
 import type {
   CompanyGovernanceModel, GovAction, Language, GovAuditEntry,
   GovOrgUnit, GovRole, GovPolicy, GovProcedure, GovAuthority, GovKpi,
-  GovCommittee, GovMeeting,
+  GovCommittee, GovMeeting, ProvenanceRef,
 } from '../types';
 
 let _ac = 0;
@@ -112,17 +112,31 @@ function modelDigest(m: CompanyGovernanceModel): string {
   ].join('\n');
 }
 
-/** Ask the LLM to translate an instruction into reviewable structured actions. */
+/** Ask the LLM to translate an instruction into reviewable structured actions.
+ *  `chunkContext` — CRITICAL fix: a bounded digest of the tenant's ingested
+ *  documents (e.g. from services/governanceService's `compileChunkContext`),
+ *  passed in by the caller. Previously this prompt was built ONLY from
+ *  `modelDigest` (unit/role/policy NAMES, no evidence text), so an instruction
+ *  asserting a fact about the company ("add a unit — ours does X") had nothing
+ *  real to ground against and the model could invent plausible-sounding detail.
+ *  Optional/best-effort: when omitted (e.g. no ingested docs yet), the prompt
+ *  degrades to the prior model-only grounding rather than failing. */
 export async function proposeModelActions(
   instruction: string,
   model: CompanyGovernanceModel,
   language?: Language,
   signal?: AbortSignal,
+  chunkContext?: string,
 ): Promise<GovAction[]> {
   const ar = (language || 'ar') === 'ar';
+  const evidenceBlock = chunkContext && chunkContext.trim()
+    ? (ar
+        ? `\n\nأدلة من مستندات الشركة الفعلية (استند إليها عند إضافة/تعديل أي حقيقة أو تفصيل؛ لا تخترع ما ليس واردًا فيها أو في النموذج):\n${chunkContext.trim()}`
+        : `\n\nEvidence from the company's actual ingested documents (ground any added/edited fact in this; never invent detail absent from it or the model):\n${chunkContext.trim()}`)
+    : '';
   const sys = ar
-    ? `أنت محرّر نموذج حوكمة. حوّل تعليمات المستخدم إلى عمليات منظّمة (actions) على النموذج الحالي دون تنفيذها. استخدم أسماء الوحدات/السياسات/الأدوار كما هي في النموذج للربط. لا تخترع كيانات غير مطلوبة.\n\nالنموذج الحالي:\n${modelDigest(model)}`
-    : `You convert the user's instruction into structured model actions (no execution). Reference existing unit/policy/role names for linking.\n\nCurrent model:\n${modelDigest(model)}`;
+    ? `أنت محرّر نموذج حوكمة. حوّل تعليمات المستخدم إلى عمليات منظّمة (actions) على النموذج الحالي دون تنفيذها. استخدم أسماء الوحدات/السياسات/الأدوار كما هي في النموذج للربط. لا تخترع كيانات غير مطلوبة.\n\nالنموذج الحالي:\n${modelDigest(model)}${evidenceBlock}`
+    : `You convert the user's instruction into structured model actions (no execution). Reference existing unit/policy/role names for linking.\n\nCurrent model:\n${modelDigest(model)}${evidenceBlock}`;
 
   const prompt = ar
     ? `التعليمات: "${instruction}"\nأعد JSON: { actions: [...] }. الأنواع المتاحة: add_unit (مع feeds/dependsOn/objective اختياري), add_role (وصف وظيفي كامل: managerialLevel, summary, responsibilities, responsibilityGroups, qualifications{education,experience,certifications}, skills{technical[],soft[]}, relations{reportsTo,supervises[],interactsWith[]}), add_policy, add_procedure, add_authority (مع threshold/limit للصلاحيات المالية), add_kpi (مع weight 0-100, frequency, measurementMethod, rewards, role للربط), add_committee (name, members[], mandate, cadence), add_meeting (kind=type عبر name, purpose, frequency, attendees[]), set_assessment (assessment object), edit_unit, edit_role, edit_policy, edit_procedure, edit_authority, edit_kpi, remove. لكل عملية أضف rationale قصير.`
@@ -146,11 +160,31 @@ export interface ApplyResult {
   skipped: string[];
 }
 
-/** Deterministically apply reviewed actions to a deep-cloned model. */
+// CRITICAL fix — every entity a reviewed NL edit creates used to carry
+// `provenance: []`: no record of WHERE it came from, unlike everything buildModel
+// extracts from real documents (which resolves an evidence index into a
+// ProvenanceRef via its own `prov()`). Stamp a single marker instead, dated and
+// carrying the instruction that produced it, so an AI-proposed entity is at
+// least traceable to "which NL edit added this, and when" — never silently
+// indistinguishable from document-grounded data. `kind: 'reality'` is the
+// closest existing ProvenanceRef bucket (a fact about the company as edited by
+// its owner, not a specific uploaded file or reference project).
+function aiEditProvenance(instruction: string): ProvenanceRef[] {
+  const label = `تعديل بالذكاء الاصطناعي: "${instruction.trim().slice(0, 160)}" — ${new Date().toLocaleString('ar')}`;
+  return [{ kind: 'reality', refId: `ai-edit_${Date.now().toString(36)}`, label }];
+}
+
+/** Deterministically apply reviewed actions to a deep-cloned model.
+ *  `instruction` — CRITICAL fix: when provided (the NL model-edit path), every
+ *  newly-created entity is stamped with `aiEditProvenance` instead of an empty
+ *  `provenance: []`, and the instruction text rides along in the audit entry.
+ *  Omitted by callers that don't have a single originating instruction (e.g. the
+ *  reasoning-agent loop) — behavior for them is unchanged. */
 export function applyActions(
   model: CompanyGovernanceModel,
   actions: GovAction[],
   actor = 'ai',
+  instruction?: string,
 ): ApplyResult {
   const m: CompanyGovernanceModel = JSON.parse(JSON.stringify(model));
   if (!m.orgUnits) m.orgUnits = []; if (!m.roles) m.roles = [];
@@ -158,6 +192,7 @@ export function applyActions(
   if (!m.authorities) m.authorities = []; if (!m.kpis) m.kpis = [];
   if (!m.committees) m.committees = []; if (!m.meetings) m.meetings = [];
   if (!m.auditLog) m.auditLog = [];
+  const newProvenance = (): ProvenanceRef[] => (instruction ? aiEditProvenance(instruction) : []);
 
   const findUnit = (name?: string) => name ? m.orgUnits.find(u => norm(u.name) === norm(name)) : undefined;
   const findRole = (title?: string) => title ? m.roles.find(r => norm(r.title) === norm(title)) : undefined;
@@ -179,7 +214,7 @@ export function applyActions(
         case 'add_unit': {
           if (!a.name) { skipped.push('add_unit بلا اسم'); break; }
           if (findUnit(a.name)) { skipped.push(`الوحدة "${a.name}" موجودة`); break; }
-          const u: GovOrgUnit = { id: uid('unit'), name: a.name, mandate: a.mandate || '', parentId: findUnit(a.unit)?.id, provenance: [] };
+          const u: GovOrgUnit = { id: uid('unit'), name: a.name, mandate: a.mandate || '', parentId: findUnit(a.unit)?.id, provenance: newProvenance() };
           if (a.objective) u.objective = a.objective;
           if (a.feeds?.length) u.feeds = a.feeds;
           if (a.dependsOn?.length) u.dependsOn = a.dependsOn;
@@ -187,7 +222,7 @@ export function applyActions(
         }
         case 'add_role': {
           if (!a.title) { skipped.push('add_role بلا مسمى'); break; }
-          const r: GovRole = { id: uid('role'), title: a.title, unitId: findUnit(a.unit)?.id || '', purpose: a.purpose || '', responsibilities: a.responsibilities || [], provenance: [] };
+          const r: GovRole = { id: uid('role'), title: a.title, unitId: findUnit(a.unit)?.id || '', purpose: a.purpose || '', responsibilities: a.responsibilities || [], provenance: newProvenance() };
           if (a.managerialLevel) r.managerialLevel = a.managerialLevel;
           if (a.summary) r.summary = a.summary;
           if (a.responsibilityGroups?.length) r.responsibilityGroups = a.responsibilityGroups;
@@ -199,7 +234,7 @@ export function applyActions(
         case 'add_policy': {
           if (!a.title) { skipped.push('add_policy بلا عنوان'); break; }
           if (findPolicy(a.title)) { skipped.push(`السياسة "${a.title}" موجودة`); break; }
-          const p: GovPolicy = { id: uid('pol'), title: a.title, domain: a.domain || 'عام', body: a.body || '', status: 'draft', provenance: [] };
+          const p: GovPolicy = { id: uid('pol'), title: a.title, domain: a.domain || 'عام', body: a.body || '', status: 'draft', provenance: newProvenance() };
           m.policies.push(p); applied++; details.push(`+سياسة ${a.title}`); break;
         }
         case 'add_procedure': {
@@ -208,21 +243,21 @@ export function applyActions(
           const pr: GovProcedure = {
             id: uid('proc'), title: a.title, unitId: findUnit(a.unit)?.id, policyId: findPolicy(a.policy)?.id,
             purpose: a.purpose || '', steps, body: a.body || (steps.length ? steps.map((s, i) => `${i + 1}. ${s}`).join('\n') : ''),
-            status: 'draft', provenance: [],
+            status: 'draft', provenance: newProvenance(),
           };
           m.procedures.push(pr); applied++; details.push(`+إجراء ${a.title}`); break;
         }
         case 'add_authority': {
           if (!a.decision) { skipped.push('add_authority بلا قرار'); break; }
           const role = findRole(a.role);
-          const au: GovAuthority = { id: uid('auth'), decision: a.decision, roleId: role?.id || '', level: (a.level as any) || 'approve', provenance: [] };
+          const au: GovAuthority = { id: uid('auth'), decision: a.decision, roleId: role?.id || '', level: (a.level as any) || 'approve', provenance: newProvenance() };
           if (a.threshold) au.threshold = a.threshold;
           if (a.limit) au.limit = a.limit;
           m.authorities.push(au); applied++; details.push(`+صلاحية ${a.decision}`); break;
         }
         case 'add_kpi': {
           if (!a.name) { skipped.push('add_kpi بلا اسم'); break; }
-          const k: GovKpi = { id: uid('kpi'), name: a.name, unitId: findUnit(a.unit)?.id, formula: a.formula || '', target: a.target_value || '', provenance: [] };
+          const k: GovKpi = { id: uid('kpi'), name: a.name, unitId: findUnit(a.unit)?.id, formula: a.formula || '', target: a.target_value || '', provenance: newProvenance() };
           const krole = findRole(a.role); if (krole) k.roleId = krole.id;
           if (typeof a.weight === 'number') k.weight = a.weight;
           if (a.frequency) k.frequency = a.frequency;
@@ -233,7 +268,7 @@ export function applyActions(
         case 'add_committee': {
           if (!a.name) { skipped.push('add_committee بلا اسم'); break; }
           if (findCommittee(a.name)) { skipped.push(`اللجنة "${a.name}" موجودة`); break; }
-          const c: GovCommittee = { id: uid('cmt'), name: a.name, members: a.members || [], mandate: a.mandate || a.purpose || '', cadence: a.cadence || a.frequency, provenance: [] };
+          const c: GovCommittee = { id: uid('cmt'), name: a.name, members: a.members || [], mandate: a.mandate || a.purpose || '', cadence: a.cadence || a.frequency, provenance: newProvenance() };
           m.committees!.push(c); applied++; details.push(`+لجنة ${a.name}`); break;
         }
         case 'add_meeting': {
@@ -316,7 +351,11 @@ export function applyActions(
   }
 
   if (applied > 0) {
-    const entry: GovAuditEntry = { id: uid('aud'), at: new Date().toISOString(), actor, action: 'apply_actions', detail: details.join('، ').slice(0, 400) };
+    // instruction rides along in `detail` (GovAuditEntry has no separate field for
+    // it) so the audit trail captures WHAT the owner actually asked for, not just
+    // the short internal "+وحدة X" style summaries.
+    const detail = (instruction ? `"${instruction.trim().slice(0, 160)}" → ` : '') + details.join('، ');
+    const entry: GovAuditEntry = { id: uid('aud'), at: new Date().toISOString(), actor, action: 'apply_actions', detail: detail.slice(0, 400) };
     m.auditLog!.push(entry);
   }
   return { model: m, applied, appliedActions, skipped };

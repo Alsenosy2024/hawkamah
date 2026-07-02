@@ -45,7 +45,7 @@ export function buildRiskRegister(model: CompanyGovernanceModel): GeneratedArtif
   const counts = (['critical', 'high', 'medium', 'low'] as const)
     .map(s => ({ s, n: gaps.filter(g => g.severity === s).length }))
     .filter(x => x.n > 0)
-    .map(x => `${RLM}- ${SEV_AR[x.s]}: ${x.n}`)
+    .map(x => `- ${SEV_AR[x.s]}: ${x.n}`)
     .join('\n');
 
   return {
@@ -73,7 +73,7 @@ export function buildRoadmap(model: CompanyGovernanceModel): GeneratedArtifact {
   const sections: ArtifactSection[] = buckets.map(b => {
     const items = gaps.filter(g => b.sev.includes(g.severity));
     const body = items.length
-      ? items.map(g => `${RLM}- **${g.area}** — ${(g.recommendation || g.description || '').replace(/\n+/g, ' ').trim()}`).join('\n')
+      ? items.map(g => `- **${g.area}** — ${(g.recommendation || g.description || '').replace(/\n+/g, ' ').trim()}`).join('\n')
       : `${RLM}لا بنود في هذه المرحلة.`;
     return sec(b.key, b.title, body);
   });
@@ -90,11 +90,20 @@ export function buildRoadmap(model: CompanyGovernanceModel): GeneratedArtifact {
   };
 }
 
+export interface BuildCharterProgress {
+  phase: 'summary' | 'draft' | 'done';
+  current: number;
+  total: number;
+  label: string;
+}
+
 /** Charter generated from the REAL model summary (grounded), deterministic fallback on failure. */
 export async function buildCharter(
   model: CompanyGovernanceModel,
   signal?: AbortSignal,
+  onProgress?: (p: BuildCharterProgress) => void,
 ): Promise<GeneratedArtifact> {
+  onProgress?.({ phase: 'summary', current: 0, total: 2, label: 'تلخيص النموذج…' });
   const unitNames = (model.orgUnits || []).map(u => u.name).filter(Boolean).slice(0, 30);
   const topGaps = [...(model.gaps || [])]
     .sort((a, b) => SEV[a.severity].rank - SEV[b.severity].rank)
@@ -128,7 +137,7 @@ export async function buildCharter(
     goal: 'تحديد أهداف مبادرة الحوكمة ونطاقها ورُعاتها واللجان المسؤولة قبل البناء.',
     language: 'ar',
     sections: [
-      sec('obj', 'الأهداف', `${RLM}- ترسيخ إطار حوكمة موثّق لدى ${model.companyName}.\n${RLM}- معالجة الفجوات المرصودة في النموذج.\n${RLM}- توضيح الأدوار والصلاحيات والمساءلة.`),
+      sec('obj', 'الأهداف', `- ترسيخ إطار حوكمة موثّق لدى ${model.companyName}.\n- معالجة الفجوات المرصودة في النموذج.\n- توضيح الأدوار والصلاحيات والمساءلة.`),
       sec('scope', 'النطاق', `${RLM}يشمل: الوحدات التنظيمية، السياسات، الإجراءات، الصلاحيات، المؤشرات.\n${RLM}لا يشمل: التغييرات التشغيلية اليومية خارج إطار الحوكمة.`),
       sec('sponsors', 'الرعاة والمسؤوليات', `${RLM}الراعي: مجلس الإدارة / الإدارة التنفيذية العليا.\n${RLM}الإشراف: لجنة الحوكمة.`),
     ],
@@ -137,6 +146,7 @@ export async function buildCharter(
   });
 
   try {
+    onProgress?.({ phase: 'draft', current: 1, total: 2, label: 'صياغة الميثاق (أهداف، نطاق، رعاة، لجان)…' });
     const r = await generateJson<{
       objectives: string[]; scopeIn: string[]; scopeOut?: string[];
       sponsors: string[]; committees?: string[]; successMetrics?: string[];
@@ -145,7 +155,15 @@ export async function buildCharter(
       schema,
       { signal, temperature: 0.3 },
     );
-    const li = (arr?: string[]) => (arr && arr.length ? arr.map(x => `${RLM}- ${x}`).join('\n') : `${RLM}—`);
+    onProgress?.({ phase: 'done', current: 2, total: 2, label: 'اكتمل الميثاق.' });
+    // CRITICAL fix — no RLM before the `-` marker: it sat BEFORE the Markdown list
+    // prefix, hiding it from the canvas/export parsers' `^`-anchored bullet regex
+    // and flattening every objective/scope/sponsor bullet into one garbled
+    // paragraph (see services/exportService.ts's markdownAst.ts parser, which —
+    // unlike canvasDocument.ts post-PR#92 — still doesn't strip a leading bidi
+    // control before block-type detection). RTL rendering doesn't need it: the
+    // bullet text itself is Arabic, and the doc/canvas containers are already RTL.
+    const li = (arr?: string[]) => (arr && arr.length ? arr.map(x => `- ${x}`).join('\n') : `${RLM}—`);
     return {
       title: `ميثاق الحوكمة — ${model.companyName}`,
       goal: 'تحديد أهداف مبادرة الحوكمة ونطاقها ورُعاتها واللجان المسؤولة قبل البناء.',
@@ -162,7 +180,14 @@ export async function buildCharter(
       complete: true,
     };
   } catch (e: any) {
-    if (e?.message === 'aborted') throw e;
+    // CRITICAL fix — generateJson/agentOrchestrator throws `Error('ABORTED')` (see
+    // services/agentOrchestrator.ts), never the lowercase 'aborted' this used to
+    // check for. That mismatch meant a genuine Stop-triggered abort fell through
+    // to the deterministic fallback and was served to the caller as if generation
+    // had completed normally — the canvas opened with fabricated fallback content
+    // instead of the run actually stopping. Check the signal itself (robust to any
+    // future wording change) as well as the message, and propagate the abort.
+    if (signal?.aborted || e?.message === 'ABORTED') throw e;
     return fallback();
   }
 }
