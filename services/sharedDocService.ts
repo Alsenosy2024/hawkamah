@@ -41,7 +41,7 @@
 
 import { db } from '../firebase';
 import { collection, doc, setDoc, getDoc, getDocs, query, where } from 'firebase/firestore';
-import type { SharedDocToken, DocComment, VisualReviewCheck, GovCommentAnchor } from '../types';
+import type { SharedDocToken, DocComment, VisualReviewCheck, GovCommentAnchor, GovComment } from '../types';
 
 const C_TOKENS = 'survey_tokens';
 const C_COMMENTS = 'doc_comments';
@@ -319,4 +319,41 @@ export async function loadTenantDocComments(tenantId: string): Promise<Record<st
   }
   for (const k of Object.keys(byDoc)) byDoc[k].sort((a, b) => (a.at || '').localeCompare(b.at || ''));
   return byDoc;
+}
+
+// D1 — a client comment left on the /?doc= share (doc_comments) is a DIFFERENT
+// shape than the owner's own in-canvas review comments (GovDocumentRecord.comments)
+// and, before this fix, never fed the canvas / button gates / AI-apply / the "new
+// comments" badge — a document with ONLY client feedback showed no comment UI at
+// all, and «إصدار جديد» silently ignored it. Map a client DocComment onto the
+// SAME GovComment shape so ONE list can drive all of those call sites.
+export function clientCommentToGovComment(c: DocComment): GovComment {
+  const fallbackText = c.kind === 'review_check'
+    ? (c.check?.verdict === 'fail' ? 'مراجعة بصرية: مرفوض' : 'مراجعة بصرية: مقبول')
+    : '';
+  return {
+    id: c.id,
+    at: c.at,
+    author: c.author || 'عميل',
+    text: c.text || fallbackText,
+    ...(c.anchor ? { anchor: c.anchor } : {}),
+    status: 'open',
+  };
+}
+
+// PURE (no I/O). Merges a document's own GovComment[] with its client-submitted
+// DocComment[] (loaded separately from `doc_comments`, keyed by docId) into ONE
+// list. Deduped by id so a client comment already PROMOTED onto the record (see
+// newDocVersion in GovernanceCenter, which persists the merged+status-flipped list
+// back onto `comments` after an AI-apply run) isn't appended a second time as a
+// fresh 'open' duplicate — the persisted (possibly 'implemented') copy always wins.
+export function mergeClientComments(
+  comments: GovComment[] | undefined,
+  clientComments: DocComment[] | undefined,
+): GovComment[] {
+  const own = comments || [];
+  if (!clientComments?.length) return own;
+  const seen = new Set(own.map(c => c.id));
+  const promoted = clientComments.filter(c => !seen.has(c.id)).map(clientCommentToGovComment);
+  return promoted.length ? [...own, ...promoted] : own;
 }

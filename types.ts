@@ -918,6 +918,10 @@ export interface GovDocumentRecord {
   // them. Omitted when too large to fit the Firestore document limit (the
   // sections/diagrams remain the source of truth in that case).
   canvasHtml?: string;
+  // D3: the free-text AI guidance that steered THIS document's generation (see
+  // perDocGuidanceLens) — persisted alongside it so reopening the doc shows what
+  // instructions shaped it. Additive/optional: legacy records have none.
+  guidance?: string;
 }
 
 // V21: a TextQuoteSelector anchor for an inline review comment — the exact

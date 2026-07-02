@@ -4,9 +4,10 @@ import {
   buildDocComment, hashAccessCode, MAX_SNAPSHOT_BYTES,
   encryptSharedDocHtml, decryptSharedDocHtml, verifyAccessCode,
   sharedDocIsGated, unlockSharedDocHtml, PBKDF2_ITERATIONS,
+  mergeClientComments, clientCommentToGovComment,
 } from '../../services/sharedDocService';
 import { artifactToMarkdown } from '../../services/canvasDocument';
-import type { VisualReviewCheck, SharedDocToken } from '../../types';
+import type { VisualReviewCheck, SharedDocToken, DocComment, GovComment } from '../../types';
 
 // ===========================================================================
 //  V14 + V20 — client document share + comments. These pin the PURE logic:
@@ -243,5 +244,85 @@ describe('artifactToMarkdown — stored record → canvas markdown', () => {
   it('escapes brackets in a diagram caption', () => {
     const md = artifactToMarkdown({ title: 'T', diagrams: [{ title: 'a[b]c', png: 'data:image/png;base64,Z' }] });
     expect(md).toContain('![abc](data:image/png;base64,Z)');
+  });
+});
+
+// ===========================================================================
+//  D1 — client comments left on a /?doc= share (doc_comments) used to be loaded
+//  into a SEPARATE `clientComments` state and never reach the owner's canvas /
+//  button gates / AI-apply run / "new comments" badge: a document with ONLY
+//  client feedback showed no comment UI at all. mergeClientComments is the ONE
+//  pure helper every one of those call sites now shares.
+// ===========================================================================
+describe('clientCommentToGovComment — DocComment → GovComment shape', () => {
+  const base: DocComment = {
+    id: 'dcm_1', tokenId: 'tk', docId: 'd1', tenantId: 't1',
+    kind: 'comment', author: 'سارة', text: 'أعد صياغة هذه الفقرة', at: '2026-01-01T00:00:00.000Z',
+  };
+
+  it('maps id/at/author/text 1:1 and defaults status to open', () => {
+    const g = clientCommentToGovComment(base);
+    expect(g).toMatchObject({ id: 'dcm_1', at: base.at, author: 'سارة', text: 'أعد صياغة هذه الفقرة', status: 'open' });
+    expect(g.anchor).toBeUndefined();
+  });
+
+  it('falls back to «عميل» when the client left no name', () => {
+    const g = clientCommentToGovComment({ ...base, author: '' });
+    expect(g.author).toBe('عميل');
+  });
+
+  it('carries the anchor through when the comment was left inline', () => {
+    const anchor = { quote: 'مجلس الإدارة', prefix: 'يجتمع ' };
+    const g = clientCommentToGovComment({ ...base, anchor });
+    expect(g.anchor).toEqual(anchor);
+  });
+
+  it('derives readable text for a review_check with no free-text notes', () => {
+    const g = clientCommentToGovComment({
+      ...base, kind: 'review_check', text: '',
+      check: { diagrams: true, fonts: true, layout: true, content: true, verdict: 'fail' },
+    });
+    expect(g.text).toContain('مرفوض');
+  });
+});
+
+describe('mergeClientComments — ONE list for the canvas / gates / AI-apply / badge', () => {
+  const clientOnly: DocComment[] = [
+    { id: 'dcm_1', tokenId: 'tk', docId: 'd1', tenantId: 't1', kind: 'comment', author: 'عميل', text: 'ملاحظة العميل', at: '2026-01-01T00:00:00.000Z' },
+  ];
+
+  it('a document with ONLY client comments (no owner comments) is no longer empty', () => {
+    const merged = mergeClientComments(undefined, clientOnly);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ id: 'dcm_1', author: 'عميل', status: 'open' });
+  });
+
+  it('is a no-op when there are no client comments', () => {
+    const own: GovComment[] = [{ id: 'cmt_1', at: '2026-01-01T00:00:00.000Z', author: 'owner@x.com', text: 'ok' }];
+    expect(mergeClientComments(own, undefined)).toBe(own);          // same reference — no needless copy
+    expect(mergeClientComments(own, [])).toBe(own);
+  });
+
+  it('appends client comments after the owner\'s own', () => {
+    const own: GovComment[] = [{ id: 'cmt_1', at: '2026-01-01T00:00:00.000Z', author: 'owner@x.com', text: 'ok' }];
+    const merged = mergeClientComments(own, clientOnly);
+    expect(merged.map(c => c.id)).toEqual(['cmt_1', 'dcm_1']);
+  });
+
+  it('dedupes by id: a client comment already PROMOTED onto the record (post AI-apply) is not duplicated', () => {
+    // Simulates newDocVersion having persisted the promoted comment back onto
+    // the record with status flipped to 'implemented' — a later merge must NOT
+    // re-add the fresh 'open' copy from doc_comments over it.
+    const own: GovComment[] = [
+      { id: 'dcm_1', at: '2026-01-01T00:00:00.000Z', author: 'عميل', text: 'ملاحظة العميل', status: 'implemented', appliedInVersion: 2 },
+    ];
+    const merged = mergeClientComments(own, clientOnly);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].status).toBe('implemented');   // the persisted copy wins, not a fresh 'open' duplicate
+  });
+
+  it('handles both lists empty/undefined without throwing', () => {
+    expect(mergeClientComments(undefined, undefined)).toEqual([]);
+    expect(mergeClientComments([], [])).toEqual([]);
   });
 });

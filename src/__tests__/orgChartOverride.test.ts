@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOrgChartMermaid, buildOrgChartMermaid } from '../../services/diagramService';
+import { resolveOrgChartMermaid, buildOrgChartMermaid, staleOrgChartDiagrams } from '../../services/diagramService';
 
 // ===========================================================================
 //  V29 — the org chart gained a natural-language + attachments editor
@@ -58,5 +58,49 @@ describe('resolveOrgChartMermaid — prefers the override, else the deterministi
     expect(() => resolveOrgChartMermaid(null)).not.toThrow();
     expect(() => resolveOrgChartMermaid(undefined)).not.toThrow();
     expect(resolveOrgChartMermaid(null)).toBe(buildOrgChartMermaid({ orgUnits: [] }));
+  });
+});
+
+// ===========================================================================
+//  D5 — the org chart is editable from TWO surfaces (Stage 7's DiagramChatEditor,
+//  which persists an override on the model, and the Build→Diagrams gallery's
+//  chat/canvas editors, which only wrote the standalone GovDiagram record). They
+//  used to drift apart: a gallery edit never reached the model override, and
+//  "Regenerate from structure" cleared the model override but left a stale
+//  gallery-saved GovDiagram behind. staleOrgChartDiagrams is the pure helper that
+//  finds what needs resyncing after a reset.
+// ===========================================================================
+type Diag = { id: string; kind: string; mermaid: string };
+
+describe('staleOrgChartDiagrams — what needs resyncing after "Regenerate from structure"', () => {
+  const deterministic = 'flowchart TD\n  ceo["الرئيس التنفيذي"]';
+
+  it('flags an orgchart-kind diagram whose mermaid no longer matches the deterministic chart', () => {
+    const diagrams: Diag[] = [{ id: 'diag_1', kind: 'orgchart', mermaid: 'flowchart TD\n  x["منقّح يدويًا"]' }];
+    expect(staleOrgChartDiagrams(diagrams, deterministic)).toEqual(diagrams);
+  });
+
+  it('is a no-op when the saved diagram already matches (nothing to rewrite)', () => {
+    const diagrams: Diag[] = [{ id: 'diag_1', kind: 'orgchart', mermaid: deterministic }];
+    expect(staleOrgChartDiagrams(diagrams, deterministic)).toEqual([]);
+  });
+
+  it('ignores non-orgchart diagrams entirely, even if their mermaid "differs"', () => {
+    const diagrams: Diag[] = [{ id: 'diag_1', kind: 'flowchart', mermaid: 'flowchart TD\n  a-->b' }];
+    expect(staleOrgChartDiagrams(diagrams, deterministic)).toEqual([]);
+  });
+
+  it('handles an empty/undefined diagram list without throwing', () => {
+    expect(staleOrgChartDiagrams([], deterministic)).toEqual([]);
+    expect(staleOrgChartDiagrams(undefined as unknown as Diag[], deterministic)).toEqual([]);
+  });
+
+  it('only flags the diagrams that actually need it out of a mixed set', () => {
+    const diagrams: Diag[] = [
+      { id: 'diag_1', kind: 'orgchart', mermaid: deterministic },              // already in sync
+      { id: 'diag_2', kind: 'orgchart', mermaid: 'flowchart TD\n  stale' },    // needs resync
+      { id: 'diag_3', kind: 'raci', mermaid: 'flowchart TD\n  r-->a' },        // not an org chart
+    ];
+    expect(staleOrgChartDiagrams(diagrams, deterministic).map(d => d.id)).toEqual(['diag_2']);
   });
 });
