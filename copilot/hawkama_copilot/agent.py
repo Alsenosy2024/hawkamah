@@ -28,7 +28,13 @@ from .config import SETTINGS
 from .exporters import Exported, ManualDoc, export, render_manual
 from .generation import GeneratedDoc, GroundingContext, generate_deliverable, generate_document
 from .rag import Evidence, RagEngine
-from .skill import DELIVERABLES, DELIVERABLES_BY_KEY, system_prompt
+from .skill import (
+    DELIVERABLES,
+    DELIVERABLES_BY_KEY,
+    ask_system_prompt,
+    smalltalk_system_prompt,
+    system_prompt,
+)
 
 
 # Phrases that signal "draft a full document" rather than "answer a question"
@@ -51,16 +57,104 @@ _BUILD_INTENT = re.compile(
     re.IGNORECASE,
 )
 
-# The conversational steer injected into a build-intent ASK turn. It does NOT
-# write the document — it asks guiding questions and proposes an editable plan,
-# then waits for confirmation, which is exactly the V5/V16 behavior.
+# P10 — rewritten from a batch questionnaire ("ما الإدارات؟ ما النطاق والتفضيلات؟"
+# asked all at once) to a PROGRESSIVE protocol: one question per turn, accumulating
+# agreement across turns, and only proposing the plan once the essentials are known.
+# This is what fixes "it asks all questions up front" from the bug report — the
+# copilot converses like a person scoping the work, not a form.
 _WIZARD_HINT_AR = (
-    "ملاحظة مهمة: يبدو أن المستخدم يريد *بناء* مخرجات حوكمة. قبل أي توليد طويل، "
-    "تحاور معه أولاً ولا تكتب الوثيقة كاملة في هذا الرد. اقترح خطة موجزة قابلة "
-    "للتعديل (عنوان مقترح، عدد صفحات مناسب لحجم المنشأة، المحاور، الإدارات المعنية، "
-    "والأقسام الرئيسية)، واسأله صراحةً: ما الإدارات التي تريد تضمينها أو حذفها؟ ما "
-    "النطاق والتفضيلات؟ ثم اطلب تأكيده أو تعديله قبل البناء.\n\n"
+    "ملاحظة مهمة: يبدو أن المستخدم يريد *بناء* مخرجات حوكمة. تحاور معه تدريجيًا "
+    "ولا تكتب الوثيقة كاملة في هذا الرد ولا في أي رد ضمن /ask. أقرّ بهدفه أولاً "
+    "بجملة قصيرة، ثم اسأل سؤالًا واحدًا فقط هو الأهم لإكمال الصورة (أو سؤالين كحد "
+    "أقصى إن كانا مترابطين ولا يصح فصلهما) — لا تطرح قائمة أسئلة دفعة واحدة. إذا "
+    "كانت هناك محادثة سابقة، لخّص بسطر واحد مضغوط ما اتفقتما عليه حتى الآن («ما "
+    "اتفقنا عليه حتى الآن: …») قبل طرح السؤال التالي، حتى يرى المستخدم تقدّم "
+    "الحوار. لا تقترح خطة (عنوان، صفحات، محاور، إدارات، أقسام) إلا بعد أن تتضح "
+    "العناصر الأساسية الثلاثة: نوع المخرج المطلوب، والنطاق/الإدارات المعنية، "
+    "والطول التقريبي؛ عندها فقط اعرض خطة موجزة قابلة للتعديل واطلب تأكيدها أو "
+    "تعديلها قبل البناء.\n\n"
 )
+
+# --------------------------------------------------------------------------- #
+# Smalltalk detection (P10)                                                   #
+# --------------------------------------------------------------------------- #
+# A conservative, WHOLE-MESSAGE check — never a substring test — so it can't fire
+# on a real question that happens to open with a greeting ("مرحبا، ما هي سياسة
+# الإجازات؟"). Diacritics/alef variants are normalized, multi-word greetings are
+# merged into single vocabulary tokens, and every remaining token must be either a
+# recognized greeting/thanks core token, a small politeness filler, or (at most
+# one) a bare name ("هلا محمد"). Zero core tokens ⇒ never smalltalk — this is what
+# keeps bare acks like «نعم»/«تمام»/"ok"/«اه» OUT: they carry no greeting/thanks
+# token at all, so they fall through to the normal grounded path (they are answers
+# to a prior elicitation question, not smalltalk).
+_TASHKEEL_RE = re.compile(r"[ً-ْٰـ]")  # harakat + tatweel
+_ALEF_NORMALIZE = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي", "ؤ": "و", "ئ": "ي"})
+_NON_WORD_RE = re.compile(r"[^\w\s]", re.UNICODE)
+_WS_RE = re.compile(r"\s+")
+
+# Multi-word phrases merged into ONE underscore-joined token before splitting, so
+# "السلام عليكم" is matched as a single greeting, not two unrelated words.
+_SMALLTALK_PHRASES = (
+    "اهلا وسهلا", "السلام عليكم", "وعليكم السلام", "صباح الخير", "صباح النور",
+    "مساء الخير", "مساء النور", "كيف حالك", "كيف حالكم", "كيف الحال", "ايش اخبارك",
+    "شكرا جزيلا", "الله يعطيك العافية", "يعطيك العافية",
+    "good morning", "good evening", "good afternoon",
+    "thank you", "thanks a lot", "how are you",
+)
+
+_SMALLTALK_CORE = {
+    # Arabic greetings
+    "هلا", "مرحبا", "مرحبتين", "اهلا", "اهلين", "اهلا_وسهلا",
+    "السلام_عليكم", "وعليكم_السلام", "صباح_الخير", "صباح_النور",
+    "مساء_الخير", "مساء_النور", "هاي", "هالو",
+    "كيف_حالك", "كيف_حالكم", "كيف_الحال", "كيفك", "ازيك", "شلونك", "ايش_اخبارك",
+    # Arabic thanks
+    "شكرا", "شكرا_جزيلا", "مشكور", "مشكورة", "تسلم", "تسلمي",
+    "يعطيك_العافية", "ممتن", "ممتنة",
+    # English
+    "hi", "hello", "hey", "hiya", "yo",
+    "good_morning", "good_evening", "good_afternoon",
+    "thanks", "thank_you", "thanks_a_lot", "how_are_you",
+}
+
+# Politeness/address fillers tolerated ALONGSIDE a core token (never counted as
+# the "one extra token" name allowance, never sufficient on their own).
+_SMALLTALK_FILLER = {
+    "يا", "استاذ", "دكتور", "دكتورة", "مهندس", "بشمهندس", "الله",
+    "جدا", "كتير", "اوي", "so", "much", "there", "a", "lot", "very",
+}
+
+_SMALLTALK_MAX_CHARS = 40
+_SMALLTALK_MAX_TOKENS = 6
+
+
+def _normalize_smalltalk(message: str) -> str:
+    text = (message or "").strip().translate(_ALEF_NORMALIZE)
+    text = _TASHKEEL_RE.sub("", text)
+    text = text.lower()
+    for phrase in _SMALLTALK_PHRASES:
+        text = re.sub(re.escape(phrase), phrase.replace(" ", "_"), text)
+    text = _NON_WORD_RE.sub(" ", text)
+    return _WS_RE.sub(" ", text).strip()
+
+
+def _is_smalltalk(message: str) -> bool:
+    """True only when ``message`` is a standalone greeting/thanks (P10) — never
+    for a message that merely contains one. See module comment above for the
+    matching rule."""
+    if not message or len(message.strip()) >= _SMALLTALK_MAX_CHARS:
+        return False
+    normalized = _normalize_smalltalk(message)
+    if not normalized:
+        return False
+    tokens = normalized.split(" ")
+    if len(tokens) > _SMALLTALK_MAX_TOKENS:
+        return False
+    core_hits = sum(1 for t in tokens if t in _SMALLTALK_CORE)
+    if core_hits == 0:
+        return False
+    unknown = [t for t in tokens if t not in _SMALLTALK_CORE and t not in _SMALLTALK_FILLER]
+    return len(unknown) <= 1
 
 
 @dataclass
@@ -93,23 +187,47 @@ class HawkamaAgent:
 
     # ------------------------------------------------------------------ ask
     def ask(self, question: str, history: list[dict] | None = None) -> AskResult:
+        # P10: a standalone greeting/thanks skips retrieval entirely and gets a
+        # tiny conversational reply — no evidence block, no [مصدر N], no document.
+        if _is_smalltalk(question):
+            contents = self._build_contents(question, [], history, prompt_text=question)
+            answer = genai_client.generate(contents, system=smalltalk_system_prompt(), temperature=0.5)
+            return AskResult(answer=answer, sources=[])
         evidence = self.rag.retrieve(question)
         contents = self._build_contents(question, evidence, history)
-        answer = genai_client.generate(contents, system=system_prompt(), temperature=0.3)
+        answer = genai_client.generate(contents, system=ask_system_prompt(), temperature=0.3)
         return AskResult(answer=answer, sources=evidence)
 
     def ask_stream(self, question: str, history: list[dict] | None = None) -> Iterator[dict]:
         """Yield {'type': 'sources'|'delta'|'done', ...} events for SSE."""
+        # P10: same smalltalk shortcut as ask() — SSE event shape is unchanged
+        # (sources → delta* → done), sources is just an empty list.
+        if _is_smalltalk(question):
+            yield {"type": "sources", "sources": []}
+            contents = self._build_contents(question, [], history, prompt_text=question)
+            full = []
+            for piece in genai_client.generate_stream(contents, system=smalltalk_system_prompt(), temperature=0.5):
+                full.append(piece)
+                yield {"type": "delta", "text": piece}
+            yield {"type": "done", "text": "".join(full)}
+            return
         evidence = self.rag.retrieve(question)
         yield {"type": "sources", "sources": [self._ev_dict(e) for e in evidence]}
         contents = self._build_contents(question, evidence, history)
         full = []
-        for piece in genai_client.generate_stream(contents, system=system_prompt(), temperature=0.3):
+        for piece in genai_client.generate_stream(contents, system=ask_system_prompt(), temperature=0.3):
             full.append(piece)
             yield {"type": "delta", "text": piece}
         yield {"type": "done", "text": "".join(full)}
 
-    def _build_contents(self, question: str, evidence: list[Evidence], history: list[dict] | None) -> list[types.Content]:
+    def _build_contents(
+        self,
+        question: str,
+        evidence: list[Evidence],
+        history: list[dict] | None,
+        *,
+        prompt_text: str | None = None,
+    ) -> list[types.Content]:
         """Prior turns as TYPED multi-turn Content + a final user turn carrying the
         instructions, question and freshly-retrieved evidence.
 
@@ -118,14 +236,18 @@ class HawkamaAgent:
         multi-turn memory of its own earlier answers. Evidence is re-retrieved every
         turn and placed in the LAST user turn so it never lands "lost in the middle".
         We build the contents list ourselves and stream via generate_content_stream
-        rather than the SDK Chat object, sidestepping its streaming-history bug."""
+        rather than the SDK Chat object, sidestepping its streaming-history bug.
+
+        ``prompt_text`` (P10) overrides the final user turn with a raw, un-wrapped
+        message — used by the smalltalk shortcut so the model sees the greeting
+        as-is instead of the grounded ``_ask_prompt`` wrapper (evidence block,
+        citation instructions, etc.)."""
         contents = [
             types.Content(role=role, parts=[types.Part.from_text(text=text)])
             for role, text in self._history_window(history)
         ]
-        contents.append(
-            types.Content(role="user", parts=[types.Part.from_text(text=self._ask_prompt(question, evidence))])
-        )
+        text = prompt_text if prompt_text is not None else self._ask_prompt(question, evidence)
+        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=text)]))
         return contents
 
     @staticmethod
