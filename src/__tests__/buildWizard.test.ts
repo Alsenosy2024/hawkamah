@@ -2,9 +2,13 @@ import { describe, it, expect } from 'vitest';
 import {
   isExplicitBuild,
   shouldOpenBuildWizard,
+  isDocCreationRequest,
+  needsWebResearch,
   fallbackBuildPlan,
   mergeProposalIntoFallback,
   planToBuildRequest,
+  planToPayload,
+  currentStateDigest,
   addPlanItem,
   removePlanItem,
   toggleComponent,
@@ -48,6 +52,61 @@ describe('isExplicitBuild — opens the wizard on explicit build commands', () =
     expect(isExplicitBuild('')).toBe(false);
     expect(isExplicitBuild(null)).toBe(false);
   });
+  // P5/D4b — «الهيكل التنظيمي» ("the org structure") used to be a BARE
+  // alternative, so a pure QUESTION about the structure was hijacked into the
+  // build-plan card, contradicting V27. It must require an actual construction
+  // verb alongside the noun.
+  it('a QUESTION mentioning the org structure is NOT an explicit build (D4b)', () => {
+    expect(isExplicitBuild('ما رأيك في الهيكل التنظيمي الحالي؟')).toBe(false);
+    expect(isExplicitBuild('هل الهيكل التنظيمي يحتاج تعديلاً؟')).toBe(false);
+    expect(isExplicitBuild('لماذا الهيكل التنظيمي معقد جداً؟')).toBe(false);
+  });
+  it('a build verb + the org structure IS an explicit build (D4b)', () => {
+    expect(isExplicitBuild('اعمل الهيكل التنظيمي من جديد')).toBe(true);
+    expect(isExplicitBuild('أنشئ الهيكل التنظيمي للشركة')).toBe(true);
+    expect(isExplicitBuild('صمّم الهيكل التنظيمي المناسب')).toBe(true);
+    expect(isExplicitBuild('ابنِ الهيكل التنظيمي')).toBe(true);   // unaffected bare-verb match
+  });
+});
+
+describe('isDocCreationRequest — genuine document-creation commands (P5/D4a)', () => {
+  it('matches a creation verb + a document noun', () => {
+    expect(isDocCreationRequest('اكتب لي دليل حوكمة كامل')).toBe(true);
+    expect(isDocCreationRequest('أنشئ سياسة تضارب المصالح')).toBe(true);
+    expect(isDocCreationRequest('جهّز تقريراً شاملاً عن الامتثال')).toBe(true);
+    expect(isDocCreationRequest('write a complete governance manual')).toBe(true);
+  });
+  it('rejects questions, even ones that mention a document type', () => {
+    expect(isDocCreationRequest('ما رأيك في هذه السياسة؟')).toBe(false);
+    expect(isDocCreationRequest('هل التقرير الحالي كافٍ؟')).toBe(false);
+    expect(isDocCreationRequest('ما هي أفضل ممارسات الحوكمة؟')).toBe(false);
+  });
+  it('rejects a creation verb with no document noun, and empty/null input', () => {
+    expect(isDocCreationRequest('اكتب')).toBe(false);
+    expect(isDocCreationRequest('')).toBe(false);
+    expect(isDocCreationRequest(null)).toBe(false);
+  });
+});
+
+describe('needsWebResearch — gates the (unbounded-length-risk) web-research path (P5/D3)', () => {
+  it('the reported false-positive case: an ordinary doc request must NOT hijack', () => {
+    // "دولي" used to match as a substring of "الدولية"; "أفضل الممارسات" was ALSO
+    // a standalone match on its own — both are removed now.
+    expect(needsWebResearch('اكتب دليل حوكمة وفق أفضل الممارسات الدولية في 10 صفحات')).toBe(false);
+    expect(needsWebResearch('اكتب سياسة معايير دولية للشركة')).toBe(false);
+    expect(needsWebResearch('write a policy following international best practices')).toBe(false);
+  });
+  it('still fires for genuine recency/current-facts/market signals', () => {
+    expect(needsWebResearch('ابحث في الويب عن أحدث الاتجاهات')).toBe(true);
+    expect(needsWebResearch('أعدّ تقريراً عن حالة السوق ٢٠٢٦')).toBe(true);
+    expect(needsWebResearch('قارن بيننا وبين المنافسين بالإحصائيات')).toBe(true);
+    expect(needsWebResearch('write a report on the latest market trends in 2026')).toBe(true);
+  });
+  it('is false for a plain request with no research signal', () => {
+    expect(needsWebResearch('اكتب سياسة تضارب المصالح')).toBe(false);
+    expect(needsWebResearch('')).toBe(false);
+    expect(needsWebResearch(null)).toBe(false);
+  });
 });
 
 describe('shouldOpenBuildWizard — conversational by default (V27)', () => {
@@ -57,10 +116,24 @@ describe('shouldOpenBuildWizard — conversational by default (V27)', () => {
   it('keeps conversation: a normal question never opens the wizard', () => {
     expect(shouldOpenBuildWizard({ wizardOn: false, text: 'ما هي أفضل ممارسات الحوكمة؟', longForm: false })).toBe(false);
   });
-  it('keeps conversation: a long-doc ask is NOT forced into a build plan', () => {
-    // "اكتب سياسة كاملة" trips the broad long-form heuristic but is not an
-    // explicit build → in conversational mode it must stay a normal reply/draft.
-    expect(shouldOpenBuildWizard({ wizardOn: false, text: 'اكتب سياسة تضارب المصالح كاملة', longForm: true })).toBe(false);
+  // P5/D4a — V27 stays the default, but with ONE deliberate, narrow exception:
+  // a genuine long document-CREATION command ("اكتب لي دليل حوكمة كامل") must
+  // still open the quick-to-confirm plan card even with the wizard OFF — this
+  // was V5's exact complaint (a silent 7-8 min autonomous draft with zero
+  // chance to adjust scope/length/departments). A long QUESTION/analysis ask
+  // that merely mentions a document type stays fully conversational.
+  it('a long doc-CREATION command opens the plan even with the wizard OFF (D4a)', () => {
+    // "اكتب سياسة تضارب المصالح كاملة" trips the broad long-form heuristic AND is
+    // a genuine creation command (اكتب + سياسة, not a question) → must open.
+    expect(shouldOpenBuildWizard({ wizardOn: false, text: 'اكتب سياسة تضارب المصالح كاملة', longForm: true })).toBe(true);
+    expect(shouldOpenBuildWizard({ wizardOn: false, text: 'اكتب لي دليل حوكمة كامل', longForm: true })).toBe(true);
+  });
+  it('keeps conversation: a long QUESTION/analysis ask stays conversational (D4a)', () => {
+    // Long + mentions a document type, but phrased as a question → not a
+    // creation command → stays conversational even with longForm true.
+    expect(shouldOpenBuildWizard({ wizardOn: false, text: 'ما رأيك في هذه السياسة الحالية وهل تحتاج تعديلاً؟', longForm: true })).toBe(false);
+    // Long + no creation verb at all (pure analysis ask).
+    expect(shouldOpenBuildWizard({ wizardOn: false, text: 'حلل لي فجوات الحوكمة الحالية بالتفصيل', longForm: true })).toBe(false);
   });
   it('still honors explicit build intent even in conversational mode', () => {
     expect(shouldOpenBuildWizard({ wizardOn: false, text: 'ابدأ البناء', longForm: false })).toBe(true);
@@ -193,5 +266,85 @@ describe('planToBuildRequest — the confirmed plan drives generation (V5)', () 
     expect(req).toContain('Manual');
     expect(req).toContain('about 8 page');
     expect(req).toContain('Mandatory owner notes');
+  });
+});
+
+describe('planToPayload — the confirmed plan as the backend structured `plan` field (P5/D1)', () => {
+  const base: BuildPlan = {
+    title: 'دليل الحوكمة',
+    targetPages: 8,
+    axes: ['القيادة', 'القيادة', 'المخاطر'],   // duplicate on purpose
+    departments: ['المالية', 'المشتريات'],
+    components: [
+      { id: 'a', title: 'ملخص تنفيذي', include: true },
+      { id: 'b', title: 'الإجراءات', include: true },
+      { id: 'c', title: 'ملاحق', include: false },   // excluded → must not appear
+    ],
+    notes: '  استخدم مصطلحات قطاع المقاولات.  ',
+    audience: 'مجلس الإدارة',
+  };
+
+  it('maps every field onto the backend shape {title, pages, axes, departments, components, notes}', () => {
+    const payload = planToPayload(base);
+    expect(payload).toEqual({
+      title: 'دليل الحوكمة',
+      pages: 8,
+      axes: ['القيادة', 'المخاطر'],
+      departments: ['المالية', 'المشتريات'],
+      components: ['ملخص تنفيذي', 'الإجراءات'],
+      notes: 'استخدم مصطلحات قطاع المقاولات.',
+    });
+  });
+
+  it('clamps pages and never includes an excluded component', () => {
+    const payload = planToPayload({ ...base, targetPages: 9999 });
+    expect(payload.pages).toBe(120);
+    expect(payload.components).not.toContain('ملاحق');
+  });
+
+  it('agrees with planToBuildRequest — the structured payload and the prose fallback never disagree', () => {
+    const payload = planToPayload(base);
+    const prose = planToBuildRequest(base, 'ar');
+    for (const dept of payload.departments) expect(prose).toContain(dept);
+    for (const axis of payload.axes) expect(prose).toContain(axis);
+    for (const comp of payload.components) expect(prose).toContain(comp);
+  });
+});
+
+describe('currentStateDigest — a bounded diagnostic digest for backend grounding (P5/D2)', () => {
+  it('returns "" for a null/empty model — never invents a diagnosis', () => {
+    expect(currentStateDigest(null)).toBe('');
+    expect(currentStateDigest({ ...model, gaps: [] } as CompanyGovernanceModel)).toBe('');
+  });
+
+  it('summarizes the maturity assessment (overall + CMMI + dimensions)', () => {
+    const withAssessment = {
+      ...model,
+      assessment: {
+        id: 'a1', tenantId: 't1', overall: 42.6, cmmiLevel: '2 مُدار',
+        dimensions: [{ name: 'القيادة', score: 55, label: 'متوسط' }],
+        createdAt: '',
+      },
+    } as unknown as CompanyGovernanceModel;
+    const digest = currentStateDigest(withAssessment, 'ar');
+    expect(digest).toContain('43');            // rounded overall
+    expect(digest).toContain('2 مُدار');
+    expect(digest).toContain('القيادة');
+  });
+
+  it('summarizes open gaps by severity, excludes resolved ones, and caps the list', () => {
+    const withGaps = {
+      ...model,
+      gaps: [
+        { id: 'g1', area: 'الامتثال', description: 'فجوة حرجة في الامتثال', severity: 'critical', recommendation: '', matchedProjectIds: [], provenance: [] },
+        { id: 'g2', area: 'الموارد', description: 'فجوة محلولة', severity: 'high', recommendation: '', matchedProjectIds: [], provenance: [], resolved: true },
+        { id: 'g3', area: 'المخاطر', description: 'فجوة متوسطة', severity: 'medium', recommendation: '', matchedProjectIds: [], provenance: [] },
+      ],
+    } as unknown as CompanyGovernanceModel;
+    const digest = currentStateDigest(withGaps, 'ar');
+    expect(digest).toContain('حرجة 1');
+    expect(digest).toContain('متوسطة 1');
+    expect(digest).not.toContain('فجوة محلولة');   // resolved gap excluded entirely
+    expect(digest.length).toBeLessThanOrEqual(3000);
   });
 });

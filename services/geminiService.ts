@@ -1,6 +1,9 @@
 import { GoogleGenAI, Type, Modality, ThinkingLevel } from "@google/genai";
 import { Question, UserResponse, Language, ExtendedReport, WorkEnvironmentAnswers, WorkEnvironmentReport, AssessmentKind, toKindArray } from '../types';
 import { MODELS } from '../constants/models';
+// P5/D3 — reuse the SAME length-steering math the in-app draft path uses, so a
+// requested page count is honored (and hard-capped) identically everywhere.
+import { buildLengthDirective, resolveLengthTarget } from './governanceChat';
 
 // Latest Google Live (BidiGenerateContent) model — single source of truth so the
 // verbal-interview screen and any future live surface stay on the same version.
@@ -241,17 +244,33 @@ export const generateGroundedDocument = async (
     fileContext: string,
     language: Language,
     signal?: AbortSignal,
+    // P5/D3 — the requested page count (already resolved by the caller, e.g.
+    // parseTargetPages(request) or the confirmed wizard plan's target). Threading
+    // this through fixes the "asked 10 got 105" bug FOR THIS PATH: previously
+    // generateGroundedDocument had no length parameter and no maxOutputTokens at
+    // all, so a stated page count in the request text was pure decoration.
+    targetPages?: number,
 ): Promise<GroundedDoc> => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
     const ar = language === 'ar';
-    const system = ar
-        ? 'أنت كاتب وثائق حوكمة ومحلّل خبير. تكتب وثيقة احترافية كاملة ومنسّقة بصيغة Markdown بالعربية. استخدم بحث Google للحقائق الحديثة أو الخارجية واذكر الأرقام بدقّة ولا تختلق. للمخططات استخدم كتلة ```mermaid``` صحيحة (لا ASCII)، والجداول بصيغة Markdown، وابدأ بعنوان H1.'
-        : 'You are an expert governance document writer. Produce a complete, professionally formatted Markdown document. Use Google Search for any current or external facts and cite them precisely; never fabricate. Render diagrams as valid ```mermaid``` blocks (no ASCII) and tabular data as Markdown tables. Start with an H1 title.';
+    const lengthDirective = buildLengthDirective(ar, true, targetPages);
+    const system = [
+        ar
+            ? 'أنت كاتب وثائق حوكمة ومحلّل خبير. تكتب وثيقة احترافية كاملة ومنسّقة بصيغة Markdown بالعربية. استخدم بحث Google للحقائق الحديثة أو الخارجية واذكر الأرقام بدقّة ولا تختلق. للمخططات استخدم كتلة ```mermaid``` صحيحة (لا ASCII)، والجداول بصيغة Markdown، وابدأ بعنوان H1.'
+            : 'You are an expert governance document writer. Produce a complete, professionally formatted Markdown document. Use Google Search for any current or external facts and cite them precisely; never fabricate. Render diagrams as valid ```mermaid``` blocks (no ASCII) and tabular data as Markdown tables. Start with an H1 title.',
+        lengthDirective,
+    ].filter(Boolean).join('\n\n');
     const prompt = [
         request,
         fileContext ? `\n\n=== ${ar ? 'مقتطفات من ملفات المستخدم — استند إليها أولاً' : 'Excerpts from the user files — rely on these first'} ===\n${fileContext}` : '',
         `\n\n${ar ? 'اكتب الوثيقة كاملةً الآن.' : 'Write the full document now.'}`,
     ].join('');
+
+    // A stated page count gets the SAME hard-capped budget as every other
+    // generation path (resolveLengthTarget); otherwise fall back to the same
+    // generous-but-bounded ceiling stageChat uses for an unscoped long-form ask
+    // (32768) — never the previous "no ceiling at all".
+    const maxOutputTokens = targetPages ? resolveLengthTarget(targetPages).maxOutputTokens : 32768;
 
     const models = [MODELS.TEXT, MODELS.TEXT_FALLBACK];
     let lastErr: any;
@@ -260,7 +279,7 @@ export const generateGroundedDocument = async (
             const response: any = await withTimeout(ai.models.generateContent({
                 model: models[i],
                 contents: prompt,
-                config: { tools: [{ googleSearch: {} }], systemInstruction: system },
+                config: { tools: [{ googleSearch: {} }], systemInstruction: system, maxOutputTokens },
             }), 120_000, signal);
             const markdown = responseText(response);
             if (!markdown) throw new Error('EMPTY: grounded generation returned no text');

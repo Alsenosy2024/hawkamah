@@ -251,8 +251,10 @@ export function resolveLengthTarget(pages: number): ResolvedLength {
 
 /** The length steering text injected into the draft system prompt. A stated
  *  page count produces a STRICT target; otherwise the legacy density band is
- *  used for long-form requests (and nothing for short ones). */
-function buildLengthDirective(ar: boolean, longForm: boolean, target?: number): string {
+ *  used for long-form requests (and nothing for short ones). Exported (P5/D3)
+ *  so the web-research generation path (geminiService.generateGroundedDocument)
+ *  reuses the SAME directive instead of having no length steering at all. */
+export function buildLengthDirective(ar: boolean, longForm: boolean, target?: number): string {
   if (target && target > 0) {
     const { pages, sections, wordsPerSection } = resolveLengthTarget(target);
     return ar
@@ -486,14 +488,70 @@ const DEFAULT_COMPONENTS_EN = [
 // generic long-form heuristic (LONG_RE in GovCopilot) doesn't fire — the owner's
 // exact phrasings ("ابنِ الهيكل التنظيمي", "ابدأ البناء", "ولّد الكل").
 const EXPLICIT_BUILD_RE =
-  /(ابنِ|ابن\s|ابني|ابدأ\s*البناء|ابدا\s*البناء|الهيكل\s*التنظيمي|ولّد\s*الكل|ولد\s*الكل|نبني|build\s+(it|all|the|me)|generate\s+all|start\s+building)/i;
+  /(ابنِ|ابن\s|ابني|ابدأ\s*البناء|ابدا\s*البناء|ولّد\s*الكل|ولد\s*الكل|نبني|build\s+(it|all|the|me)|generate\s+all|start\s+building)/i;
+
+// P5/D4b — «الهيكل التنظيمي» ("the org structure") used to be a BARE alternative
+// in EXPLICIT_BUILD_RE, so a pure QUESTION about the structure ("ما رأيك في
+// الهيكل التنظيمي الحالي؟") was hijacked straight into the build-plan card,
+// contradicting V27 (conversation first). It now only counts as an explicit
+// build command when it co-occurs with an actual construction verb in the same
+// message — never as a bare noun.
+const STRUCTURE_NOUN_RE = /الهيكل\s*التنظيمي/i;
+const STRUCTURE_BUILD_VERB_RE = /(ابنِ|ابن|ابني|اعمل|إعمل|أنشئ|انشئ|أنشِئ|صمّم|صمم|جهّز|جهز|design|build|create)/i;
 
 /** True when the message is an explicit "build" command (a wizard trigger that
  *  complements the generic long-form detector). */
 export function isExplicitBuild(text?: string | null): boolean {
   const s = (text || '').trim();
   if (s.length < 3) return false;
-  return EXPLICIT_BUILD_RE.test(s);
+  if (EXPLICIT_BUILD_RE.test(s)) return true;
+  // "build the org structure" (any construction verb) counts; a bare mention of
+  // the org structure — e.g. inside a question — does not.
+  return STRUCTURE_NOUN_RE.test(s) && STRUCTURE_BUILD_VERB_RE.test(s);
+}
+
+// P5/D4a — a genuine document-CREATION command: a creation verb co-occurring
+// with a document-type noun, and not phrased as a question. Distinguishes "اكتب
+// لي دليل حوكمة كامل" (must open the plan card even with the wizard OFF — V5's
+// exact complaint: a silent 7-8 min autonomous draft with zero chance to adjust
+// scope) from a long QUESTION/analysis ask that merely mentions a document type
+// ("ما رأيك في هذه السياسة؟"), which must stay conversational (V27).
+const CREATION_VERB_RE =
+  /(اكتب|أكتب|اكتبلي|انشئ|أنشئ|أنشِئ|جهّز|جهز|صمّم|صمم|أعدّ|اعدّ|اعد|حرّر|حرر|صِغ|صغ|write|create|draft|generate|prepare|design)/i;
+const DOC_NOUN_RE =
+  /(دليل|سياسة|لائحة|إجراء|اجراء|عملية|وثيقة|مستند|تقرير|خطة|خطّة|عقد|اتفاقية|محضر|خطاب|ميثاق|مصفوفة|قالب|استمارة|نموذج|مذكرة|استراتيج|manual|policy|regulation|procedure|report|plan|contract|agreement|document|template|charter|proposal|strategy)/i;
+// Any question mark, or an interrogative opener, rules a message out — a real
+// creation command is an imperative, not a question.
+const QUESTION_LIKE_RE =
+  /[؟?]|^\s*(ما\s|ماذا\s|هل\s|كيف\s|لماذا\s|متى\s|أين\s|من\s+هو|what\s|how\s|why\s|when\s|where\s|is\s|are\s|do\s|does\s)/i;
+
+/** True for a genuine document-creation COMMAND (P5/D4a) — used to carve a
+ *  narrow, deliberate exception into V27's "conversation first" default. */
+export function isDocCreationRequest(text?: string | null): boolean {
+  const s = (text || '').trim();
+  if (!s || QUESTION_LIKE_RE.test(s)) return false;
+  return CREATION_VERB_RE.test(s) && DOC_NOUN_RE.test(s);
+}
+
+// P5/D3 — does this document-creation request need CURRENT/EXTERNAL facts (→
+// live web research via Google Search grounding) rather than only the user's
+// uploaded files? GovCopilot.runGeneration gates the (slower, previously
+// length-unbounded — see geminiService.generateGroundedDocument) web-research
+// path on this. Recency + market/competitive-data signals ONLY. Deliberately
+// EXCLUDES generic scope/quality adjectives that used to be in this list —
+// «دولي/عالمي/معايير دولية/أفضل الممارسات» and their English equivalents
+// «international/global/best practices/state of the art». Those describe the
+// TONE of an entirely ordinary document request («اكتب دليل حوكمة وفق أفضل
+// الممارسات الدولية») without implying the model needs to fetch live web pages;
+// a mere Arabic word-boundary fix would NOT have been enough to stop that
+// hijack, because «أفضل الممارسات» matched as its own, full, intended word —
+// not a substring accident like «دولي» inside «الدولية». Removing the
+// over-broad terms fixes both mechanisms at once.
+const NEEDS_RESEARCH_RE =
+  /(ابحث|بحث|الويب|الإنترنت|أحدث|الأحدث|حديثة|حديث|٢٠٢٥|٢٠٢٦|٢٠٢٧|2025|2026|2027|السوق|سوق|مقارنة|قارن|منافس|اتجاهات|إحصاء|إحصائيات|research|web|internet|online|latest|recent|current|today|news|market|benchmark|compare|competitor|trend|statistics)/i;
+
+export function needsWebResearch(text?: string | null): boolean {
+  return NEEDS_RESEARCH_RE.test((text || '').trim());
 }
 
 /**
@@ -510,11 +568,20 @@ export function isExplicitBuild(text?: string | null): boolean {
  *    generating", so any long-form/document request (`longForm`) OR an explicit
  *    build opens the plan — the V5/V16 behavior, unchanged.
  *
+ * P5/D4a refines the conversational-default regime with ONE narrow exception: a
+ * genuine long document-CREATION command (`isDocCreationRequest`) still opens
+ * the plan even with the wizard off — V5's exact complaint was a doc-creation
+ * ask silently firing a 7-8 min autonomous draft with zero chance to adjust
+ * scope/length/departments, and the plan card is cheap to confirm or skip. A
+ * long QUESTION or analysis ask that merely mentions a document type is
+ * excluded by `isDocCreationRequest` and stays fully conversational.
+ *
  * Pure + tested so the default-entry behavior is pinned independently of the UI.
  */
 export function shouldOpenBuildWizard(p: { wizardOn: boolean; text: string; longForm: boolean }): boolean {
   const explicit = isExplicitBuild(p.text);
-  return p.wizardOn ? (p.longForm || explicit) : explicit;
+  if (p.wizardOn) return p.longForm || explicit;
+  return explicit || (p.longForm && isDocCreationRequest(p.text));
 }
 
 let _planSeq = 0;
@@ -524,7 +591,10 @@ const planUid = (): string => `cmp_${(_planSeq++).toString(36)}_${Math.random().
 // order and dropping blanks. Comparison is case/space-insensitive so "المالية"
 // and "المالية " never both land in the list.
 const normItem = (s: string): string => (s || '').trim().replace(/\s+/g, ' ');
-function dedupeList(items: (string | undefined | null)[]): string[] {
+// Exported (P5/D2) so copilotClient's grounding builder can derive a
+// departments-from-org-units fallback with the SAME trim/dedupe rules as the
+// wizard's own plan (fallbackBuildPlan), instead of re-implementing them.
+export function dedupeList(items: (string | undefined | null)[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const raw of items) {
@@ -725,4 +795,93 @@ export function planToBuildRequest(plan: BuildPlan, language?: Language): string
     if (notes) lines.push(`Mandatory owner notes (apply to every section): ${notes}`);
   }
   return lines.join('\n');
+}
+
+// ===========================================================================
+// P5/D1 — the structured plan payload sent to the backend's `plan` field.
+//
+// The confirmed wizard plan used to reach the backend ONLY serialized into
+// prose (planToBuildRequest above), which the backend used to discard once a
+// deliverable keyword matched. The backend now also accepts the plan as a
+// STRUCTURED object that bypasses its own keyword-based deliverable routing
+// entirely (see copilot/hawkama_copilot/api.py `_plan_from_body` /
+// generation.py `_draft_from_plan`). This maps the CONFIRMED BuildPlan onto
+// that exact shape. Pure + tested; the prose request stays as accompanying
+// fallback context (see copilotClient.draft/draftStream), and this is what
+// GovCopilot.acceptPlan() sends alongside it.
+// ===========================================================================
+
+export interface CopilotPlanPayload {
+  title: string;
+  pages: number;
+  axes: string[];
+  departments: string[];
+  components: string[];
+  notes: string;
+}
+
+/** Map a CONFIRMED (possibly user-edited) plan onto the backend's `plan` shape
+ *  — the same field/derivation rules as planToBuildRequest (only INCLUDED
+ *  components, deduped axes/departments, trimmed notes), so the structured
+ *  payload and the prose fallback never disagree. */
+export function planToPayload(plan: BuildPlan): CopilotPlanPayload {
+  return {
+    title: (plan.title || '').trim(),
+    pages: clampPlanPages(plan.targetPages),
+    axes: dedupeList(plan.axes),
+    departments: dedupeList(plan.departments),
+    components: (plan.components || []).filter(c => c.include && c.title.trim()).map(c => c.title.trim()),
+    notes: (plan.notes || '').trim(),
+  };
+}
+
+// ===========================================================================
+// P5/D2 — a bounded "current-state diagnostic" digest for the backend's
+// GroundingContext.current_state_md.
+//
+// GovCopilot already receives the live `model` prop, which carries the
+// maturity assessment (CMMI + SWOT/PESTEL + BSC) and the open gap list — the
+// app's actual current-state diagnostic — so this needs nothing from
+// GovernanceCenter.tsx. It is deliberately DISTINCT from org_units/roles (sent
+// as their own grounding keys, see copilotClient.buildGrounding): this is the
+// diagnostic VERDICT, not a re-dump of the org chart, and it is character-
+// bounded so a large gap list can never blow up the request payload.
+// ===========================================================================
+
+const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+
+/** Build a bounded current-state digest from the live model's maturity
+ *  assessment + open gaps. Returns '' when the model has neither (never
+ *  invents a diagnosis the app hasn't actually produced). */
+export function currentStateDigest(m?: CompanyGovernanceModel | null, language?: Language): string {
+  if (!m) return '';
+  const ar = (language || 'ar') === 'ar';
+  const parts: string[] = [];
+  const a = m.assessment;
+  if (a) {
+    const overall = typeof a.overall === 'number' ? Math.round(a.overall) : undefined;
+    if (overall !== undefined) {
+      parts.push(ar
+        ? `النضج العام: ${overall}/100${a.cmmiLevel ? ` (CMMI ${a.cmmiLevel})` : ''}`
+        : `Overall maturity: ${overall}/100${a.cmmiLevel ? ` (CMMI ${a.cmmiLevel})` : ''}`);
+    }
+    const dims = (a.dimensions || [])
+      .slice(0, 10)
+      .map(d => `${d.name}: ${Math.round(d.score)} (${d.label})`);
+    if (dims.length) parts.push((ar ? 'الأبعاد: ' : 'Dimensions: ') + dims.join(ar ? '، ' : ', '));
+  }
+  const gaps = (Array.isArray(m.gaps) ? m.gaps : []).filter(g => !g?.resolved);
+  if (gaps.length) {
+    const bySev = (sev: string) => gaps.filter(g => g.severity === sev).length;
+    parts.push(ar
+      ? `الفجوات المفتوحة (${gaps.length}): حرجة ${bySev('critical')}، عالية ${bySev('high')}، متوسطة ${bySev('medium')}، منخفضة ${bySev('low')}.`
+      : `Open gaps (${gaps.length}): critical ${bySev('critical')}, high ${bySev('high')}, medium ${bySev('medium')}, low ${bySev('low')}.`);
+    const top = gaps
+      .slice()
+      .sort((x, y) => (SEVERITY_RANK[y.severity] || 0) - (SEVERITY_RANK[x.severity] || 0))
+      .slice(0, 8)
+      .map(g => `- [${g.severity}] ${g.area}: ${g.description}`.slice(0, 200));
+    if (top.length) parts.push(top.join('\n'));
+  }
+  return parts.filter(Boolean).join('\n').slice(0, 3000);
 }
