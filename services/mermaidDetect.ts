@@ -38,3 +38,28 @@ export function isMermaidBlock(lang: string | undefined, code: string): boolean 
   if (l && PROG_LANGS.test(l)) return false;
   return looksLikeMermaid(code);
 }
+
+/**
+ * Replace the FIRST fenced code block whose body matches `oldCode` exactly
+ * (after trimming) with `newCode`, preserving that fence's language tag and
+ * every other block/line untouched. No-op (returns `content` unchanged) when
+ * no fence's body matches — never guesses or replaces a near-match.
+ *
+ * Powers GovCopilot's "edit a chat-rendered diagram" flow: an NL edit commits
+ * a new Mermaid string, and this rewrites it back into the stored message
+ * text at the same spot the ```mermaid fence originally rendered from.
+ */
+export function replaceMermaidFence(content: string, oldCode: string, newCode: string): string {
+  const oldTrimmed = (oldCode || '').trim();
+  if (!oldTrimmed) return content;
+  const re = /```([^\n`]*)\n([\s\S]*?)```/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    if (m[2].trim() === oldTrimmed) {
+      const before = content.slice(0, m.index);
+      const after = content.slice(m.index + m[0].length);
+      return `${before}\`\`\`${m[1]}\n${(newCode || '').trim()}\n\`\`\`${after}`;
+    }
+  }
+  return content;
+}

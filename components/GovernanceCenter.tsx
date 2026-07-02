@@ -52,9 +52,10 @@ import ThinkingTrace from './ThinkingTrace';
 import ArtifactProgress from './ArtifactProgress';
 import MermaidView from './MermaidView';
 import SwimlaneView from './SwimlaneView';
-import { generateSwimlane } from '../services/swimlaneService';
+import { generateSwimlane, type SwimlaneSpec } from '../services/swimlaneService';
 import GovernanceCanvas from './GovernanceCanvas';
 import DiagramChatEditor from './DiagramChatEditor';
+import EditableDiagram from './EditableDiagram';
 import GovCopilot from './GovCopilot';
 import ProjectsStage from './ProjectsStage';
 import DepartmentBuilder from './DepartmentBuilder';
@@ -1083,6 +1084,23 @@ ${content.slice(0, 8000)}`;
     if (!activeDiag) return;
     const g = mermaidToFlow(mermaid);
     await handleSaveCanvas(g.nodes, g.edges, mermaid);
+  };
+
+  // P8 — the swimlane counterpart of handleSaveCanvas: a chat edit inside the Build
+  // gallery's EditableDiagram commits the full spec here. Swimlanes have no
+  // flowNodes/flowEdges/canvas view (SwimlaneView is the only renderer) and are
+  // never orgchart-kind, so this mirrors handleSaveCanvas minus those two concerns.
+  const handleSaveDiagramSwimlane = async (spec: SwimlaneSpec) => {
+    if (!activeDiag) return;
+    setSavingCanvas(true);
+    try {
+      const updated: GovDiagram = { ...activeDiag, swimlane: spec, title: spec.title || activeDiag.title, updatedAt: Date.now() };
+      await saveDiagram(updated);
+      setActiveDiag(updated);
+      await loadAll();
+    } catch (e: any) {
+      alertMsg(t('فشل حفظ المخطط: ', 'Diagram save failed: ') + (e?.message || e));
+    } finally { setSavingCanvas(false); }
   };
 
   const handleDeleteDiagram = async (id: string) => {
@@ -3317,7 +3335,13 @@ ${content.slice(0, 8000)}`;
                   chart). */}
               {model && !modelCanvas && (
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
-                  <MermaidView mermaid={resolveOrgChartMermaid(model)} title={t('الهيكل التنظيمي', 'Org structure')} language={language} />
+                  <EditableDiagram
+                    mermaid={resolveOrgChartMermaid(model)}
+                    title={t('الهيكل التنظيمي', 'Org structure')}
+                    language={language}
+                    onSaveMermaid={persistOrgChartOverride}
+                    saving={savingOrgChart}
+                  />
                   {model.orgChartMermaid && (
                     <div className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 shrink-0"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
@@ -3621,7 +3645,14 @@ ${content.slice(0, 8000)}`;
                     )}
                   </div>
                   {activeDiag.kind === 'swimlane' && activeDiag.swimlane ? (
-                    <SwimlaneView spec={activeDiag.swimlane} title={activeDiag.title} language={language} />
+                    <EditableDiagram
+                      key={activeDiag.id}
+                      language={language}
+                      title={activeDiag.title}
+                      swimlane={activeDiag.swimlane}
+                      onSaveSwimlane={handleSaveDiagramSwimlane}
+                      saving={savingCanvas}
+                    />
                   ) : diagView === 'chat' ? (
                     <DiagramChatEditor
                       key={activeDiag.id}
