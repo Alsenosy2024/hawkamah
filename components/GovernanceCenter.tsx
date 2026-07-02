@@ -42,7 +42,7 @@ import { GOV_DOC_CATALOG, CATALOG_CATEGORIES, recommendDocuments, type DocCatalo
 import { analyzeIntegrity, maturity as computeMaturity, coverageMatrix, mergeModels, traceEntity } from '../services/governanceValidation';
 import { alignAll, standardsLens, buildCriteriaLens, type BuildCriterion } from '../services/governanceFrameworks';
 import { proposeModelActions, applyActions, appendAudit } from '../services/governanceActions';
-import { buildCharter, buildRiskRegister, buildRoadmap } from '../services/governanceArtifacts';
+import { buildCharter, buildRiskRegister, buildRoadmap, nextCanvasArtLibSave } from '../services/governanceArtifacts';
 import { runGovernanceAgent } from '../services/governanceAgent';
 import { askGovernance } from '../services/governanceQa';
 import Markdown from './Markdown';
@@ -565,6 +565,15 @@ ${content.slice(0, 8000)}`;
   // survive a close/reopen — see openArtifactInCanvas / saveCanvasArtHtml.
   const [canvasArt, setCanvasArt] = useState<GeneratedArtifact | null>(null);
   const [canvasArtKind, setCanvasArtKind] = useState<'charter' | 'gendoc' | null>(null);
+  // D2: identity of the fallback library record for the CURRENTLY open untagged
+  // artifact (risk register / roadmap), + the last html actually written to it.
+  // DocumentCanvas calls onSave after EVERY smart-edit action, not just an
+  // explicit Save click, so without this a run of edits would mint a new
+  // library record (and show the "saved to library" toast) on every call —
+  // these make the fallback idempotent per open artifact. Reset on
+  // open/close (see openArtifactInCanvas / the render site's onClose).
+  const canvasArtLibRef = useRef<{ id: string; createdAt: string } | null>(null);
+  const canvasArtLastHtmlRef = useRef<string>('');
   // V14/V20: client/reviewer comments + visual-review checks, by source doc id.
   // Loaded once per library refresh; empty (degrades silently) until the
   // `doc_comments` firestore rule is deployed.
@@ -1785,6 +1794,7 @@ ${content.slice(0, 8000)}`;
   // roadmap don't (they're pure functions of `model`, not stored state).
   const openArtifactInCanvas = (art: GeneratedArtifact, kind: 'charter' | 'gendoc' | null = null) => {
     setCanvasRec(null); setCanvasArt(art); setCanvasArtKind(kind);
+    canvasArtLibRef.current = null; canvasArtLastHtmlRef.current = '';   // new artifact/session → fresh fallback state
   };
   const canvasArtMarkdown = useMemo(
     () => (canvasArt ? artifactToMarkdown(canvasArt) : ''),
@@ -1798,30 +1808,39 @@ ${content.slice(0, 8000)}`;
   // backing store at all — `riskArt`/`roadmapArt` are recomputed fresh from
   // `model` on every render (see the useMemo above) — so for those (and any
   // other untagged artifact) we fall back to auto-saving the edited snapshot
-  // into the document library, exactly like the library canvas already does,
-  // and tell the owner where it went so nothing is ever lost silently.
+  // into the document library, exactly like the library canvas already does.
+  // nextCanvasArtLibSave (pure, unit-tested) keeps that fallback idempotent:
+  // onSave fires after every smart-edit action, not just an explicit Save, so
+  // without it a run of edits would mint a new record + toast on every call.
   const saveCanvasArtHtml = async (html: string) => {
     if (!canvasArt) return;
     const next: GeneratedArtifact = { ...canvasArt, canvasHtml: html };
     setCanvasArt(next);
     if (canvasArtKind === 'charter') { setCharterArt(next); return; }
     if (canvasArtKind === 'gendoc') { setGenDoc(next as GovernanceDocument); return; }
+    const decision = nextCanvasArtLibSave(html, canvasArtLibRef.current, canvasArtLastHtmlRef.current, () => uid('govdoc'));
+    if (decision.status === 'skip') return;   // identical to the last saved snapshot — no-op
+    const { id, createdAt } = decision.state;
     try {
       const rec: GovDocumentRecord = {
-        id: uid('govdoc'), tenantId, kind: 'governance',
+        id, tenantId, kind: 'governance',
         title: next.title, goal: next.goal,
         status: 'draft', version: model?.version || 1,
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        createdAt, updatedAt: new Date().toISOString(),
         sections: next.sections, executiveSummary: next.executiveSummary,
         diagrams: next.diagrams, citations: {}, comments: [],
         canvasHtml: html,
       };
-      await saveGovDocument(rec);
+      await saveGovDocument(rec);   // setDoc(id) — overwrites the same record on repeat saves
+      canvasArtLibRef.current = decision.state;
+      canvasArtLastHtmlRef.current = html;
       await loadAll();
-      alertMsg(t(
-        `لا يوجد مكان تخزين مخصص لهذا النوع من الوثائق؛ حُفظت نسخة معدَّلة في مكتبة الوثائق باسم «${rec.title}».`,
-        `This document type has no dedicated storage; saved an edited copy to the document library as “${rec.title}”.`,
-      ));
+      if (decision.isFirstSave) {
+        alertMsg(t(
+          `لا يوجد مكان تخزين مخصص لهذا النوع من الوثائق؛ حُفظت نسخة معدَّلة في مكتبة الوثائق باسم «${rec.title}». التعديلات اللاحقة تُحفظ في النسخة نفسها.`,
+          `This document type has no dedicated storage; saved an edited copy to the document library as “${rec.title}”. Later edits update that same copy.`,
+        ));
+      }
     } catch (e: any) {
       alertMsg(t('فشل حفظ التعديلات: ', 'Failed to save edits: ') + (e?.message || e));
     }
@@ -4543,7 +4562,7 @@ ${content.slice(0, 8000)}`;
           subtitle={canvasArt.goal || t('وثيقة حوكمة', 'Governance document')}
           brand={companyName ? `${companyName} · AILIGENT` : 'AILIGENT'}
           date={t('بتاريخ ', 'Dated ') + new Date().toLocaleDateString(ar ? 'ar-EG' : 'en-GB')}
-          onClose={() => { setCanvasArt(null); setCanvasArtKind(null); }}
+          onClose={() => { setCanvasArt(null); setCanvasArtKind(null); canvasArtLibRef.current = null; canvasArtLastHtmlRef.current = ''; }}
           onSave={saveCanvasArtHtml}
         />
       )}

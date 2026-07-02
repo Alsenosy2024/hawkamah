@@ -166,3 +166,35 @@ export async function buildCharter(
     return fallback();
   }
 }
+
+// D2 — the risk register / roadmap (unlike charter/genDoc) have no backing
+// state at all; GovernanceCenter falls back to auto-saving their canvas edits
+// into the document library. DocumentCanvas calls onSave after EVERY smart-edit
+// action, not just an explicit Save click, so a naive fallback would mint a new
+// library record (and re-show the "saved to library" toast) on every keystroke-
+// level save. This PURE helper makes that idempotent per open artifact: the
+// caller keeps the returned `state` (record id + createdAt) in a ref and passes
+// it back in on the next save, so repeat saves overwrite the SAME record and an
+// unchanged html is skipped entirely (no redundant write).
+export interface CanvasArtLibSaveState {
+  id: string;
+  createdAt: string;
+}
+// NOTE: the discriminant is a STRING literal ('skip'/'save'), not a boolean —
+// this project's tsconfig has `strict` unset (strictNullChecks off), and under
+// that setting `tsc` does not narrow a `{ skip: true } | { skip: false; ... }`
+// union on a boolean-literal discriminant (confirmed against this repo's exact
+// tsconfig); a string-literal discriminant narrows correctly either way.
+export function nextCanvasArtLibSave(
+  html: string,
+  prevState: CanvasArtLibSaveState | null,
+  prevHtml: string,
+  mintId: () => string,
+): { status: 'skip' } | { status: 'save'; isFirstSave: boolean; state: CanvasArtLibSaveState } {
+  if (prevState && html === prevHtml) return { status: 'skip' };
+  return {
+    status: 'save',
+    isFirstSave: !prevState,
+    state: prevState || { id: mintId(), createdAt: new Date().toISOString() },
+  };
+}
