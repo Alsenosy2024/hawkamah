@@ -32,6 +32,7 @@ import DocumentCanvas from './DocumentCanvas';
 import {
   buildModel, generateGovernanceDoc, generateBulkDoc, generateGapFix, editArtifact,
   industryLens, referenceProjectsBlock,
+  normUnitName, diffUnitTombstones, pruneRemovedUnits,
   GovernanceDocument, type BulkScope,
 } from '../services/governanceEngine';
 import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout, resolveOrgChartMermaid } from '../services/diagramService';
@@ -40,7 +41,7 @@ import { generateJson, generateJsonStream } from '../services/agentOrchestrator'
 import { extractPartialFields } from '../services/partialJson';
 import { GOV_DOC_CATALOG, CATALOG_CATEGORIES, recommendDocuments, type DocCatalogEntry } from '../services/governanceDocCatalog';
 import { analyzeIntegrity, maturity as computeMaturity, coverageMatrix, mergeModels, traceEntity } from '../services/governanceValidation';
-import { alignAll, standardsLens, buildCriteriaLens, type BuildCriterion } from '../services/governanceFrameworks';
+import { alignAll, standardsLens, type BuildCriterion } from '../services/governanceFrameworks';
 import { proposeModelActions, applyActions, appendAudit } from '../services/governanceActions';
 import { buildCharter, buildRiskRegister, buildRoadmap, nextCanvasArtLibSave } from '../services/governanceArtifacts';
 import { runGovernanceAgent } from '../services/governanceAgent';
@@ -443,10 +444,18 @@ ${content.slice(0, 8000)}`;
 
   // V17 — build-criteria/recommendations table + a general-notes box, surfaced in
   // the Build stage. The owner had "no criteria to base the build on" and wanted a
-  // recommendations table plus general notes applied across a bulk run. Both are
-  // threaded into generation (see refsWithReco) so the model actually follows them.
+  // recommendations table plus general notes applied across a bulk run.
   // Persisted per-tenant in localStorage — mirrors removedUnitNames; no new storage,
   // no model/type changes. Loaded on tenant change; written explicitly on each edit.
+  //
+  // D4 — this used to be smuggled into generation as a synthetic "reference project"
+  // (recoReference/refsWithReco), which meant it went through referenceProjectsBlock's
+  // 2500-char excerpt truncation and could be pushed out of the top-3 ranked reference
+  // slots by real reference projects, silently cutting or dropping a full table + notes
+  // box. buildCriteria/buildRecos are now passed straight through as their own
+  // `buildCriteria`/`buildNotes` params (see the generateGovernanceDoc/generateBulkDoc
+  // call sites below) — governanceEngine renders them via criteriaLensBlock into their
+  // own untruncated prompt block, independent of the reference-project channel.
   const [buildCriteria, setBuildCriteria] = useState<BuildCriterion[]>([]);
   const [buildRecos, setBuildRecos] = useState('');
   const buildCriteriaKey = `gov_build_criteria:${tenantId}`;
@@ -469,30 +478,6 @@ ${content.slice(0, 8000)}`;
     setBuildRecos(next);
     try { localStorage.setItem(buildRecosKey, next); } catch { /* quota — ignore */ }
   };
-  // Fold the criteria table + general notes into ONE clearly-labeled reference
-  // whose body is the directive block (buildCriteriaLens). Both generateGovernanceDoc
-  // and generateBulkDoc render referenceProjects into their system prompt, so this is
-  // the single in-scope channel that reaches EVERY generated section/doc — the bulk
-  // path has no other free-text hook. sector match keeps it ranked in. null = unset.
-  const recoReference = useCallback((): ReferenceProject | null => {
-    const block = buildCriteriaLens(buildCriteria, buildRecos);
-    if (!block.trim()) return null;
-    return {
-      id: 'gov_build_reco',
-      name: t('توصيات ومعايير البناء (إلزامية)', 'Build criteria & recommendations (required)'),
-      sector: sector || '',
-      companySize: 'medium',
-      artifactKind: 'policy_manual',
-      summary: t('معايير وتوصيات عامة يحددها المالك تُطبَّق على كل المخرجات.', 'Owner-defined criteria & general recommendations applied to all generated outputs.'),
-      content: block,
-      tags: [t('توصيات', 'recommendations'), t('بناء', 'build')],
-      createdAt: new Date().toISOString(),
-    };
-  }, [buildCriteria, buildRecos, sector, t]);
-  const refsWithReco = useCallback((): ReferenceProject[] => {
-    const r = recoReference();
-    return r ? [r, ...refProjects] : refProjects;
-  }, [recoReference, refProjects]);
 
   // model-bound canvas (stage 2 — direct from model)
   const [modelCanvas, setModelCanvas] = useState(false);
@@ -524,22 +509,16 @@ ${content.slice(0, 8000)}`;
       setRemovedUnitNames(new Set(Array.isArray(arr) ? arr.map((x: any) => String(x)) : []));
     } catch { setRemovedUnitNames(new Set()); }
   }, [tenantId]);
-  // Diff a model edit (tree rename/add/delete OR a canvas edit) by unit ID: a unit whose
-  // id disappears (and whose name isn't kept under another id) is a real deletion →
-  // tombstone its name; any name reintroduced into the model clears its tombstone. Keying
-  // on id (not name) means a rename is NOT mistaken for a delete.
+  // Diff a model edit (tree rename/add/delete, canvas edit, NL-edit actions, agent
+  // auto-apply, or a snapshot rollback) by unit ID: a unit whose id disappears (and whose
+  // name isn't kept under another id) is a real deletion → tombstone its name; any name
+  // reintroduced into the model clears its tombstone. Keying on id (not name) means a
+  // rename is NOT mistaken for a delete. The diff itself is a pure function in
+  // governanceEngine (diffUnitTombstones) so it's unit-testable without React state.
   const reconcileUnitTombstones = useCallback((prev: CompanyGovernanceModel, next: CompanyGovernanceModel) => {
-    const prevUnits = prev?.orgUnits || [], nextUnits = next?.orgUnits || [];
-    const nextIds = new Set(nextUnits.map(u => u.id));
-    const nextNames = new Set(nextUnits.map(u => normUnitName(u.name)));
-    const removed = prevUnits
-      .filter(u => !nextIds.has(u.id) && !nextNames.has(normUnitName(u.name)))
-      .map(u => normUnitName(u.name)).filter(Boolean);
     setRemovedUnitNames(prevSet => {
-      let changed = false; const ns = new Set(prevSet);
-      for (const n of removed) if (!ns.has(n)) { ns.add(n); changed = true; }
-      for (const n of nextNames) if (n && ns.has(n)) { ns.delete(n); changed = true; } // reintroduced → forget
-      if (!changed) return prevSet;
+      const ns = diffUnitTombstones(prev?.orgUnits, next?.orgUnits, prevSet);
+      if (ns.size === prevSet.size && [...ns].every(n => prevSet.has(n))) return prevSet; // no-op
       try { localStorage.setItem(removedUnitsKey, JSON.stringify([...ns])); } catch { /* quota — ignore */ }
       return ns;
     });
@@ -775,7 +754,8 @@ ${content.slice(0, 8000)}`;
       toast.success(t('تم اعتماد النموذج رسميًا — انتقل لتوليد الوثائق.', 'Model approved — moving to document generation.'));
       // N8: the CTA promises «والانتقال للتنفيذ» — actually take the user there
       // (Build → document generation) instead of just toasting.
-      setStage(2); setBuildTab('docs');
+      // D1: go through gotoStage so the header Back control can return here.
+      gotoStage(2); setBuildTab('docs');
     }
     catch (e: any) { alertMsg(t('فشل الاعتماد: ', 'Approval failed: ') + (e?.message || e)); }
   };
@@ -1091,7 +1071,8 @@ ${content.slice(0, 8000)}`;
     try {
       const chunks = await loadChunks(tenantId);
       const doc = await generateGovernanceDoc({
-        docTitle, goal: docGoal, model, chunks, referenceProjects: refsWithReco(), // V17: build criteria/notes
+        docTitle, goal: docGoal, model, chunks, referenceProjects: refProjects,
+        buildCriteria, buildNotes: buildRecos, // D4/V17: own untruncated prompt block
         sector, language, signal: ac.signal,
         onProgress: setGenProgress,
         onThought: (txt) => pushThought(txt),
@@ -1143,8 +1124,6 @@ ${content.slice(0, 8000)}`;
       const chunks = await loadChunks(tenantId).catch(() => [] as any[]);
       // shared cross-doc fact memory → coherent names/numbers across all docs in the batch
       const sharedFacts: string[] = [];
-      // V17: owner's build criteria/notes apply to EVERY doc in this batch run.
-      const refsForBatch = refsWithReco();
       setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
 
       // bounded concurrency pool with retry/backoff. HWK-C3: sequential (1) for the
@@ -1161,7 +1140,8 @@ ${content.slice(0, 8000)}`;
           if (ac.signal.aborted) return;
           try {
             const doc = await generateGovernanceDoc({
-              docTitle: d.title, goal: d.goal, model, chunks, referenceProjects: refsForBatch,
+              docTitle: d.title, goal: d.goal, model, chunks, referenceProjects: refProjects,
+              buildCriteria, buildNotes: buildRecos, // D4/V17: applies to EVERY doc in this batch
               sector, language, targetPages: pages, kind: d.key, signal: ac.signal,
               guidance: docGuidance[d.key], // V24: per-doc AI guidance woven into THIS doc's prompt
               sharedFacts,
@@ -1395,7 +1375,9 @@ ${content.slice(0, 8000)}`;
     try {
       const chunks = await loadChunks(tenantId);
       const doc = await generateBulkDoc({
-        scope: bulkScope, model, chunks, language, sector, referenceProjects: refsWithReco(), signal: ac.signal, // V17: criteria/notes apply to every item
+        scope: bulkScope, model, chunks, language, sector, referenceProjects: refProjects,
+        buildCriteria, buildNotes: buildRecos, // D4/V17: criteria/notes apply to every item
+        signal: ac.signal,
         onProgress: setGenProgress,
         onThought: (txt) => pushThought(txt),
         onSection: (s) => pushSection(s),
@@ -1430,8 +1412,11 @@ ${content.slice(0, 8000)}`;
     setGenAllRunning(true); setGenerating(true);
     setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
     setGenAllChunks(GEN_ALL_SCOPES.map(s => ({ scope: s.scope, label: t(s.ar, s.en), status: 'pending' as const })));
-    const refs = refsWithReco();   // V17 criteria/notes apply to every chunk
-    let okCount = 0;
+    // D3: three distinct, truthfully-tracked outcomes — a chunk where every section
+    // failed is NOT a success (no placeholder-only doc gets saved or counted); a chunk
+    // that generated content but whose library save itself threw is tracked separately
+    // so the final tally never claims something was "حُفظت في المكتبة" when it wasn't.
+    let okCount = 0, failCount = 0, unsavedCount = 0;
     try {
       const chunks = await loadChunks(tenantId);
       for (let i = 0; i < GEN_ALL_SCOPES.length; i++) {
@@ -1441,22 +1426,45 @@ ${content.slice(0, 8000)}`;
         setGenAllChunks(cs => cs.map((c, j) => (j === i ? { ...c, status: 'running' } : c)));
         try {
           const doc = await generateBulkDoc({
-            scope: sc, model, chunks, language, sector, referenceProjects: refs, signal: ac.signal,
+            scope: sc, model, chunks, language, sector, referenceProjects: refProjects,
+            buildCriteria, buildNotes: buildRecos, // D4/V17: criteria/notes apply to every chunk
+            signal: ac.signal,
             onProgress: setGenProgress, onThought: (txt) => pushThought(txt), onSection: (s) => pushSection(s),
           });
           setGenDoc(doc); setGenDocKind('governance');
-          const doneCount = (doc.sections || []).filter(s => s.status === 'done').length;
-          if (doc.complete || doneCount > 0) { try { await persistGenDocInner(doc, 'governance', sc); } catch { /* library save optional */ } }
-          setGenAllChunks(cs => cs.map((c, j) => (j === i ? { ...c, status: 'done', note: t(`${doneCount} قسم`, `${doneCount} sections`) } : c)));
-          okCount++;
+          const sections = doc.sections || [];
+          const doneCount = sections.filter(s => s.status === 'done').length;
+          if (doneCount === 0 && sections.length > 0) {
+            // every planned section failed (e.g. a quota error mid-run) — nothing usable
+            // to save; don't count it toward "ok" and don't write a placeholder to the library.
+            failCount++;
+            setGenAllChunks(cs => cs.map((c, j) => (j === i ? { ...c, status: 'error', note: t('فشلت كل الأقسام', 'all sections failed') } : c)));
+          } else {
+            let saved = true;
+            try { await persistGenDocInner(doc, 'governance', sc); } catch { saved = false; }
+            if (saved) okCount++; else unsavedCount++;
+            setGenAllChunks(cs => cs.map((c, j) => (j === i ? {
+              ...c,
+              status: saved ? 'done' : 'error',
+              note: saved
+                ? t(`${doneCount} قسم`, `${doneCount} sections`)
+                : t(`${doneCount} قسم — لم يُحفظ في المكتبة`, `${doneCount} sections — not saved to library`),
+            } : c)));
+          }
         } catch (e: any) {
           if (ac.signal.aborted) { setGenAllChunks(cs => cs.map((c, j) => (j === i ? { ...c, status: 'error', note: t('أُلغي', 'cancelled') } : c))); break; }
+          failCount++;
           setGenAllChunks(cs => cs.map((c, j) => (j === i ? { ...c, status: 'error', note: String(e?.message || 'error').slice(0, 60) } : c)));
         }
       }
+      const total = GEN_ALL_SCOPES.length;
+      const tail = t(
+        `${okCount}/${total} مجموعة نجحت وحُفظت${failCount ? ` · ${failCount} فشلت` : ''}${unsavedCount ? ` · ${unsavedCount} تولّدت لكن لم تُحفظ` : ''}.`,
+        `${okCount}/${total} set(s) succeeded and saved${failCount ? ` · ${failCount} failed` : ''}${unsavedCount ? ` · ${unsavedCount} generated but not saved` : ''}.`,
+      );
       alertMsg(ac.signal.aborted
-        ? t(`توقّف «توليد الكل» — اكتمل ${okCount}/${GEN_ALL_SCOPES.length} مجموعة وحُفظت في المكتبة.`, `Generate-all stopped — ${okCount}/${GEN_ALL_SCOPES.length} sets done and saved.`)
-        : t(`اكتمل «توليد الكل»: ${okCount}/${GEN_ALL_SCOPES.length} مجموعة وحُفظت في المكتبة.`, `Generate-all complete: ${okCount}/${GEN_ALL_SCOPES.length} sets, saved to library.`));
+        ? t(`توقّف «توليد الكل» — ${tail}`, `Generate-all stopped — ${tail}`)
+        : t(`اكتمل «توليد الكل»: ${tail}`, `Generate-all complete: ${tail}`));
     } catch (e: any) {
       alertMsg(t('فشل توليد الكل: ', 'Generate-all failed: ') + (e?.message || e));
     } finally { setGenAllRunning(false); setGenerating(false); }
@@ -1584,6 +1592,10 @@ ${content.slice(0, 8000)}`;
     try {
       if (model) await saveSnapshot({ id: uid('snap'), tenantId, version: model.version || 1, at: new Date().toISOString(), reason: 'pre-rollback', model });
       const restored = appendAudit({ ...s.model, version: (model?.version || s.model.version || 1) + 1 }, ADMIN_ACTOR, 'rollback', `إلى ${s.at}`);
+      // D2: a restore can reintroduce a unit removed after the snapshot (or drop one added
+      // since) — reconcile tombstones both ways so a LATER hard rebuild stays consistent
+      // with whatever the rollback actually left in place.
+      if (model) reconcileUnitTombstones(model, restored);
       await saveModel(restored); setModel(restored); await loadAll();
     } catch (e: any) { alertMsg(t('فشل الاسترجاع: ', 'Rollback failed: ') + (e?.message || e)); }
     finally { setBusy(''); }
@@ -1594,7 +1606,7 @@ ${content.slice(0, 8000)}`;
     if (!model) return;
     abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
     setFixingGap(gap.id); setGenerating(true); setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
-    setStage(2); setBuildTab('docs'); setGenDocKind('gapfix');
+    gotoStage(2); setBuildTab('docs'); setGenDocKind('gapfix'); // D1: record history so Back returns to the gap
     try {
       const chunks = await loadChunks(tenantId);
       const res = await generateGapFix({
@@ -1670,7 +1682,7 @@ ${content.slice(0, 8000)}`;
 
   // ---- reopen a stored doc back into the generation view (preview + edit + export) ----
   const reopenDoc = (d: GovDocumentRecord) => {
-    setGenDoc(recordToArtifact(d)); setGenDocKind(d.kind); setStage(2); setBuildTab('docs');
+    setGenDoc(recordToArtifact(d)); setGenDocKind(d.kind); gotoStage(2); setBuildTab('docs'); // D1
   };
 
   // ---- #6/#8 batch export: all docs (or one folder) merged or separate, Word/PDF ----
@@ -1955,6 +1967,7 @@ ${content.slice(0, 8000)}`;
     try {
       await saveSnapshot({ id: uid('snap'), tenantId, version: model.version || 1, at: new Date().toISOString(), reason: 'pre-apply-actions', model });
       const res = applyActions(model, proposedActions, ADMIN_ACTOR);
+      reconcileUnitTombstones(model, res.model); // FE-2/D2: NL-edit deletions must tombstone too
       // saveModel owns versioning — don't pre-increment here
       await saveModel(res.model); setModel(res.model);
       setProposedActions([]); setActionInput('');
@@ -2048,6 +2061,7 @@ ${content.slice(0, 8000)}`;
       if (agentAutoApply && res.appliedActions.length && res.model) {
         // saveModel owns versioning — don't pre-increment here (loadAll reloads the canonical version)
         const next = appendAudit(res.model, ADMIN_ACTOR, 'agent', `${res.appliedActions.length} تعديل`);
+        reconcileUnitTombstones(model, next); // FE-2/D2: agent auto-apply deletions must tombstone too
         await saveModel(next); setModel(next); await loadAll();
       }
       // GAP4: agent proposed actions under manual-approval mode — surface them in the review gate
@@ -2701,7 +2715,7 @@ ${content.slice(0, 8000)}`;
                         ))}
                         {!refProjects.length && <div className="text-slate-400 text-xs">{t('لا مشاريع مرجعية', 'No ref projects')}</div>}
                       </div>
-                      <button onClick={() => setStage(4)} className="w-full text-xs font-bold text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700">
+                      <button onClick={() => gotoStage(4)} className="w-full text-xs font-bold text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700">
                         + {t('إدارة في المكتبة', 'Manage in library')}
                       </button>
                     </div>
@@ -2896,7 +2910,7 @@ ${content.slice(0, 8000)}`;
                     <div className="text-xs text-slate-500 dark:text-slate-400">{t('معيار مرجعي', 'standards')}</div>
                   </div>
                 </div>
-                <button onClick={() => setStage(4)} className="px-4 py-2 rounded-lg text-xs font-bold border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 whitespace-nowrap">
+                <button onClick={() => gotoStage(4)} className="px-4 py-2 rounded-lg text-xs font-bold border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 whitespace-nowrap">
                   {t('إدارة في المكتبة ←', 'Manage in Library ←')}
                 </button>
               </div>
@@ -3269,7 +3283,7 @@ ${content.slice(0, 8000)}`;
                 </div>
               )}
 
-              <StageNav back={() => gotoStage(6)} next={() => setStage(2)} nextLabel={t('التالي: البناء', 'Next: build')} nextDisabled={!model} ar={ar} />
+              <StageNav back={() => gotoStage(6)} next={() => gotoStage(2)} nextLabel={t('التالي: البناء', 'Next: build')} nextDisabled={!model} ar={ar} />
             </section>
           )}
 
@@ -3436,7 +3450,7 @@ ${content.slice(0, 8000)}`;
                       : <span className="text-amber-600 dark:text-amber-400">{t('لا توجد مقاطع مفهرسة بعد — عُد لمرحلة المصادر واستورد الوثائق أولاً.', 'No indexed chunks yet — go back to Sources and ingest documents first.')}</span>}
                 </div>
               )}
-              <StageNav back={() => setStage(7)} next={() => setStage(2)} nextLabel={t('التالي: البناء', 'Next: build')} nextDisabled={!model} ar={ar} />
+              <StageNav back={() => gotoStage(7)} next={() => gotoStage(2)} nextLabel={t('التالي: البناء', 'Next: build')} nextDisabled={!model} ar={ar} />
             </section>
           )}
 
@@ -3522,7 +3536,7 @@ ${content.slice(0, 8000)}`;
                   </button>
                 ))}
               </div>
-              <button onClick={() => setStage(7)}
+              <button onClick={() => gotoStage(7)}
                 className="w-full text-start rounded-xl border border-dashed border-emerald-300 dark:border-emerald-700 bg-white dark:bg-slate-800 px-3 py-2 text-[11px] text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1 shrink-0"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>{t('المخطط الهيكلي يُبنى ويُحرَّر في مرحلة «الهيكل التنظيمي» — اضغط للانتقال إليها (مصدر واحد، بلا تكرار).', 'The org chart is built & edited in the "Org structure" stage — click to go there (single source, no duplication).')}
               </button>
@@ -3585,7 +3599,7 @@ ${content.slice(0, 8000)}`;
                   {t('اختر نوع مخطط بالأعلى لتوليده.', 'Pick a diagram type above to generate.')}
                 </div>
               )}
-              <StageNav back={() => setStage(7)} next={() => setBuildTab('docs')} nextLabel={t('التالي: الوثائق', 'Next: documents')} ar={ar} />
+              <StageNav back={() => gotoStage(7)} next={() => setBuildTab('docs')} nextLabel={t('التالي: الوثائق', 'Next: documents')} ar={ar} />
             </section>
           )}
 
@@ -3972,7 +3986,7 @@ ${content.slice(0, 8000)}`;
                   </div>
                 </div>
               )}
-              <StageNav back={() => setBuildTab('diagrams')} next={() => setStage(3)} nextLabel={t('التالي: التحقق', 'Next: assurance')} ar={ar} />
+              <StageNav back={() => setBuildTab('diagrams')} next={() => gotoStage(3)} nextLabel={t('التالي: التحقق', 'Next: assurance')} ar={ar} />
             </section>
           )}
 
@@ -4132,7 +4146,7 @@ ${content.slice(0, 8000)}`;
 
                 </div>
               )}
-              <StageNav back={() => setStage(2)} next={() => setStage(4)} nextLabel={t('التالي: المكتبة', 'Next: library')} ar={ar} />
+              <StageNav back={() => gotoStage(2)} next={() => gotoStage(4)} nextLabel={t('التالي: المكتبة', 'Next: library')} ar={ar} />
             </section>
           )}
 
@@ -4472,7 +4486,7 @@ ${content.slice(0, 8000)}`;
               )}
               </>)}
 
-              <StageNav back={() => setStage(3)} ar={ar} />
+              <StageNav back={() => gotoStage(3)} ar={ar} />
             </section>
           )}
 
@@ -4482,7 +4496,7 @@ ${content.slice(0, 8000)}`;
               <StageHead icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-6 h-6"><path d="M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11M20 10v11M8 10v11M12 10v11M16 10v11"/></svg>} title={t('حزم الإدارات', 'Department Packages')}
                 desc={t('توليد الحزمة الكاملة لكل إدارة: الهدف، الهيكل، السياسات، الإجراءات، المؤشرات، الوصف الوظيفي، RACI، سجل المخاطر.', 'Generate a full package per department: goal, org chart, policies, procedures, KPIs, job descriptions, RACI, risk register.')} />
               <DepartmentBuilder model={model} tenantId={tenantId} language={language} />
-              <StageNav back={() => setStage(2)} ar={ar} />
+              <StageNav back={() => gotoStage(2)} ar={ar} />
             </section>
           )}
 
@@ -4593,40 +4607,13 @@ const lockedOrgUnitIds = (model: any): Set<string> => new Set(
     .map((x: any) => x.unitId).filter(Boolean)) as string[]);
 const orgUnitLocked = (model: any, id: string): boolean => lockedOrgUnitIds(model).has(id);
 
-// FE-2 — removed-unit tombstones. `deleteOrgUnit` (and a canvas delete) only remove a
-// unit from the LIVE model, but a HARD rebuild re-derives it from the source chunks via
-// buildModel + mergeModels (the owner's "شيل المالية" reappears). We persist the
-// normalized NAMES the owner deleted and prune them out of every rebuilt model so a
-// removed unit STAYS removed. Name-normalization mirrors governanceValidation.norm so
-// the tombstone keys line up with the merge's own name matching.
-const normUnitName = (s: string): string => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
-
-// Prune any unit whose normalized name is tombstoned — plus its descendants and the
-// roles/procedures/KPIs/authorities that referenced them — keeping referential
-// integrity. Pure (returns a new model); a no-op when nothing matches.
-function pruneRemovedUnits(model: CompanyGovernanceModel, removedNames: Set<string>): CompanyGovernanceModel {
-  if (!removedNames.size || !model?.orgUnits?.length) return model;
-  const removeUnitIds = new Set<string>();
-  for (const u of model.orgUnits) if (removedNames.has(normUnitName(u.name))) removeUnitIds.add(u.id);
-  if (!removeUnitIds.size) return model;
-  // cascade to descendants — removing a parent removes its sub-units too
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const u of model.orgUnits) {
-      if (u.parentId && removeUnitIds.has(u.parentId) && !removeUnitIds.has(u.id)) { removeUnitIds.add(u.id); grew = true; }
-    }
-  }
-  const removedRoleIds = new Set((model.roles || []).filter(r => r.unitId && removeUnitIds.has(r.unitId)).map(r => r.id));
-  return {
-    ...model,
-    orgUnits: model.orgUnits.filter(u => !removeUnitIds.has(u.id)),
-    roles: (model.roles || []).filter(r => !(r.unitId && removeUnitIds.has(r.unitId))),
-    procedures: (model.procedures || []).filter(p => !(p.unitId && removeUnitIds.has(p.unitId))),
-    kpis: (model.kpis || []).filter(k => !(k.unitId && removeUnitIds.has(k.unitId))),
-    authorities: (model.authorities || []).filter(a => !(a.roleId && removedRoleIds.has(a.roleId))),
-  };
-}
+// FE-2 / D2 — removed-unit tombstones. `deleteOrgUnit` (and a canvas delete, NL-edit
+// action, agent auto-apply, or snapshot rollback — see reconcileUnitTombstones and its
+// call sites) only remove a unit from the LIVE model, but a HARD rebuild re-derives it
+// from the source chunks via buildModel + mergeModels (the owner's "شيل المالية"
+// reappears). We persist the normalized NAMES the owner removed and prune them out of
+// every rebuilt model so a removed unit STAYS removed. `normUnitName` / `pruneRemovedUnits`
+// now live in governanceEngine.ts (pure, no React) so they're directly unit-testable.
 
 // A single org-tree node. Hoisted to module scope (a STABLE component type) so that OrgUnitTree
 // re-rendering on each keystroke RECONCILES the rename <input> instead of remounting it (which
