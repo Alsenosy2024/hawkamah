@@ -14,7 +14,11 @@ import React from 'react';
 // ===========================================================================
 
 // Lazy so the (heavy) Mermaid runtime only loads when a diagram is present.
-const MermaidView = React.lazy(() => import('./MermaidView'));
+// P8: EditableDiagram is the unified diagram module (view + optional NL chat
+// edit) — a chat-rendered ```mermaid fence now goes through it too, so a
+// diagram in the chat gets the SAME "edit by chatting" pencil as everywhere
+// else in the app whenever the consumer opts in via `onMermaidEdit`.
+const EditableDiagram = React.lazy(() => import('./EditableDiagram'));
 // Tiny, dependency-free detector (does NOT import mermaid) so we can recognize a
 // diagram by content even when the model tags the fence wrong / omits the language.
 import { isMermaidBlock } from '../services/mermaidDetect';
@@ -52,6 +56,11 @@ interface Props {
   className?: string;
   citations?: CiteRef[];                                  // ordered [مصدر N] → resource
   onCite?: (doc: string, heading?: string) => void;       // click a citation → navigate
+  // P8: when present, every ```mermaid fence rendered gets an "edit by chatting"
+  // pencil; an accepted edit calls back with (oldCode, newCode) so the caller can
+  // rewrite its OWN copy of `text` (this component never mutates its own prop).
+  // Omitted → identical to today: a plain read-only diagram.
+  onMermaidEdit?: (oldCode: string, newCode: string) => void;
 }
 
 interface CiteCtx { citations?: CiteRef[]; onCite?: Props['onCite']; }
@@ -117,7 +126,7 @@ function renderInline(src: string, keyBase: string, ctx: CiteCtx): React.ReactNo
 const splitRow = (line: string): string[] =>
   line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
 
-const Markdown: React.FC<Props> = ({ text, rtl = true, className = '', citations, onCite }) => {
+const Markdown: React.FC<Props> = ({ text, rtl = true, className = '', citations, onCite, onMermaidEdit }) => {
   const ctx: CiteCtx = { citations, onCite };
   const lines = (text || '').replace(/\r\n/g, '\n').split('\n');
   const blocks: React.ReactNode[] = [];
@@ -139,11 +148,18 @@ const Markdown: React.FC<Props> = ({ text, rtl = true, className = '', citations
       // as raw code in the chat bubble.
       if (lang === 'docspec' || lang === 'canvas') { continue; }
       if (code.trim() && isMermaidBlock(lang, code)) {
-        // Render as a real, brand-styled diagram.
+        // Render as a real, brand-styled diagram (editable when onMermaidEdit is wired).
+        const fenceCode = code; // stable per-block closure value for the edit callback below
         blocks.push(
           <MermaidErrorBoundary key={k++} rtl={rtl}>
             <React.Suspense fallback={<div className="gc-shimmer my-3 h-28 rounded-2xl" />}>
-              <div className="my-3"><MermaidView mermaid={code} language={rtl ? 'ar' : 'en'} /></div>
+              <div className="my-3">
+                <EditableDiagram
+                  mermaid={fenceCode}
+                  language={rtl ? 'ar' : 'en'}
+                  onSaveMermaid={onMermaidEdit ? (next) => onMermaidEdit(fenceCode, next) : undefined}
+                />
+              </div>
             </React.Suspense>
           </MermaidErrorBoundary>,
         );

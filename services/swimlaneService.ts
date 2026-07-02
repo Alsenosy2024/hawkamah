@@ -9,8 +9,9 @@
 // in the model, we VALIDATE it, and on any failure fall back to a DETERMINISTIC spec
 // built straight from the model — a swimlane ALWAYS renders, never fails silently.
 
-import { Type } from '@google/genai';
+import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import { generateJson } from './agentOrchestrator';
+import { MODELS } from '../constants/models';
 import type { CompanyGovernanceModel } from '../types';
 
 export type SwimNodeType = 'start' | 'process' | 'decision' | 'approve' | 'reject' | 'end';
@@ -184,6 +185,144 @@ export async function generateSwimlane(
   }
   console.warn('[swimlane] AI failed after retries — using deterministic model-derived fallback.');
   return deterministicSwimlane(model, ar);
+}
+
+// ---------------------------------------------------------------------------------
+//  Natural-language editing — the P8 "edit by chatting" surface for swimlanes, at
+//  parity with editMermaidWithAI (services/geminiService.ts). Unlike generateSwimlane
+//  above, a final failure THROWS instead of silently degrading to a deterministic
+//  fallback: silently discarding the user's explicit edit instruction would be far
+//  more confusing than a visible error the chat UI can show and let them retry.
+// ---------------------------------------------------------------------------------
+
+export interface SwimlaneEditAttachment { data: string; mimeType: string; name?: string }
+
+const isTransientSwimlaneErr = (err: any): boolean => {
+  const s = String(err?.message || err || '');
+  return /GENJSON_EMPTY|GENJSON_PARSE|503|429|overload|unavailable|UNAVAILABLE|RESOURCE_EXHAUSTED|high demand|deadline|timeout/i.test(s);
+};
+
+const swimlaneSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+/** Strip fences / pull the outermost JSON object out of a response that may carry preamble text. */
+function extractSpecJson(raw: string): string {
+  const stripped = (raw || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try { JSON.parse(stripped); return stripped; } catch { /* fall through to extraction */ }
+  const start = stripped.indexOf('{');
+  if (start === -1) throw new Error('GENJSON_PARSE: no JSON object found in response');
+  let depth = 0;
+  for (let i = start; i < stripped.length; i++) {
+    if (stripped[i] === '{') depth++;
+    else if (stripped[i] === '}') { depth--; if (depth === 0) return stripped.slice(start, i + 1); }
+  }
+  throw new Error('GENJSON_PARSE: unterminated JSON object in response');
+}
+
+// Multimodal JSON generation (text + optional image/PDF reference attachments) against
+// SPEC_SCHEMA. generateJson (agentOrchestrator) has no attachment support, so this is a
+// dedicated sibling — same retry-on-transient-error shape, called directly via
+// @google/genai like geminiService's editMermaidWithAI does.
+async function generateSwimlaneEditJson(
+  promptText: string,
+  systemInstruction: string,
+  attachments: SwimlaneEditAttachment[],
+  signal?: AbortSignal,
+): Promise<any> {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+  const parts = [
+    { text: promptText },
+    ...attachments.map(a => ({ inlineData: { data: a.data, mimeType: a.mimeType } })),
+  ];
+  const retries = 2;
+  let lastErr: any;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (signal?.aborted) throw new Error('ABORTED');
+    try {
+      const res = await ai.models.generateContent({
+        model: MODELS.TEXT,
+        contents: [{ role: 'user', parts }],
+        config: {
+          systemInstruction,
+          temperature: 0.3,
+          responseMimeType: 'application/json',
+          responseSchema: SPEC_SCHEMA,
+          maxOutputTokens: 16000,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        },
+      });
+      const raw = (res.text || '').trim();
+      if (!raw) throw new Error('GENJSON_EMPTY: model returned no content (blocked or truncated)');
+      return JSON.parse(extractSpecJson(raw));
+    } catch (err) {
+      lastErr = err;
+      if (signal?.aborted) throw new Error('ABORTED');
+      if (isTransientSwimlaneErr(err) && attempt < retries) {
+        await swimlaneSleep(700 * (attempt + 1) + Math.floor(Math.random() * 300));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr ?? new Error('GENJSON_EMPTY: unknown failure');
+}
+
+/**
+ * Edit an EXISTING SwimlaneSpec in natural language — the swimlane counterpart of
+ * editMermaidWithAI. Returns the full updated spec; ids the instruction doesn't ask
+ * to change are preserved verbatim (the prompt instructs the model to keep them, and
+ * pruneSpec/validateSpec only ever DROP dangling references, never rewrite ids).
+ * Throws `INVALID_SWIMLANE: <reason>` after MAX_TRIES failed attempts — callers must
+ * surface this to the user rather than silently discarding their instruction.
+ */
+export async function editSwimlaneWithAI(
+  spec: SwimlaneSpec,
+  instruction: string,
+  opts: { attachments?: SwimlaneEditAttachment[]; language?: 'ar' | 'en'; signal?: AbortSignal } = {},
+): Promise<SwimlaneSpec> {
+  const ar = opts.language !== 'en';
+  const atts = opts.attachments || [];
+  const sys = [
+    'You are an editor for an existing SWIMLANE flow diagram (RACI-style approval routing) in an Arabic-first corporate-governance app.',
+    'You receive the CURRENT SwimlaneSpec as JSON and an instruction, optionally with reference images/files.',
+    'Return ONLY the COMPLETE updated SwimlaneSpec JSON matching the schema — no markdown fences, no prose, no commentary.',
+    'Node types: "start", "process", "decision", "approve", "reject", "end". Edge kind: "flow", "approve", "reject".',
+    'CRITICAL: keep the SAME id for every lane/node the instruction does NOT ask to add, remove or rename — do not regenerate ids gratuitously. New lanes/nodes need new ASCII ids not already used in the spec (e.g. n7, laneD).',
+    'Every node.lane MUST reference an existing (or newly added) lane id. Every edge.from/to MUST reference an existing (or newly added) node id.',
+    ar ? 'All titles and labels in Arabic, short (2-5 words).' : 'All titles and labels in English, short.',
+    'Apply ONLY the requested edit — preserve every lane, node and edge the instruction does not ask to change.',
+    atts.length ? 'When reference images/files are provided, read their structure/text faithfully and reflect it in the diagram.' : '',
+  ].filter(Boolean).join(' ');
+
+  const promptBase = [
+    'CURRENT SWIMLANE SPEC (JSON):',
+    JSON.stringify(spec),
+    '',
+    `INSTRUCTION (${ar ? 'Arabic' : 'English'}):`,
+    instruction.trim() || (ar ? 'حسِّن المخطط واجعله أوضح.' : 'Improve and clarify the diagram.'),
+    '',
+    'Return ONLY the full updated SwimlaneSpec JSON: { title, lanes[{id,title,subtitle?}], nodes[{id,lane,label,type}], edges[{from,to,label?,kind?}] }.',
+  ].join('\n');
+
+  const MAX_TRIES = 3;
+  let lastErr = '';
+  for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+    if (opts.signal?.aborted) throw new Error('ABORTED');
+    const repair = attempt === 0 ? '' :
+      `\n\nYour previous spec was INVALID: ${lastErr}\nFix it: every node.lane must exist in lanes; every edge.from/to must exist in nodes.`;
+    try {
+      const res = await generateSwimlaneEditJson(promptBase + repair, sys, atts, opts.signal);
+      const pruned = pruneSpec(res as SwimlaneSpec);
+      const err = validateSpec(pruned);
+      if (!err) return { ...pruned, title: (pruned.title || '').trim() || spec.title };
+      lastErr = err;
+      console.warn(`[swimlane] edit produced invalid spec (try ${attempt + 1}/${MAX_TRIES}): ${err}`);
+    } catch (e: any) {
+      if (opts.signal?.aborted) throw e;
+      lastErr = String(e?.message || e).slice(0, 300);
+      console.warn(`[swimlane] edit attempt ${attempt + 1} threw: ${lastErr}`);
+    }
+  }
+  throw new Error(`INVALID_SWIMLANE: ${lastErr || (ar ? 'تعذّر إنتاج مخطط صالح من هذا الطلب.' : 'could not produce a valid diagram from that request.')}`);
 }
 
 /** Guaranteed-valid swimlane built purely from the model (authorities chain, else a procedure). */

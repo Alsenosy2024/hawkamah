@@ -31,6 +31,7 @@ import StepTimeline from './StepTimeline';
 import Markdown, { type CiteRef } from './Markdown';
 import DocumentCanvas from './DocumentCanvas';
 import { looksLikeDocument, canvasHtmlToMarkdown } from '../services/canvasDocument';
+import { replaceMermaidFence } from '../services/mermaidDetect';
 import { createSharedDoc } from '../services/sharedDocService';
 // Copilot avatar art — a bundled SVG line-icon (robot/chatbot face). Imported as
 // an asset (Vite gives us its hashed URL) and painted via CSS mask so it inherits
@@ -943,6 +944,14 @@ const GovCopilot: React.FC<Props> = (props) => {
     onOpenSource?.(doc);
     requestClose();
   };
+
+  // P8 — a ```mermaid fence rendered inside an assistant bubble now has an "edit by
+  // chatting" pencil (EditableDiagram, via Markdown's onMermaidEdit). Accepting an
+  // edit rewrites that ONE fence inside the message's own stored text; the existing
+  // debounced autosave effect (keyed on `msgs`) then persists it like any other turn.
+  const handleMermaidEdit = (msgId: string, oldCode: string, newCode: string) => {
+    setMsgs(ms => ms.map(m => (m.id === msgId ? { ...m, text: replaceMermaidFence(m.text, oldCode, newCode) } : m)));
+  };
   useEffect(() => () => { if (closeTimer.current) window.clearTimeout(closeTimer.current); }, []);
   // HWK-A4: if the panel ever unmounts mid-run (parent navigates / an outer
   // boundary fires), abort the in-flight request instead of leaving a ghost
@@ -1382,7 +1391,7 @@ const GovCopilot: React.FC<Props> = (props) => {
                   <div className="gc-msg-model gc-msg-in flex-1 min-w-0">
                     {m.text ? (
                       <>
-                        <Markdown text={m.text} rtl={ar} citations={m.srcRefs} onCite={handleCite} />
+                        <Markdown text={m.text} rtl={ar} citations={m.srcRefs} onCite={handleCite} onMermaidEdit={(oldCode, newCode) => handleMermaidEdit(m.id, oldCode, newCode)} />
                         {m.streaming && (
                           <div className="flex items-center gap-2 mt-2.5 text-[11px] text-[color:var(--hw-text-subtle)]">
                             <GeminiSpark className="w-3.5 h-3.5 gc-spark-breathe" />
