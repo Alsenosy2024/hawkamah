@@ -7,6 +7,7 @@ import { collection, doc, setDoc, getDoc } from 'firebase/firestore';
 import type { PaperAssessmentToken, PaperQuestion, PaperDifficulty, PaperTheories, Language, JobRole } from '../types';
 // PaperTheories, PaperDifficulty still used by generatePaperQuestions — do not remove
 import { generateJson } from './agentOrchestrator';
+import { compileChunkContext } from './governanceService';
 import { getRolesForCompany } from '../constants';
 import { Type } from '@google/genai';
 
@@ -120,12 +121,27 @@ const THEORY_BRIEFS: { key: keyof PaperTheories; name: string; brief: string }[]
 // 6 questions per batch: thinking disabled + 32k output budget → safe for complex Arabic scenarios.
 const BATCH_MAX = 6;
 
+// Bounded budget for the tenant chunk context: unlike the single-shot 12000-char
+// callers (App.tsx / SurveyLab / AdminPanel), this block is duplicated verbatim
+// into EVERY parallel batch prompt below (up to ~12 calls for a 30-question exam
+// across 2 types × 2 fill rounds) — keep it small to avoid multiplying token cost.
+const CHUNK_CTX_MAX_CHARS = 4000;
+
+// Pure prompt-builder (no network) — separated out so grounding behavior is
+// unit-testable without mocking generateJson/Firestore. Empty context → empty
+// block, i.e. the current (ungrounded) prompt shape is unchanged.
+export function buildChunkBlock(chunkCtx: string): string {
+  if (!chunkCtx) return '';
+  return `\nسياق داخلي من مستندات الشركة الفعلية (أنظمة وعمليات ومسميات حقيقية) — استند إليه لتأصيل الأسئلة الفنية والسلوكية في واقع هذه الشركة تحديداً بدل الأمثلة العامة؛ لا تقتبس نصاً حرفياً منه:\n"""\n${chunkCtx}\n"""\n`;
+}
+
 async function generateBatch(
   jobTitle: string,
   type: 'behavioral' | 'technical',
   count: number,
   difficulty: PaperDifficulty,
   theoryBlock: string,
+  chunkBlock: string,
   signal?: AbortSignal,
 ): Promise<PaperQuestion[]> {
   const typeLabel = type === 'behavioral'
@@ -137,7 +153,7 @@ async function generateBatch(
 نوع الأسئلة: ${typeLabel}
 ضع القيمة "${type}" في حقل "type" لكل سؤال.
 مستوى الصعوبة: ${DIFFICULTY_AR[difficulty]}
-${theoryBlock}
+${theoryBlock}${chunkBlock}
 الشروط:
 - 4 خيارات لكل سؤال (أ / ب / ج / د)
 - إجابة صحيحة واحدة
@@ -171,13 +187,17 @@ function chunkCounts(total: number, max: number): number[] {
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 // Fill exactly `target` questions of one type, retrying missing quota up to MAX_FILL_ROUNDS.
+// `onBatch` fires as each parallel batch call settles (fulfilled) so callers can
+// surface real "N of total" progress instead of a static spinner message (MINOR fix).
 async function fillType(
   jobTitle: string,
   type: 'behavioral' | 'technical',
   target: number,
   difficulty: PaperDifficulty,
   theoryBlock: string,
-  signal?: AbortSignal,
+  chunkBlock: string,
+  signal: AbortSignal | undefined,
+  onBatch: (n: number) => void,
 ): Promise<PaperQuestion[]> {
   const MAX_FILL_ROUNDS = 2;
   const collected: PaperQuestion[] = [];
@@ -187,7 +207,8 @@ async function fillType(
     const need = target - collected.length;
     const batches = chunkCounts(need, BATCH_MAX);
     const settled = await Promise.allSettled(
-      batches.map(c => generateBatch(jobTitle, type, c, difficulty, theoryBlock, signal)),
+      batches.map(c => generateBatch(jobTitle, type, c, difficulty, theoryBlock, chunkBlock, signal)
+        .then(qs => { onBatch(qs.length); return qs; })),
     );
     for (const s of settled) {
       if (s.status === 'fulfilled') collected.push(...s.value);
@@ -200,6 +221,14 @@ async function fillType(
   return collected.slice(0, target);
 }
 
+export interface GeneratePaperQuestionsResult {
+  questions: PaperQuestion[];
+  // CRITICAL fix: false whenever the tenant's chunk bank was empty/unknown, so
+  // callers can render an explicit "generic, not grounded in your documents"
+  // notice instead of presenting generic questions as if they were tailored.
+  grounded: boolean;
+}
+
 export async function generatePaperQuestions(
   jobTitle: string,
   count: number,
@@ -207,7 +236,9 @@ export async function generatePaperQuestions(
   behavioralPct: number,
   theories?: PaperTheories,
   signal?: AbortSignal,
-): Promise<PaperQuestion[]> {
+  tenantId?: string,
+  onProgress?: (done: number, total: number) => void,
+): Promise<GeneratePaperQuestionsResult> {
   const behCount = Math.round((count * behavioralPct) / 100);
   const techCount = count - behCount;
 
@@ -216,17 +247,32 @@ export async function generatePaperQuestions(
     ? `\nأطر القياس النفسي/المهني المطلوب دمجها (وزّع الأسئلة المناسبة عليها واذكر الإطار في حقل "theory"):\n${active.map(t => `- ${t.name}: ${t.brief}`).join('\n')}\n`
     : '\nبدون أطر قياس نفسي خاصة — أسئلة كفاءة وظيفية مباشرة. اترك حقل "theory" فارغاً أو "general".\n';
 
+  // CRITICAL fix: ground question generation in the tenant's ingested document
+  // chunks — the same compileChunkContext bridge App.tsx/SurveyLab/AdminPanel use
+  // for competency assessments and surveys — instead of generating purely from
+  // the job-title string. Degrades gracefully to the prior (ungrounded) behavior
+  // when no tenantId is known or the chunk bank is empty.
+  let chunkCtx = '';
+  if (tenantId) {
+    try { chunkCtx = await compileChunkContext(tenantId, CHUNK_CTX_MAX_CHARS); } catch { /* degrade to ungrounded */ }
+  }
+  const grounded = chunkCtx.length > 0;
+  const chunkBlock = buildChunkBlock(chunkCtx);
+
+  let done = 0;
+  const onBatch = (n: number) => { done += n; onProgress?.(done, count); };
+
   // Run both types in parallel; each type has its own fill-up loop.
   const [behavioral, technical] = await Promise.all([
-    behCount > 0 ? fillType(jobTitle, 'behavioral', behCount, difficulty, theoryBlock, signal) : Promise.resolve([]),
-    techCount > 0 ? fillType(jobTitle, 'technical',  techCount, difficulty, theoryBlock, signal) : Promise.resolve([]),
+    behCount > 0 ? fillType(jobTitle, 'behavioral', behCount, difficulty, theoryBlock, chunkBlock, signal, onBatch) : Promise.resolve([]),
+    techCount > 0 ? fillType(jobTitle, 'technical',  techCount, difficulty, theoryBlock, chunkBlock, signal, onBatch) : Promise.resolve([]),
   ]);
 
   if (behavioral.length + technical.length === 0) {
     throw new Error('GENJSON_EMPTY: no questions generated after all retries');
   }
 
-  return [...behavioral, ...technical];
+  return { questions: [...behavioral, ...technical], grounded };
 }
 
 // ---- PDF Builder ----

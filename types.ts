@@ -1234,6 +1234,13 @@ export interface UnifiedAttempt {
   jobTitle: string;
   startedAt: string;
   finishedAt: string;
+  // CRITICAL fix: the ACTUAL generated question set used for this attempt (a
+  // retry regenerates a fresh set, so this must be per-attempt, not on the
+  // parent result). Without it, HR review/AI analysis/the exported answer sheet
+  // had to reconstruct a fabricated placeholder ("سؤال 1", correctAnswer '—').
+  // Absent on legacy records saved before this fix — callers must treat an
+  // empty/missing array as "not available", never synthesize a substitute.
+  questions?: PaperQuestion[];
   proctorSummary?: import('./services/proctorCore').ProctorSummary;  // live AI proctoring integrity summary
 }
 

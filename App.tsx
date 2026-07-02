@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { 
   Language, 
   Screen, 
@@ -29,6 +29,7 @@ import EmployeePortalScreen from './components/EmployeePortalScreen';
 import { PaperAssessmentPortal } from './components/PaperAssessmentPortal';
 import { OnlineAssessmentPortal } from './components/OnlineAssessmentPortal';
 import UnifiedAssessmentPortal from './components/UnifiedAssessmentPortal';
+import GenerationProgress from './components/GenerationProgress';
 import SharedDocScreen from './components/SharedDocScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider, useToast } from './components/ToastProvider';
@@ -169,6 +170,31 @@ const App: React.FC = () => {
   };
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // MINOR fix: the assessment start-up spinner (below, renderScreen's isLoading
+  // branch) used to be a bare full-screen spinner with no stage text and no way
+  // out — the fast retry ladder alone allows up to ~115s. `startupCancelledRef`
+  // guards handleGenerateAssessment's async continuations (see below) so a
+  // cancel-back doesn't get silently overwritten by a late-arriving success/error
+  // once the user has already left the loading screen. generateQuestions itself
+  // is not aborted (no AbortSignal support there) — cancel just stops us from
+  // acting on its result.
+  const [loadingElapsed, setLoadingElapsed] = useState(0);
+  const startupCancelledRef = useRef(false);
+
+  useEffect(() => {
+    if (!isLoading) { setLoadingElapsed(0); return; }
+    const start = Date.now();
+    setLoadingElapsed(0);
+    const id = window.setInterval(() => setLoadingElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => window.clearInterval(id);
+  }, [isLoading]);
+
+  const handleCancelStartup = useCallback(() => {
+    startupCancelledRef.current = true;
+    setIsLoading(false);
+    setError(null);
+    setCurrentScreen(Screen.HOME);
+  }, []);
 
   // Firestore & local states (with defaults for unauthenticated sandbox views)
   const [documents, setDocuments] = useState<OrganizationDocument[]>(DEFAULT_DOCUMENTS);
@@ -457,6 +483,7 @@ const App: React.FC = () => {
     );
 
     setIsLoading(true);
+    startupCancelledRef.current = false;
     setError(null);
     setSurveyScope(effScope);
     setAssessmentConfig({ jobTitle, numQuestions, assessmentType, timerInSeconds, jobDescription, surveyScope: effScope, assessmentKind: assessmentKinds });
@@ -486,6 +513,7 @@ const App: React.FC = () => {
         const firstBatch = await generateQuestions(
           jobTitle, verbalFirstBatch, language, true, jobDescription, orgContext, projSurvey.theories
         );
+        if (startupCancelledRef.current) return;   // user cancelled while this was in flight
         setQuestions(firstBatch);
         setCurrentScreen(Screen.ONBOARDING);
         setIsLoading(false);
@@ -500,6 +528,7 @@ const App: React.FC = () => {
           );
         }
       } catch (err) {
+        if (startupCancelledRef.current) return;
         setError(language === 'ar' ? 'فشل بناء أسئلة المقابلة الصوتية. حاول مرة أخرى.' : 'Failed to build the verbal interview questions. Please retry.');
         console.error(err);
         setIsLoading(false);
@@ -520,6 +549,7 @@ const App: React.FC = () => {
         orgContext,
         projSurvey.theories
       );
+      if (startupCancelledRef.current) return;   // user cancelled while this was in flight
       setQuestions(firstBatchQuestions);
       setCurrentScreen(Screen.ONBOARDING);
       setIsLoading(false);
@@ -533,6 +563,7 @@ const App: React.FC = () => {
         );
       }
     } catch (err) {
+      if (startupCancelledRef.current) return;
       setError(language === 'ar' ? 'فشل إطعام نظام الذكاء الاصطناعي وبناء الأسئلة. الرجاء محاولة تشغيل التكوينات ثانية.' : 'Failed to generate tailored competency assessment. Try configuring settings again.');
       console.error(err);
       setIsLoading(false);
@@ -576,13 +607,24 @@ const App: React.FC = () => {
   // Main UI Screen Renderer
   const renderScreen = () => {
     if (isLoading) {
+      // MINOR fix: stage text keyed off elapsed time (the retry ladder alone can
+      // take up to ~115s) + a cancel-back affordance, instead of a bare spinner
+      // the user could only wait out. Reuses the shared GenerationProgress block
+      // built for the exam portals' question generation.
+      const stageMsg = loadingElapsed < 15
+        ? (language === 'ar' ? 'جارٍ تجهيز الأسئلة الأولى…' : 'Preparing the first questions…')
+        : loadingElapsed < 40
+        ? (language === 'ar' ? 'لا يزال العمل جارياً — قد يستغرق حتى دقيقة كاملة…' : 'Still working — this can take up to a minute…')
+        : (language === 'ar' ? 'شبه انتهينا، شكراً لصبرك…' : 'Almost there, thanks for your patience…');
       return (
-        <div className="flex flex-col items-center justify-center h-full space-y-4 py-20 bg-white">
-          <svg className="animate-spin h-10 w-10 text-teal-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          <p className="text-md text-slate-600 font-bold">{language === 'ar' ? 'جاري إعداد محاكاة الذكاء الاصطناعي وملف الجدارات...' : 'Tailoring your AI benchmark journey...'}</p>
+        <div className="flex flex-col items-center justify-center h-full py-20 bg-white">
+          <GenerationProgress
+            language={language}
+            title={language === 'ar' ? 'جاري إعداد محاكاة الذكاء الاصطناعي وملف الجدارات...' : 'Tailoring your AI benchmark journey...'}
+            message={stageMsg}
+            hint={language === 'ar' ? `${loadingElapsed} ثانية...` : `${loadingElapsed}s elapsed...`}
+            onCancel={handleCancelStartup}
+          />
         </div>
       );
     }

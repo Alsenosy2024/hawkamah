@@ -6,6 +6,7 @@ import {
 } from '../services/onlineAssessmentService';
 import { generatePaperQuestions } from '../services/paperAssessmentService';
 import { useProctor } from '../hooks/useProctor';
+import GenerationProgress from './GenerationProgress';
 import type { PaperQuestion } from '../types';
 
 interface Props { token: string; }
@@ -132,6 +133,10 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
   // Exam state
   const [questions, setQuestions]   = useState<PaperQuestion[]>([]);
   const [genMsg, setGenMsg]         = useState('');
+  const [genErr, setGenErr]         = useState('');
+  const [genDone, setGenDone]       = useState(0);
+  const [genTotal, setGenTotal]     = useState(0);
+  const genAbortRef = useRef<AbortController | null>(null);
   const [attemptNumber, setAttemptNumber] = useState(1);
   const [qIndex, setQIndex]         = useState(0);
   const [chosen, setChosen]         = useState('');
@@ -239,8 +244,18 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
   const generateQuestionsNow = async (title: string) => {
     if (!tok) return;
     setGenMsg('جارٍ توليد الأسئلة...');
+    setGenErr('');
+    setGenDone(0);
+    setGenTotal(tok.questionCount);
+    genAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    genAbortRef.current = ctrl;
     try {
-      const qs = await generatePaperQuestions(title, tok.questionCount, tok.difficulty, tok.behavioralPct, tok.theories);
+      const { questions: qs } = await generatePaperQuestions(
+        title, tok.questionCount, tok.difficulty, tok.behavioralPct, tok.theories,
+        ctrl.signal, tok.tenantId,
+        (done, total) => { setGenDone(done); setGenTotal(total); },
+      );
       // Tag last N as voice questions
       const voiceCount = Math.min(tok.voiceQuestionCount ?? 0, qs.length);
       for (let i = qs.length - voiceCount; i < qs.length; i++) {
@@ -263,10 +278,23 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
       // startProctor() is internally guarded to start at most once per attempt.
       proctor.startProctor(streamRef.current, proctor.screenStreamRef.current);
     } catch (e: unknown) {
-      setErrMsg(`فشل توليد الأسئلة: ${e instanceof Error ? e.message : String(e)}`);
-      setScreen('error');
+      if (ctrl.signal.aborted) return;   // cancelled — cancelGenerating already reset the screen
+      // MAJOR fix: stay on 'generating' with an inline retry instead of the
+      // terminal 'error' screen, which was a dead end (reload to try again).
+      setGenErr(`فشل توليد الأسئلة: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
+
+  // MAJOR fix: no cancel affordance previously existed while questions generate.
+  // Also releases the camera/screen-share grabbed in requestPermissions() and
+  // exits fullscreen, mirroring the cleanup already done for all_done/error.
+  const cancelGenerating = useCallback(() => {
+    genAbortRef.current?.abort();
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    proctor.stopProctor();
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    setScreen('permission');
+  }, [proctor.stopProctor]);
 
   // ── Timer (MCQ only — voice questions manage their own time) ───────────
   useEffect(() => {
@@ -533,6 +561,7 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
   // Backstop: release the proctor + screen stream + hidden <video> els if the
   // component unmounts without reaching a finish/cancel path.
   useEffect(() => () => { proctor.stopProctor(); }, [proctor.stopProctor]);
+  useEffect(() => () => { genAbortRef.current?.abort(); }, []);
 
   // ═══════════════════════════ RENDER ══════════════════════════════════════
 
@@ -754,12 +783,17 @@ export function OnlineAssessmentPortal({ token: tokenId }: Props) {
   if (screen === 'generating') return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50" style={{ fontFamily: FONT, direction: 'rtl' }}>
       <div className="hw-card p-10 w-full max-w-xs flex flex-col items-center gap-4 text-center">
-        <div className="w-10 h-10 rounded-full border-2 border-slate-200 border-t-emerald-600 animate-spin" />
-        <div className="flex flex-col gap-1">
-          <h2 className="text-base font-bold text-slate-900 m-0">جارٍ الإعداد...</h2>
-          <p className="text-sm text-slate-500 m-0">{genMsg || 'توليد أسئلة مخصصة بالذكاء الاصطناعي...'}</p>
-          <p className="text-xs text-slate-400 m-0 mt-1">المحاولة {attemptNumber} · {selectedTitle} · قد يستغرق ٣٠–٦٠ ثانية</p>
-        </div>
+        <GenerationProgress
+          language="ar"
+          title="جارٍ الإعداد..."
+          message={genErr ? undefined : (genMsg || 'توليد أسئلة مخصصة بالذكاء الاصطناعي...')}
+          hint={genErr ? undefined : `المحاولة ${attemptNumber} · ${selectedTitle} · قد يستغرق ٣٠–٦٠ ثانية`}
+          done={genDone}
+          total={genTotal}
+          error={genErr || null}
+          onCancel={genErr ? undefined : cancelGenerating}
+          onRetry={genErr ? () => generateQuestionsNow(selectedTitle) : undefined}
+        />
       </div>
     </div>
   );

@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   getPaperToken, getPaperProjectRoles, verifyPaperAccess, generatePaperQuestions, buildPaperPdf
 } from '../services/paperAssessmentService';
 import type { PaperAssessmentToken, PaperQuestion, PaperDifficulty, PaperTheories } from '../types';
 import { DEFAULT_PAPER_THEORIES } from '../types';
+import GenerationProgress from './GenerationProgress';
 
 interface Props { token: string; }
 
@@ -55,9 +56,15 @@ export function PaperAssessmentPortal({ token: tokenId }: Props) {
   const [theories, setTheories]       = useState<PaperTheories>(DEFAULT_PAPER_THEORIES);
 
   // Generate
-  const [genProgress, setGenProgress] = useState('');
+  const [genErr, setGenErr]           = useState('');
+  const [genDone, setGenDone]         = useState(0);
+  const [genTotal, setGenTotal]       = useState(0);
   const [questions, setQuestions]     = useState<PaperQuestion[]>([]);
+  const [grounded, setGrounded]       = useState(true);
   const [showAnswers, setShowAnswers] = useState(false);
+  const genAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => { genAbortRef.current?.abort(); }, []);
 
   useEffect(() => {
     getPaperToken(tokenId)
@@ -92,17 +99,36 @@ export function PaperAssessmentPortal({ token: tokenId }: Props) {
     const title = jobTitle.trim();
     if (!title) return;
     setScreen('generating');
-    setGenProgress('جارٍ توليد الأسئلة...');
+    setGenErr('');
+    setGenDone(0);
+    setGenTotal(qCount);
+    genAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    genAbortRef.current = ctrl;
     try {
-      const qs = await generatePaperQuestions(title, qCount, difficulty, behPct, theories);
+      const { questions: qs, grounded: g } = await generatePaperQuestions(
+        title, qCount, difficulty, behPct, theories, ctrl.signal, tok?.tenantId,
+        (done, total) => { setGenDone(done); setGenTotal(total); },
+      );
       setQuestions(qs);
+      setGrounded(g);
       setShowAnswers(false);
       setScreen('preview');
     } catch (e: any) {
-      setErrMsg(`فشل توليد الأسئلة: ${e?.message || e}`);
-      setScreen('error');
+      if (ctrl.signal.aborted) return;   // cancelled — handleCancelGenerate already reset the screen
+      setGenErr(`فشل توليد الأسئلة: ${e?.message || e}`);
     }
   }, [jobTitle, qCount, difficulty, behPct, theories, tok]);
+
+  // MAJOR fix: generation previously had no cancel affordance and the error
+  // screen was a dead end (reload-the-page to retry). Stay on 'generating' with
+  // an inline error+retry (matches UnifiedAssessmentPortal's pattern) instead of
+  // routing to the top-level 'error' screen, which stays reserved for an invalid
+  // link/token.
+  const handleCancelGenerate = useCallback(() => {
+    genAbortRef.current?.abort();
+    setScreen('config');
+  }, []);
 
   const activeTitle = jobTitle.trim();
 
@@ -335,15 +361,18 @@ export function PaperAssessmentPortal({ token: tokenId }: Props) {
 
   if (screen === 'generating') return (
     <FullCenter>
-      <div className="bg-white border border-slate-200 rounded-xl w-full max-w-sm flex flex-col items-center gap-4 px-8 py-10 text-center">
-        <Spinner />
-        <div>
-          <h2 className="text-lg font-bold text-slate-900">جارٍ الإعداد...</h2>
-          <p className="mt-1 text-sm text-slate-500">{genProgress}</p>
-        </div>
-        <p className="text-xs text-slate-400 leading-relaxed max-w-xs">
-          الذكاء الاصطناعي يُنشئ أسئلة مخصصة، قد يستغرق ٣٠–٦٠ ثانية
-        </p>
+      <div className="bg-white border border-slate-200 rounded-xl w-full max-w-sm flex flex-col items-center gap-4 px-8 py-10">
+        <GenerationProgress
+          language="ar"
+          title="جارٍ الإعداد..."
+          message={genErr ? undefined : `يُولَّد اختبار لـ "${activeTitle}"`}
+          hint={genErr ? undefined : 'الذكاء الاصطناعي يُنشئ أسئلة مخصصة، قد يستغرق ٣٠–٦٠ ثانية'}
+          done={genDone}
+          total={genTotal}
+          error={genErr || null}
+          onCancel={genErr ? undefined : handleCancelGenerate}
+          onRetry={genErr ? handleGenerate : undefined}
+        />
       </div>
     </FullCenter>
   );
@@ -361,9 +390,23 @@ export function PaperAssessmentPortal({ token: tokenId }: Props) {
             )}
             <div>
               <div className="text-sm font-bold text-slate-900">استعراض الاختبار: {activeTitle}</div>
-              <div className="text-xs text-slate-500 mt-0.5">
-                {questions.length} سؤال · {behN} سلوكي · {techN} فني ·{' '}
-                {DIFFICULTY_OPTIONS.find(d => d.value === difficulty)?.label}
+              <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                <span>
+                  {questions.length} سؤال · {behN} سلوكي · {techN} فني ·{' '}
+                  {DIFFICULTY_OPTIONS.find(d => d.value === difficulty)?.label}
+                </span>
+                <span
+                  className={`text-xs font-semibold rounded-sm px-2 py-0.5 border ${
+                    grounded
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}
+                  title={grounded
+                    ? 'استُخدمت مستندات الجهة المرفوعة في توليد الأسئلة'
+                    : 'لا توجد مستندات مرفوعة لهذه الجهة بعد — الأسئلة عامة وغير مبنية على واقعها'}
+                >
+                  {grounded ? 'مبني على مستندات الجهة' : 'أسئلة عامة (غير مؤصّلة بمستندات)'}
+                </span>
               </div>
             </div>
           </div>
