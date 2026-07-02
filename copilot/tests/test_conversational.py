@@ -9,11 +9,20 @@ all questions up front — I want it conversational." Three fixes covered here:
      scoped away from the document-GENERATION path's bare `system_prompt()`.
   4. `_WIZARD_HINT_AR` now asks one question per turn instead of a batch.
 
+P11 adds two more, both covered below:
+
+  5. `_is_smalltalk`'s bare-name allowance is tightened so a greeting attached to
+     a real content word ("هلا الحوكمة") no longer skips RAG (section 2).
+  6. `/ask`'s `ask()`/`ask_stream()` now accept the same `GroundingContext` /draft
+     already honors, injecting `grounding_brief()` into both the system prompt and
+     the user-turn context block (section 3b).
+
 These tests run offline (no network) via the `fake_gemini` fixture."""
 
 from __future__ import annotations
 
 from hawkama_copilot.agent import HawkamaAgent, _WIZARD_HINT_AR, _is_smalltalk
+from hawkama_copilot.generation import GroundingContext
 from hawkama_copilot.skill import CONVERSATION_RULE, system_prompt
 
 
@@ -41,6 +50,29 @@ def test_is_smalltalk_false_for_governance_questions():
         "مرحبا، عندي سؤال طويل جداً عن سياسة الإجازات وأريد تفاصيل كاملة عن الإجراء",
     ):
         assert not _is_smalltalk(msg), msg
+
+
+def test_is_smalltalk_false_for_greeting_plus_content_word():
+    # P11 — the bare-name allowance ("هلا محمد") used to also accept ANY single
+    # extra token, so a greeting attached to a real governance noun (or a
+    # question mark) was misread as pure smalltalk and skipped RAG entirely.
+    for msg in (
+        "هلا الحوكمة",
+        "هلا سياسة",
+        "صباح الخير حوكمة",
+        "مرحبا تقرير",
+        "hi, policy?",
+        "hi policy",
+        "hello report",
+        "hi document",
+    ):
+        assert not _is_smalltalk(msg), msg
+
+
+def test_is_smalltalk_true_for_greeting_plus_bare_name():
+    # The actual allowance this tolerance exists for must still pass.
+    for msg in ("هلا محمد", "hi John", "مرحبا سارة"):
+        assert _is_smalltalk(msg), msg
 
 
 def test_is_smalltalk_false_for_bare_acks():
@@ -136,6 +168,87 @@ def test_normal_ask_retrieves_and_uses_conversation_register(fake_gemini, tmp_co
 
     assert called["retrieve"] is True
     assert CONVERSATION_RULE in captured_systems[0]
+
+
+# --------------------------------------------------------------------------- #
+# 3b. /ask honors GroundingContext (P11) — same brief /draft already injects   #
+# --------------------------------------------------------------------------- #
+def test_ask_injects_grounding_brief_into_system_and_prompt(fake_gemini, tmp_corpus, monkeypatch):
+    agent = HawkamaAgent("test_conversational_grounded_ask")
+
+    captured = {}
+    import hawkama_copilot.agent as agent_mod
+
+    def _spy_generate(contents, **kw):
+        captured["system"] = kw.get("system", "")
+        captured["last_text"] = contents[-1].parts[0].text
+        return "جواب [مصدر 1]."
+
+    monkeypatch.setattr(agent_mod.genai_client, "generate", _spy_generate)
+
+    ground = GroundingContext(company="شركة النور", departments=["المالية", "العمليات"])
+    agent.ask("ما هي إداراتنا؟", ground=ground)
+
+    # Same brief text /draft injects (GroundingContext.brief()) reaches BOTH the
+    # system prompt and the user-turn context block, mirroring the draft path.
+    assert "شركة النور" in captured["system"]
+    assert "المالية" in captured["system"] and "العمليات" in captured["system"]
+    assert "== سياق المنظمة ==" in captured["last_text"]
+    assert "المالية" in captured["last_text"]
+
+
+def test_ask_stream_injects_grounding_brief(fake_gemini, tmp_corpus, monkeypatch):
+    agent = HawkamaAgent("test_conversational_grounded_ask_stream")
+
+    captured = {}
+    import hawkama_copilot.agent as agent_mod
+
+    def _spy_stream(contents, **kw):
+        captured["system"] = kw.get("system", "")
+        yield "جواب"
+
+    monkeypatch.setattr(agent_mod.genai_client, "generate_stream", _spy_stream)
+
+    # A raw dict (as the HTTP layer's _grounding_from_body produces) must work too.
+    ground = {"company": "شركة النور", "departments": ["الموارد البشرية"]}
+    list(agent.ask_stream("من يدير الموارد البشرية؟", ground=ground))
+
+    assert "شركة النور" in captured["system"]
+    assert "الموارد البشرية" in captured["system"]
+
+
+def test_ask_without_grounding_context_is_unchanged(fake_gemini, tmp_corpus, monkeypatch):
+    # Absent ground → behavior identical to pre-P11 (no company-context block).
+    agent = HawkamaAgent("test_conversational_ungrounded_ask")
+    captured = {}
+    import hawkama_copilot.agent as agent_mod
+
+    def _spy_generate(contents, **kw):
+        captured["last_text"] = contents[-1].parts[0].text
+        return "جواب [مصدر 1]."
+
+    monkeypatch.setattr(agent_mod.genai_client, "generate", _spy_generate)
+    agent.ask("ما هي سياسة التعيين؟")
+    assert "== سياق المنظمة ==" not in captured["last_text"]
+
+
+def test_smalltalk_still_skips_grounding_brief(fake_gemini, tmp_corpus, monkeypatch):
+    # A standalone greeting stays a tiny reply even when grounding is present —
+    # P10's smalltalk shortcut takes priority over P11's grounding injection.
+    agent = HawkamaAgent("test_conversational_smalltalk_with_ground")
+    captured = {}
+    import hawkama_copilot.agent as agent_mod
+
+    def _spy_generate(contents, **kw):
+        captured["system"] = kw.get("system", "")
+        captured["last_text"] = contents[-1].parts[0].text
+        return "أهلاً بك!"
+
+    monkeypatch.setattr(agent_mod.genai_client, "generate", _spy_generate)
+    ground = GroundingContext(company="شركة النور")
+    agent.ask("هلا", ground=ground)
+    assert "== سياق المنظمة ==" not in captured["last_text"]
+    assert "شركة النور" not in captured["system"]
 
 
 # --------------------------------------------------------------------------- #
