@@ -99,9 +99,13 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
       });
       setMine(m => [...m, saved]);
       setText('');
+      // D2 — honest UX: the client can't read doc_comments back (admin-only
+      // rule), so a returning visit shows NO trace of today's comment. Say so
+      // plainly instead of letting the checkmark imply it's saved anywhere the
+      // client themselves can come back to.
       setNote(withCheck
-        ? t('سُجِّلت المراجعة البصرية وأُرسلت للمالك ✅', 'Visual review recorded and sent to the owner ✅')
-        : t('أُرسل تعليقك إلى المالك ✅', 'Your comment was sent to the owner ✅'));
+        ? t('سُجِّلت المراجعة البصرية وأُرسلت للمالك ✅ لن تظهر لك هنا إن عدت لهذا الرابط لاحقاً.', 'Visual review recorded and sent to the owner ✅ It won’t be visible here if you return to this link later.')
+        : t('أُرسل تعليقك إلى المالك ✅ لن يظهر لك هنا إن عدت لهذا الرابط لاحقاً.', 'Your comment was sent to the owner ✅ It won’t be visible here if you return to this link later.'));
     } catch (e: unknown) {
       setNote(String((e as Error)?.message) === 'COMMENTS_NOT_ENABLED'
         ? t('التعليقات غير مُفعَّلة بعد لهذا المستند. تواصل مع مالك المستند.', 'Comments are not enabled yet for this document. Please contact the document owner.')
@@ -123,7 +127,8 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
       text, anchor,
     });
     setMine(m => [...m, saved]);
-    setNote(t('أُرسل تعليقك إلى المالك ✅', 'Your comment was sent to the owner ✅'));
+    // D2 — same honest disclaimer as the free-text/review path above.
+    setNote(t('أُرسل تعليقك إلى المالك ✅ لن يظهر لك هنا إن عدت لهذا الرابط لاحقاً.', 'Your comment was sent to the owner ✅ It won’t be visible here if you return to this link later.'));
   };
 
   // The client's own anchored comments (this session) painted in the snapshot.
@@ -258,6 +263,9 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
               {mine.length > 0 && (
                 <div className="border-t border-slate-100 dark:border-slate-800 pt-3 space-y-2">
                   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">{t('مساهماتك', 'Your submissions')}</p>
+                  {/* D2 — this list is in-memory only (this browser tab, this visit); make that
+                      explicit so it doesn't read as "saved and retrievable", which it isn't. */}
+                  <p className="text-[10.5px] text-slate-400 dark:text-slate-500 -mt-1">{t('لهذه الزيارة فقط — لن تظهر إن عدت لهذا الرابط لاحقاً.', 'This visit only — won’t be here if you come back to this link later.')}</p>
                   {mine.map(c => c.anchor ? (
                     // Inline (anchored) comment — click to scroll the snapshot to its span.
                     <button key={c.id} type="button" onClick={() => canvasApiRef.current?.scrollToComment(c.id)}

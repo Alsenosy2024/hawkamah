@@ -376,6 +376,23 @@ export function resolveOrgChartMermaid(
   return buildOrgChartMermaid(model ?? { orgUnits: [] }, opts);
 }
 
+/**
+ * D5 — the org chart is editable from TWO surfaces that used to drift apart:
+ * Stage 7's DiagramChatEditor persists an override on the MODEL (read back by
+ * resolveOrgChartMermaid above), while the Build→Diagrams gallery's chat/canvas
+ * editors only wrote the standalone GovDiagram record. Clearing the model
+ * override ("Regenerate from structure") must also resync any GovDiagram already
+ * saved with kind:'orgchart' from the gallery, or it keeps showing/exporting the
+ * now-discarded chart. PURE — returns only the records that actually differ from
+ * the deterministic chart (a no-op resync is skipped, not rewritten).
+ */
+export function staleOrgChartDiagrams<T extends { kind: string; mermaid: string }>(
+  diagrams: T[],
+  deterministicMermaid: string,
+): T[] {
+  return (diagrams || []).filter(d => d.kind === 'orgchart' && d.mermaid !== deterministicMermaid);
+}
+
 /** AI generates Mermaid syntax for the requested diagram kind, grounded in the model. */
 export async function generateMermaid(
   model: CompanyGovernanceModel,

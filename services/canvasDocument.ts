@@ -89,6 +89,14 @@ export function esc(s: unknown): string {
 export function inline(src: string): string {
   let s = esc(src);
   s = s.replace(/`([^`]+)`/g, (_m, c) => `<code>${c}</code>`);
+  // D4 — ![alt](url) BEFORE the link regex below: a data: URI (a rasterized
+  // diagram/figure) never matches that regex (it only accepts http(s)/relative/
+  // mailto), so an inline image used to survive as literal, unrendered text — up
+  // to tens of KB of visible base64. Handled here for any URL scheme so an image
+  // markdown that ends up inline (vs. its own block line — see markdownToDocSpec)
+  // always renders as an <img>, never as raw text or a mis-parsed "!" + link.
+  s = s.replace(/!\[([^\]]*)\]\(((?:https?:)?\/\/[^)\s]+|\/[^)\s]+|data:[^)\s]+)\)/g,
+    (_m, alt, url) => `<img src="${url}" alt="${alt}" style="max-width:100%;border-radius:8px"/>`);
   // [text](url) — only http(s)/relative; escaped already so quotes are safe.
   s = s.replace(/\[([^\]]+)\]\(((?:https?:)?\/\/[^)\s]+|\/[^)\s]+|mailto:[^)\s]+)\)/g,
     (_m, txt, url) => `<a href="${url}">${txt}</a>`);
@@ -464,6 +472,17 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
 
     // horizontal rule → skip (sections already paginate)
     if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { i++; continue; }
+
+    // D4 — a standalone image line: ![alt](url), including a data: URI (how
+    // artifactToMarkdown embeds a rasterized diagram/figure). MUST run before the
+    // paragraph collector below, which has no image case: without this, the whole
+    // line — often tens of KB of base64 — fell into a paragraph block and rendered
+    // as literal, unrendered text instead of the figure it represents.
+    const img = line.match(/^\s*!\[([^\]]*)\]\((data:[^)\s]+|[^)\s]+)\)\s*$/);
+    if (img) {
+      blocks.push({ type: 'figure', src: img[2], alt: img[1] || undefined });
+      i++; continue;
+    }
 
     // table (header row + separator row)
     if (line.includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes('-')) {

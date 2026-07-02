@@ -26,7 +26,7 @@ import {
   saveGovDocument, loadGovDocuments, deleteGovDocument,
   saveSnapshot, loadSnapshots, deleteSnapshot,
 } from '../services/governanceService';
-import { createSharedDoc, loadTenantDocComments, snapshotByteLength } from '../services/sharedDocService';
+import { createSharedDoc, loadTenantDocComments, snapshotByteLength, mergeClientComments } from '../services/sharedDocService';
 import { artifactToMarkdown } from '../services/canvasDocument';
 import DocumentCanvas from './DocumentCanvas';
 import {
@@ -35,7 +35,7 @@ import {
   normUnitName, diffUnitTombstones, pruneRemovedUnits,
   GovernanceDocument, type BulkScope,
 } from '../services/governanceEngine';
-import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout, resolveOrgChartMermaid } from '../services/diagramService';
+import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout, resolveOrgChartMermaid, staleOrgChartDiagrams } from '../services/diagramService';
 import { exportGovernanceManual, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual, exportArtifactsBatch, exportArtifactsZip, type BatchFormat, type BatchMode } from '../services/exportService';
 import { generateJson, generateJsonStream } from '../services/agentOrchestrator';
 import { extractPartialFields } from '../services/partialJson';
@@ -569,7 +569,28 @@ ${content.slice(0, 8000)}`;
   const [catFilter, setCatFilter] = useState<string>('');
   // V24: per-document AI guidance — free-text instructions keyed by doc-spec key,
   // woven only into THAT document's generation prompt (see handleCreateBatch).
+  // The custom single-doc mode (handleGenerate) reuses this SAME map under the
+  // '__custom__' sentinel key (no catalog key exists for it).
+  // D3 — this used to be plain useState (lost on reload). Persisted per-tenant in
+  // localStorage, same pattern as buildCriteria/buildRecos above: loaded on tenant
+  // change, written explicitly on each edit via persistGuidance.
   const [docGuidance, setDocGuidance] = useState<Record<string, string>>({});
+  const docGuidanceKey = `gov_doc_guidance:${tenantId}`;
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`gov_doc_guidance:${tenantId}`);
+      const obj = raw ? JSON.parse(raw) : {};
+      const cleaned: Record<string, string> = {};
+      if (obj && typeof obj === 'object') {
+        for (const [k, v] of Object.entries(obj)) if (typeof v === 'string' && v) cleaned[k] = v;
+      }
+      setDocGuidance(cleaned);
+    } catch { setDocGuidance({}); }
+  }, [tenantId]);
+  const persistGuidance = (next: Record<string, string>) => {
+    setDocGuidance(next);
+    try { localStorage.setItem(docGuidanceKey, JSON.stringify(next)); } catch { /* quota — ignore */ }
+  };
   const [batchRunning, setBatchRunning] = useState(false);
   const [seqGen, setSeqGen] = useState(false);   // HWK-C3: sequential "training-studio" generation (watch each doc build)
   const [batchLog, setBatchLog] = useState<string[]>([]);
@@ -1042,6 +1063,14 @@ ${content.slice(0, 8000)}`;
       const updated: GovDiagram = { ...activeDiag, flowNodes: nodes, flowEdges: edges, mermaid, updatedAt: Date.now() };
       await saveDiagram(updated);
       setActiveDiag(updated);
+      // D5 — the org chart has TWO editable surfaces that used to drift apart:
+      // Stage 7's DiagramChatEditor persists an override on the MODEL (see
+      // persistOrgChartOverride below), while this Build→Diagrams gallery editor
+      // only wrote the standalone GovDiagram record. Keep them coherent: an
+      // NL/canvas edit made HERE must also land as the model override, or Stage
+      // 7's «ارسم المخطط الهيكلي» would later silently overwrite it from
+      // resolveOrgChartMermaid(model).
+      if (updated.kind === 'orgchart') await persistOrgChartOverride(mermaid);
       await loadAll();
     } catch (e: any) {
       alertMsg(t('فشل حفظ الـCanvas: ', 'Canvas save failed: ') + (e?.message || e));
@@ -1074,6 +1103,7 @@ ${content.slice(0, 8000)}`;
         docTitle, goal: docGoal, model, chunks, referenceProjects: refProjects,
         buildCriteria, buildNotes: buildRecos, // D4/V17: own untruncated prompt block
         sector, language, signal: ac.signal,
+        guidance: docGuidance['__custom__'], // D3: the custom-mode path never wove this in before
         onProgress: setGenProgress,
         onThought: (txt) => pushThought(txt),
         onSection: (s) => pushSection(s),
@@ -1156,6 +1186,8 @@ ${content.slice(0, 8000)}`;
               createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
               sections: doc.sections, executiveSummary: doc.executiveSummary,
               diagrams: doc.diagrams, citations: doc.citations, comments: [],
+              // D3: persist the SAME guidance that steered this doc's generation.
+              ...(docGuidance[d.key] ? { guidance: docGuidance[d.key] } : {}),
             };
             await saveGovDocument(rec).catch(() => {});
             setGovDocs(prev => [...prev, rec]); // update in-memory even if Firestore save failed
@@ -1552,6 +1584,15 @@ ${content.slice(0, 8000)}`;
     if (!(await toast.confirm(t('إعادة التوليد من الهيكل ستتجاهل تعديلاتك اليدوية على المخطط وتعيد اشتقاقه من الوحدات التنظيمية. متابعة؟', 'Regenerating from structure discards your manual chart edits and re-derives it from the org units. Continue?'), { danger: true }))) return;
     const { orgChartMermaid: _dropped, ...rest } = model;
     await handleModelCanvasChange(rest as CompanyGovernanceModel);
+    // D5 — clear the OTHER store too: any orgchart-kind GovDiagram saved from the
+    // Build→Diagrams gallery (see handleSaveCanvas) must resync to the SAME
+    // deterministic chart, or it keeps showing/exporting the discarded override.
+    const deterministic = resolveOrgChartMermaid(rest as CompanyGovernanceModel);
+    const stale = staleOrgChartDiagrams<GovDiagram>(diagrams, deterministic);
+    if (stale.length) {
+      await Promise.all(stale.map(d => saveDiagram({ ...d, mermaid: deterministic, flowNodes: undefined, flowEdges: undefined }).catch(() => {})));
+      await loadAll();
+    }
   };
   // HWK-B2: inline org-unit edits directly on the tree, persisted via the same writeback path.
   // Add/rename are pure; delete is offered ONLY for a leaf unit with no attached roles (the tree
@@ -1735,7 +1776,13 @@ ${content.slice(0, 8000)}`;
   // in_review to re-share. If the AI revision fails, fall back to a content-unchanged bump.
   const newDocVersion = async (d: GovDocumentRecord): Promise<GovDocumentRecord> => {
     const now = new Date().toISOString();
-    const allComments = d.comments || [];
+    // D1 — include client/reviewer feedback from a /?doc= share so the AI-apply
+    // run actually sees it (it used to read ONLY d.comments and silently ignore
+    // client comments entirely). Promoted client comments that get flipped to
+    // 'implemented' below are persisted back onto `next.comments` — see the
+    // saveGovDocument(next) call — so a later merge won't re-add them as 'open'
+    // (mergeClientComments dedupes by id, and the record's own copy always wins).
+    const allComments = mergeClientComments(d.comments, clientComments[d.id]);
     const openComments = allComments.filter(c => c.status !== 'implemented');   // legacy (no status) = open
     const nextVersion = (d.version || 1) + 1;
     const prior: GovDocumentRecord = { ...d, id: uid('govdoc'), title: `${d.title} — ${t('نسخة', 'v')}${d.version || 1}`, updatedAt: now };
@@ -1895,10 +1942,13 @@ ${content.slice(0, 8000)}`;
     return { url };
   };
   // HWK-D4: new review comments (from others) since the owner last viewed the library.
+  // D1: counts client/reviewer feedback too (mergeClientComments), not just the
+  // owner's own in-canvas comments.
   const newReviewComments = useMemo<number>(() => {
     const me = auth.currentUser?.email || '';
-    return govDocs.reduce((n, d) => n + (d.comments || []).filter(c => c.author !== me && (!libSeenAt || c.at > libSeenAt)).length, 0);
-  }, [govDocs, libSeenAt]);
+    return govDocs.reduce((n, d) =>
+      n + mergeClientComments(d.comments, clientComments[d.id]).filter(c => c.author !== me && (!libSeenAt || c.at > libSeenAt)).length, 0);
+  }, [govDocs, clientComments, libSeenAt]);
   const markLibSeen = () => {
     const now = new Date().toISOString();
     setLibSeenAt(now);
@@ -3778,7 +3828,7 @@ ${content.slice(0, 8000)}`;
                             {sel.on && (
                               <textarea
                                 value={docGuidance[d.key] || ''}
-                                onChange={e => setDocGuidance(prev => ({ ...prev, [d.key]: e.target.value }))}
+                                onChange={e => persistGuidance({ ...docGuidance, [d.key]: e.target.value })}
                                 rows={2}
                                 placeholder={t('إرشادات للذكاء الاصطناعي لتوليد هذه الوثيقة (اختياري)…', 'AI guidance for generating this document (optional)…')}
                                 className="mt-2 w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-[12px] resize-none" />
@@ -3823,6 +3873,14 @@ ${content.slice(0, 8000)}`;
                   <div className="font-black text-slate-800 dark:text-slate-200 text-sm flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> {t('وثيقة مخصّصة', 'Custom document')}</div>
                   <input value={docTitle} onChange={e => setDocTitle(e.target.value)} placeholder={t('عنوان الوثيقة', 'Document title')} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-sm font-bold" />
                   <textarea value={docGoal} onChange={e => setDocGoal(e.target.value)} rows={3} placeholder={t('هدف الوثيقة وما تتضمّنه', 'Document goal and contents')} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-sm resize-none" />
+                  {/* D3: per-doc AI guidance for the custom path too — reuses the SAME
+                      docGuidance map as the catalog checklist, under a sentinel key. */}
+                  <textarea
+                    value={docGuidance['__custom__'] || ''}
+                    onChange={e => persistGuidance({ ...docGuidance, __custom__: e.target.value })}
+                    rows={2}
+                    placeholder={t('إرشادات للذكاء الاصطناعي لتوليد هذه الوثيقة (اختياري)…', 'AI guidance for generating this document (optional)…')}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-900 text-[13px] resize-none" />
                   <div className="flex flex-wrap gap-2 pt-1">
                     {!generating ? (
                       <button onClick={handleGenerate} disabled={!model || !!busy}
@@ -4401,7 +4459,13 @@ ${content.slice(0, 8000)}`;
                           <button onClick={(e) => { e.preventDefault(); handleBatchExport(recs, ar ? f.ar : f.en); }} disabled={!!busy} className="hw-btn hw-btn-sm hw-btn-subtle disabled:opacity-50 flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>{t('تصدير المجلد', 'Export folder')}</button>
                         </summary>
                         <div className="px-3 pb-3 space-y-2">
-                          {recs.map(d => (
+                          {recs.map(d => {
+                            // D1 — the owner's own review comments PLUS any client/reviewer
+                            // feedback from a /?doc= share (previously excluded here entirely,
+                            // so a doc with ONLY client comments showed no comment / new-version
+                            // buttons at all).
+                            const merged = mergeClientComments(d.comments, clientComments[d.id]);
+                            return (
                             <div key={d.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
                               <div className="flex items-center justify-between gap-2">
                                 <span className="font-bold text-slate-800 dark:text-slate-100 text-sm">{d.title} <span className={`text-[10px] px-2 py-0.5 rounded-full ${d.status === 'approved' ? 'bg-emerald-50 text-emerald-700' : d.status === 'in_review' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>{STATUS_AR[d.status]}</span></span>
@@ -4415,8 +4479,8 @@ ${content.slice(0, 8000)}`;
                                     «تصدير المجلد» / «تصدير الكل» remain for whole-folder batches. */}
                                 {d.status !== 'in_review' && <button onClick={() => setDocStatus(d, 'in_review')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 animate-spin"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('للمراجعة', 'To review')}</button>}
                                 {d.status !== 'approved' && <button onClick={() => setDocStatus(d, 'approved')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"/></svg>{t('اعتماد', 'Approve')}</button>}
-                                {d.comments && d.comments.length > 0 && <button onClick={() => { setCanvasPanelOpen(true); setCanvasRec(d); }} title={t('استعراض تعليقات المراجعة في الكانفس', 'View the review comments in the canvas')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('التعليقات', 'Comments')} ({d.comments.length})</button>}
-                                {d.comments && d.comments.some(c => c.status !== 'implemented') && <button onClick={() => newDocVersion(d)} title={t('طبّق التعليقات بالذكاء الاصطناعي → نسخة جديدة: تُحفظ النسخة الحالية، يُنقَّح المحتوى وفق التعليقات، ويُرفع الإصدار ويُعاد للمراجعة', 'AI-apply the comments → a new version: the current version is kept, the content is revised from the comments, the version is bumped, and it is re-shared for review')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>{t('إصدار جديد', 'New version')} <span className="opacity-70">v{(d.version || 1) + 1}</span></button>}
+                                {merged.length > 0 && <button onClick={() => { setCanvasPanelOpen(true); setCanvasRec(d); }} title={t('استعراض تعليقات المراجعة في الكانفس', 'View the review comments in the canvas')} className="hw-btn hw-btn-sm hw-btn-ghost flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{t('التعليقات', 'Comments')} ({merged.length})</button>}
+                                {merged.some(c => c.status !== 'implemented') && <button onClick={() => newDocVersion(d)} title={t('طبّق التعليقات بالذكاء الاصطناعي → نسخة جديدة: تُحفظ النسخة الحالية، يُنقَّح المحتوى وفق التعليقات، ويُرفع الإصدار ويُعاد للمراجعة', 'AI-apply the comments → a new version: the current version is kept, the content is revised from the comments, the version is bumped, and it is re-shared for review')} className="hw-btn hw-btn-sm hw-btn-subtle flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>{t('إصدار جديد', 'New version')} <span className="opacity-70">v{(d.version || 1) + 1}</span></button>}
                                 <button onClick={() => removeDoc(d.id)} className="hw-btn hw-btn-sm hw-btn-danger flex items-center gap-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
                               </div>
                               {/* V21: review comments are added (highlight-and-comment) on the
@@ -4440,7 +4504,8 @@ ${content.slice(0, 8000)}`;
                                 </div>
                               )}
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </details>
                     );
@@ -4554,7 +4619,12 @@ ${content.slice(0, 8000)}`;
           onClose={() => setCanvasRec(null)}
           onSave={saveCanvasHtml}
           onShare={shareRecord(canvasRec)}
-          comments={canvasRec.comments || []}
+          // D1 — merge in client/reviewer comments from the /?doc= share (doc_comments,
+          // loaded separately into `clientComments`) so the owner's canvas, the AI-apply
+          // run and the panel all see ONE list regardless of where a comment originated.
+          // Anchored client comments are highlighted here too (merged comments with an
+          // anchor are painted by DocumentCanvas's own highlight pass).
+          comments={mergeClientComments(canvasRec.comments, clientComments[canvasRec.id])}
           commentsOpenByDefault={canvasPanelOpen}
           onAddComment={addCanvasComment}
           onApplyComments={async () => { const nx = await newDocVersion(canvasRec); setCanvasRec(nx); }}
