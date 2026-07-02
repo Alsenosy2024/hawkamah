@@ -21,7 +21,10 @@ vi.mock('firebase/firestore', () => fs);
 vi.mock('../../services/agentOrchestrator', () => ({ generateJson: vi.fn() }));
 vi.mock('../../services/exportService', () => ({ exportDocx: vi.fn(), exportPdfDirect: vi.fn() }));
 
-import { createUnifiedToken, saveUnifiedResult, scoreAttempt } from '../../services/unifiedAssessmentService';
+import {
+  createUnifiedToken, saveUnifiedResult, scoreAttempt,
+  getAttemptQuestions, buildEmployeeArtifact,
+} from '../../services/unifiedAssessmentService';
 
 // Recursively assert no value is literally `undefined` — Firestore rejects those.
 const hasUndefined = (o: unknown): boolean => {
@@ -155,5 +158,92 @@ describe('scoreAttempt', () => {
     expect(scoreAttempt(questions, { 0: 'A) ok', 2: 'C) ok' })).toBe(67); // round(2/3*100)
     // Every question skipped → 0.
     expect(scoreAttempt(questions, {})).toBe(0);
+  });
+});
+
+// ─── getAttemptQuestions — CRITICAL fix: real persisted questions, never a ──
+// ─── fabricated placeholder (legacy-record fallback) ────────────────────────
+describe('getAttemptQuestions', () => {
+  const attempt = (over: Partial<import('../../types').UnifiedAttempt> = {}): import('../../types').UnifiedAttempt =>
+    ({
+      attemptNumber: 1, answers: {}, score: 0, violations: 0,
+      jobTitle: 'محاسب', startedAt: 't0', finishedAt: 't1',
+      ...over,
+    } as import('../../types').UnifiedAttempt);
+
+  const baseResult = (over: Partial<UnifiedAssessmentResult> = {}): UnifiedAssessmentResult =>
+    ({
+      tokenId: 'tok1', tenantId: 't1', projectId: 't1', companyName: 'شركة',
+      employeeName: 'سعيد', jobTitle: 'محاسب', bestScore: 0, passed: false,
+      submittedAt: new Date().toISOString(), attempts: [],
+      ...over,
+    } as unknown as UnifiedAssessmentResult);
+
+  it('returns the real persisted question set from the best-scoring attempt', () => {
+    const realQs = [q('A'), q('B')];
+    const result = baseResult({
+      bestScore: 80,
+      attempts: [
+        attempt({ attemptNumber: 1, score: 40, questions: [q('X')] }),
+        attempt({ attemptNumber: 2, score: 80, questions: realQs }),
+      ],
+    });
+    expect(getAttemptQuestions(result)).toBe(realQs);
+  });
+
+  it('falls back to the first attempt when none matches bestScore', () => {
+    const first = [q('A')];
+    const result = baseResult({
+      bestScore: 999,   // no attempt has this score (defensive edge case)
+      attempts: [attempt({ questions: first })],
+    });
+    expect(getAttemptQuestions(result)).toBe(first);
+  });
+
+  it('returns [] — never a fabricated placeholder — for a legacy attempt with no persisted questions', () => {
+    const result = baseResult({
+      bestScore: 60,
+      attempts: [attempt({ score: 60, answers: { 0: 'A', 1: 'B' } })],   // no `questions` field
+    });
+    expect(getAttemptQuestions(result)).toEqual([]);
+  });
+
+  it('returns [] for a result with no attempts at all', () => {
+    expect(getAttemptQuestions(baseResult({ attempts: [] }))).toEqual([]);
+  });
+});
+
+// ─── buildEmployeeArtifact — CRITICAL fix: honest legacy state, no fabricated ─
+// ─── answer sheet (every ❌, "سؤال N") when questions weren't persisted ──────
+describe('buildEmployeeArtifact', () => {
+  const result = (over: Partial<UnifiedAssessmentResult> = {}): UnifiedAssessmentResult =>
+    ({
+      tokenId: 'tok1', tenantId: 't1', projectId: 't1', companyName: 'شركة',
+      employeeName: 'سعيد الأحمد', jobTitle: 'محاسب أول', bestScore: 100,
+      passed: true, submittedAt: new Date().toISOString(),
+      attempts: [{
+        attemptNumber: 1, answers: { 0: 'A' }, score: 100, violations: 0,
+        jobTitle: 'محاسب أول', startedAt: 't0', finishedAt: 't1',
+      }],
+      ...over,
+    } as unknown as UnifiedAssessmentResult);
+
+  it('renders the REAL question text/answers when questions were persisted', () => {
+    const realQs = [
+      { type: 'technical', text: 'ما هو المعيار المحاسبي المطبق؟', options: ['A. أ', 'B. ب'], correctAnswer: 'A' },
+    ] as unknown as import('../../types').PaperQuestion[];
+    const artifact = buildEmployeeArtifact(result(), realQs);
+    const answers = artifact.sections.find(s => s.id === 'answers')!;
+    expect(answers.content).toContain('ما هو المعيار المحاسبي المطبق؟');
+    expect(answers.content).toContain('✅');   // chosen 'A' matches correctAnswer 'A'
+  });
+
+  it('shows an honest legacy notice — never a fabricated "سؤال N" / all-❌ sheet — when no questions were persisted', () => {
+    const artifact = buildEmployeeArtifact(result(), []);
+    const answers = artifact.sections.find(s => s.id === 'answers')!;
+    expect(answers.content).toContain('الأسئلة الأصلية غير محفوظة لهذا التقييم');
+    // Regression guard against the old fabrication path's exact shape.
+    expect(answers.content).not.toMatch(/سؤال \d/);
+    expect(answers.content).not.toContain('❌');
   });
 });

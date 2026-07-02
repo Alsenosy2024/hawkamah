@@ -2,11 +2,11 @@
 // Used inside ProjectsStage (expandable per-project panel).
 
 import React, { useState, useEffect } from 'react';
-import type { UnifiedAssessmentResult, PaperQuestion, Language, PublicSurveyResponse } from '../types';
+import type { UnifiedAssessmentResult, Language, PublicSurveyResponse, GeneratedArtifact } from '../types';
 import {
   getProjectResults, analyzeResult,
   exportEmployeePdf, exportEmployeeDocx,
-  buildEmployeeArtifact,
+  buildEmployeeArtifact, getAttemptQuestions,
 } from '../services/unifiedAssessmentService';
 // V36 — the «الردود» panel now also records environment-survey replies, which
 // live in the separate `survey_responses` collection (surveyTokenService).
@@ -14,6 +14,8 @@ import { getProjectResponses, patchResponseAnalysis } from '../services/surveyTo
 import { analyzeWorkEnvironment } from '../services/geminiService';
 import { buildSingleResponseArtifact, SURVEY_FIELDS } from '../services/surveyReport';
 import { exportDocx } from '../services/exportService';
+import { artifactToMarkdown } from '../services/canvasDocument';
+import DocumentCanvas from './DocumentCanvas';
 import { UI, badge } from '../services/designTokens';
 import { useToast } from './ToastProvider';
 import { useArtifactExport } from '../hooks/useArtifactExport';
@@ -39,6 +41,13 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
   // [MINOR fix] shared busy/toast wrapper for the buildXArtifact→exportDocx
   // export below (was its own `surveyExporting` copy — see hooks/useArtifactExport.ts).
   const exp = useArtifactExport(language);
+  // MAJOR fix (canvas preview) — open a generated employee report in the SAME
+  // in-app editable canvas GovernanceCenter uses for other generated artifacts
+  // (charter / risk register / roadmap), instead of going straight to a blob
+  // export with no preview. This panel is rendered outside GovernanceCenter (from
+  // ProjectsStage), so it owns its own small overlay state rather than reusing
+  // GovernanceCenter's local (unexported) openArtifactInCanvas.
+  const [canvasArt, setCanvasArt] = useState<GeneratedArtifact | null>(null);
 
   // V36 — environment-survey replies (survey_responses collection) shown alongside
   // the employee assessments so every reply type is recorded in one place.
@@ -68,24 +77,20 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
 
   const refresh = () => load();
 
-  // Generate a placeholder questions array for export (reuse last attempt job title)
-  // We can't re-fetch real questions, so we reconstruct from stored answers only
-  const placeholderQuestions = (r: UnifiedAssessmentResult): PaperQuestion[] => {
-    const best = r.attempts.find(a => a.score === r.bestScore) ?? r.attempts[0];
-    if (!best) return [];
-    return Object.keys(best.answers).map((k, i) => ({
-      type: 'technical',
-      text: `سؤال ${i + 1}`,
-      options: ['أ. —', 'ب. —', 'ج. —', 'د. —'],
-      correctAnswer: '—',
-      isVoice: false,
-    }));
-  };
-
   const handleAnalyze = async (r: UnifiedAssessmentResult) => {
+    // CRITICAL fix: getAttemptQuestions returns the REAL persisted question set
+    // (UnifiedAttempt.questions — see UnifiedAssessmentPortal), never a
+    // reconstructed placeholder. A legacy record saved before this fix has none.
+    const qs = getAttemptQuestions(r);
+    if (!qs.length) {
+      toast.error(t(
+        'الأسئلة الأصلية غير محفوظة لهذا التقييم (سجل سابق لتفعيل حفظ الأسئلة) — لا يمكن توليد تحليل ذكي دقيق منها.',
+        'The original questions were not saved for this assessment (a record from before question persistence) — an accurate AI analysis cannot be generated.',
+      ));
+      return;
+    }
     setAnalyzing(r.id!);
     try {
-      const qs = placeholderQuestions(r);
       const analysis = await analyzeResult(r, qs);
       const updated = { ...r, analysis, analysisGeneratedAt: new Date().toISOString() };
       setResults(prev => prev.map(x => x.id === r.id ? updated : x));
@@ -100,8 +105,7 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
   const handleExportPdf = async (r: UnifiedAssessmentResult) => {
     setExporting(r.id! + ':pdf');
     try {
-      const qs = placeholderQuestions(r);
-      await exportEmployeePdf(r, qs);
+      await exportEmployeePdf(r, getAttemptQuestions(r));
     } catch (err: unknown) {
       toast.error(t('فشل تصدير PDF: ', 'PDF export failed: ') + (err as Error).message);
     } finally {
@@ -112,13 +116,19 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
   const handleExportDocx = async (r: UnifiedAssessmentResult) => {
     setExporting(r.id! + ':docx');
     try {
-      const qs = placeholderQuestions(r);
-      await exportEmployeeDocx(r, qs);
+      await exportEmployeeDocx(r, getAttemptQuestions(r));
     } catch (err: unknown) {
       toast.error(t('فشل تصدير Word: ', 'Word export failed: ') + (err as Error).message);
     } finally {
       setExporting(null);
     }
+  };
+
+  // MAJOR fix: open the same report in the editable canvas before exporting,
+  // matching the openArtifactInCanvas pattern GovernanceCenter uses for the
+  // charter/risk register/roadmap (DocumentCanvas below renders it).
+  const handleOpenCanvas = (r: UnifiedAssessmentResult) => {
+    setCanvasArt(buildEmployeeArtifact(r, getAttemptQuestions(r)));
   };
 
   const handleBulkZip = async () => {
@@ -129,8 +139,6 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
       const folder = zip.folder('تقارير_الموظفين')!;
 
       for (const r of results) {
-        const qs = placeholderQuestions(r);
-        const artifact = buildEmployeeArtifact(r, qs);
         // For bulk ZIP, we create a simple text summary
         const lines = [
           `=== تقرير: ${r.employeeName} ===`,
@@ -157,7 +165,6 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
         ];
         const safeName = r.employeeName.replace(/[^a-zA-Z؀-ۿ0-9]/g, '_');
         folder.file(`${safeName}.txt`, lines.join('\n'), { binary: false });
-        artifact; // used above for structure reference
       }
 
       const blob = await zip.generateAsync({ type: 'blob' });
@@ -210,6 +217,7 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
     : 'text-rose-600 dark:text-rose-400';
 
   return (
+    <>
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
       {/* Panel header */}
       <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-200 dark:border-slate-700 bg-[#F7FAFB] dark:bg-slate-800/60">
@@ -435,7 +443,10 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
                     ) : (
                       <button
                         className="hw-btn hw-btn-ghost text-xs px-3 py-1.5 disabled:opacity-50"
-                        disabled={analyzing === r.id}
+                        disabled={analyzing === r.id || !getAttemptQuestions(r).length}
+                        title={!getAttemptQuestions(r).length
+                          ? t('الأسئلة الأصلية غير محفوظة لهذا التقييم — سجل سابق لتفعيل حفظ الأسئلة', 'The original questions were not saved for this assessment — a record from before question persistence')
+                          : undefined}
                         onClick={() => handleAnalyze(r)}
                       >
                         {analyzing === r.id
@@ -444,11 +455,25 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
                       </button>
                     )}
 
+                    {/* CRITICAL fix: honest state instead of a silent placeholder-backed
+                        analysis/export for legacy records with no persisted questions. */}
+                    {!getAttemptQuestions(r).length && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 leading-relaxed">
+                        {t('الأسئلة الأصلية غير محفوظة لهذا التقييم.', 'The original questions were not saved for this assessment.')}
+                      </p>
+                    )}
+
                     {/* Export actions */}
                     <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-slate-200/70 dark:border-slate-700/50">
                       <span className="text-xs text-slate-400 dark:text-slate-500 me-1">
                         {t('تصدير:', 'Export:')}
                       </span>
+                      <button
+                        className="hw-btn hw-btn-ghost text-xs px-2.5 py-1.5 disabled:opacity-50"
+                        onClick={() => handleOpenCanvas(r)}
+                      >
+                        {t('افتح في الكانفس', 'Open in canvas')}
+                      </button>
                       <button
                         className="hw-btn hw-btn-ghost text-xs px-2.5 py-1.5 disabled:opacity-50"
                         disabled={exporting === r.id + ':pdf'}
@@ -652,5 +677,21 @@ export default function ResponsesPanel({ tenantId, language, onClose }: Props) {
         </div>
       )}
     </div>
+
+    {/* MAJOR fix: canvas preview for the employee report, matching the
+        openArtifactInCanvas pattern GovernanceCenter uses for other generated
+        artifacts — edit in place before exporting, instead of a blind blob export. */}
+    {canvasArt && (
+      <DocumentCanvas
+        markdown={artifactToMarkdown(canvasArt)}
+        initialHtml={canvasArt.canvasHtml}
+        title={canvasArt.title}
+        language={language}
+        subtitle={canvasArt.goal}
+        onClose={() => setCanvasArt(null)}
+        onSave={html => setCanvasArt(prev => (prev ? { ...prev, canvasHtml: html } : prev))}
+      />
+    )}
+    </>
   );
 }

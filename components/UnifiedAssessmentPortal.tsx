@@ -13,6 +13,7 @@ import { speak as ttsSpeak, cancelSpeech, prefetch as ttsPrefetch, unlockAudio, 
 import { isExtendedDisplayNow } from '../services/displayDetection';
 import { transcribeAudio } from '../services/geminiService';
 import { MicRecorder, MicRecordError } from '../lib/audioRecorder';
+import GenerationProgress from './GenerationProgress';
 import type { UnifiedAssessmentToken, UnifiedAssessmentResult, UnifiedAttempt, PaperQuestion } from '../types';
 
 // ─── FaceDetector type declarations ────────────────────────────────────────
@@ -110,6 +111,8 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
   const [attempts, setAttempts]   = useState<UnifiedAttempt[]>([]);
   const [resultId, setResultId]   = useState<string | null>(null);
   const [genError, setGenError]   = useState('');
+  const [genDone, setGenDone]     = useState(0);
+  const [genTotal, setGenTotal]   = useState(0);
   const [camError, setCamError]   = useState('');
   const [voiceError, setVoiceError] = useState('');
   const [voiceFallback, setVoiceFallback] = useState(false);   // A4 — true while narration is on the robotic Web-Speech fallback (neural Puck unavailable)
@@ -244,6 +247,11 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       jobTitle,
       startedAt: es.startedAt,
       finishedAt: new Date().toISOString(),
+      // CRITICAL fix: persist the REAL generated question set with the attempt —
+      // each attempt can carry a different regenerated set (retry), so it must be
+      // recorded per-attempt. Without this, ResponsesPanel/analyzeResult/the
+      // exported answer sheet previously reconstructed a fabricated placeholder.
+      questions,
       ...(proctor.summaryRef.current ? { proctorSummary: proctor.summaryRef.current } : {}),
     };
     const newAttempts = [...attempts, attempt];
@@ -286,6 +294,8 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
       jobTitle,
       startedAt: es.startedAt,
       finishedAt: new Date().toISOString(),
+      // CRITICAL fix — see handleCancelAttempt: persist the real questions per attempt.
+      questions,
       ...(proctor.summaryRef.current ? { proctorSummary: proctor.summaryRef.current } : {}),
     };
     const newAttempts = [...attempts, attempt];
@@ -475,17 +485,21 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     if (!tok) return;
     setStage('generating');
     setGenError('');
+    setGenDone(0);
+    setGenTotal(tok.questionCount);
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const qs = await generatePaperQuestions(
+      const { questions: qs } = await generatePaperQuestions(
         jobTitle,
         tok.questionCount,
         tok.difficulty,
         tok.behavioralPct,
         tok.theories,
         ctrl.signal,
+        tok.tenantId,
+        (done, total) => { setGenDone(done); setGenTotal(total); },
       );
       if (!qs.length) throw new Error('الأسئلة فارغة');
       // Mark voice questions
@@ -597,6 +611,17 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     requestScreenForProctor();   // re-grab the screen on the retry click (gesture)
     generateQuestions();
   }, [generateQuestions, requestScreenForProctor]);
+
+  // ─── Cancel (MAJOR fix) ─────────────────────────────────────────────────
+  // generateQuestions already creates an AbortController and its catch already
+  // no-ops when ctrl.signal.aborted — but nothing ever called .abort() from the
+  // UI, so a candidate stuck on the spinner had no way out. Also releases the
+  // screen-share grabbed just before generation started (requestScreenForProctor).
+  const cancelGeneration = useCallback(() => {
+    abortRef.current?.abort();
+    proctor.stopProctor();
+    setStage('briefing');
+  }, [proctor.stopProctor]);
 
   // Bind the visible screen-share preview once the exam view (and its <video>
   // ref) has mounted — proceedToGenerate/retry grab the stream before this <video>
@@ -1015,27 +1040,16 @@ export default function UnifiedAssessmentPortal({ token: tokenId }: { token: str
     <div className={`${NAVY.bg} flex items-center justify-center p-6`} dir="rtl">
       <div className={`${NAVY.card} p-10 max-w-sm w-full text-center space-y-6`}>
         <Header title="جارٍ توليد الأسئلة" sub={`اختبار ${jobTitle}`} />
-        {!genError ? (
-          <>
-            <div className="flex justify-center">
-              <svg className="animate-spin h-10 w-10 text-emerald-600" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            </div>
-            <p className="text-slate-400 text-sm leading-relaxed">يُولَّد {tok?.questionCount} سؤالاً مخصصاً لـ &quot;{jobTitle}&quot;…</p>
-          </>
-        ) : (
-          <>
-            <div className="w-12 h-12 rounded-full bg-rose-50 border border-rose-200 flex items-center justify-center mx-auto">
-              <svg className="w-6 h-6 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-              </svg>
-            </div>
-            <p className="text-rose-600 text-sm leading-relaxed">{genError}</p>
-            <button className={`${NAVY.btn} hw-btn-w`} onClick={retry}>إعادة المحاولة</button>
-          </>
-        )}
+        <GenerationProgress
+          language="ar"
+          title=""
+          message={!genError ? `يُولَّد ${tok?.questionCount} سؤالاً مخصصاً لـ "${jobTitle}"…` : undefined}
+          done={genDone}
+          total={genTotal}
+          error={genError || null}
+          onCancel={!genError ? cancelGeneration : undefined}
+          onRetry={genError ? retry : undefined}
+        />
       </div>
     </div>
   );

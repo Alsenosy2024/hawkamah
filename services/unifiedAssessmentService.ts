@@ -62,6 +62,17 @@ export async function saveUnifiedResult(result: UnifiedAssessmentResult): Promis
   return ref.id;
 }
 
+// CRITICAL fix (pure, unit-tested): the ACTUAL generated question set is now
+// persisted per-attempt (UnifiedAttempt.questions — a retry regenerates a fresh
+// set, so it can't live on the parent result). Selects the same attempt
+// scoreAttempt/the review UI treat as authoritative (best score, else the
+// first). Returns [] — never a reconstructed placeholder — for a legacy record
+// saved before persistence was added, or an attempt awaiting the fix's rollout.
+export function getAttemptQuestions(result: UnifiedAssessmentResult): PaperQuestion[] {
+  const best = result.attempts.find(a => a.score === result.bestScore) ?? result.attempts[0];
+  return best?.questions ?? [];
+}
+
 export function scoreAttempt(questions: PaperQuestion[], answers: Record<number, string>): number {
   const mcq = questions.map((q, i) => ({ q, i })).filter(({ q }) => !q.isVoice);
   if (!mcq.length) return 0;
@@ -146,12 +157,18 @@ export function buildEmployeeArtifact(
     ? `| الكفاءة | الدرجة |\n|---------|--------|\n${a.competencyScores.map(c => `| ${c.name} | ${c.score}% |`).join('\n')}`
     : '';
 
-  const answersSection = questions.slice(0, 30).map((q, i) => {
-    const chosen = best?.answers[i] ?? '—';
-    const correct = q.correctAnswer;
-    const mark = chosen.startsWith(correct) ? '✅' : '❌';
-    return `${mark} **${i + 1}. ${q.text}**\n- الصحيح: ${correct} | اختار: ${chosen}${q.isVoice && best?.voiceAnswers?.[i] ? `\n- صوتي: "${best.voiceAnswers[i]}"` : ''}`;
-  }).join('\n\n');
+  // CRITICAL fix: `questions` must now be the REAL persisted set (best.questions —
+  // see UnifiedAttempt.questions), never a reconstructed placeholder. A legacy
+  // record saved before persistence was added has none — say so honestly instead
+  // of printing a plausible-looking but fabricated answer key (every ❌, "سؤال 1").
+  const answersSection = questions.length
+    ? questions.slice(0, 30).map((q, i) => {
+        const chosen = best?.answers[i] ?? '—';
+        const correct = q.correctAnswer;
+        const mark = chosen.startsWith(correct) ? '✅' : '❌';
+        return `${mark} **${i + 1}. ${q.text}**\n- الصحيح: ${correct} | اختار: ${chosen}${q.isVoice && best?.voiceAnswers?.[i] ? `\n- صوتي: "${best.voiceAnswers[i]}"` : ''}`;
+      }).join('\n\n')
+    : 'الأسئلة الأصلية غير محفوظة لهذا التقييم (سجل سابق لتفعيل حفظ الأسئلة) — تعذّر عرض ورقة الإجابات التفصيلية. الدرجة الإجمالية والتحليل أعلاه (إن وُجد) يبقيان صحيحين.';
 
   return {
     title: `تقرير تقييم موظف — ${result.employeeName}`,
@@ -184,7 +201,7 @@ export function buildEmployeeArtifact(
         id: 'answers',
         title: 'تفاصيل الإجابات',
         status: 'done',
-        content: answersSection || 'لا توجد تفاصيل.',
+        content: answersSection,
       },
     ],
   };
