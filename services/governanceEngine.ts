@@ -15,7 +15,8 @@ import { Type } from '@google/genai';
 import { streamChat, generateJson } from './agentOrchestrator';
 import { retrieve, chunksToProvenance, matchProjects } from './governanceService';
 import { GOV_DOC_CATALOG, frameworksDirective } from './governanceDocCatalog';
-import { standardsLens } from './governanceFrameworks';
+import { standardsLens, buildCriteriaLens, type BuildCriterion } from './governanceFrameworks';
+import { buildOrgChartMermaid } from './diagramService';
 import type {
   CompanyGovernanceModel, DocChunk, KnowledgeNode, ReferenceProject,
   GovOrgUnit, GovRole, GovPolicy, GovProcedure, GovGap, GovProgress, ProvenanceRef,
@@ -335,6 +336,71 @@ const modelSchema = {
   },
   required: ['orgUnits', 'roles', 'policies', 'gaps'],
 };
+
+// ---------------------------------------------------------------------------
+//  FE-2 / D2 — removed-org-unit tombstones. A unit deletion made anywhere in the UI
+//  (tree, canvas, NL-edit actions, agent auto-apply, snapshot rollback) only removes the
+//  unit from the LIVE model in memory; a later HARD rebuild re-derives units from the
+//  source chunks via buildModel + mergeModels, which would otherwise resurrect it. The
+//  caller persists the normalized NAMES the owner removed (per tenant) and prunes them
+//  out of every rebuilt model so a removed unit stays removed. Extracted as pure
+//  functions (no React state) so every model-saving path can reconcile tombstones and be
+//  unit-tested without mounting the component.
+// ---------------------------------------------------------------------------
+
+/** Normalize a unit name for tombstone matching — mirrors governanceValidation's own norm. */
+export const normUnitName = (s: string): string => (s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+/**
+ * Diff two org-unit arrays (by id) and return the updated tombstone set: a unit present in
+ * `prevUnits` but gone from `nextUnits` (by id AND by name — a rename isn't a delete) adds
+ * its normalized name; any name reintroduced into `nextUnits` clears its tombstone.
+ */
+export function diffUnitTombstones(
+  prevUnits: { id: string; name: string }[] | undefined,
+  nextUnits: { id: string; name: string }[] | undefined,
+  existing: ReadonlySet<string>,
+): Set<string> {
+  const prev = prevUnits || [], next = nextUnits || [];
+  const nextIds = new Set(next.map(u => u.id));
+  const nextNames = new Set(next.map(u => normUnitName(u.name)));
+  const removed = prev
+    .filter(u => !nextIds.has(u.id) && !nextNames.has(normUnitName(u.name)))
+    .map(u => normUnitName(u.name)).filter(Boolean);
+  const ns = new Set(existing);
+  for (const n of removed) ns.add(n);
+  for (const n of nextNames) if (n && ns.has(n)) ns.delete(n); // reintroduced → forget
+  return ns;
+}
+
+/**
+ * Prune any org unit whose normalized name is tombstoned — plus its descendants and the
+ * roles/procedures/KPIs/authorities that referenced them — keeping referential integrity.
+ * Pure (returns a new model); a no-op when nothing matches.
+ */
+export function pruneRemovedUnits(model: CompanyGovernanceModel, removedNames: ReadonlySet<string>): CompanyGovernanceModel {
+  if (!removedNames.size || !model?.orgUnits?.length) return model;
+  const removeUnitIds = new Set<string>();
+  for (const u of model.orgUnits) if (removedNames.has(normUnitName(u.name))) removeUnitIds.add(u.id);
+  if (!removeUnitIds.size) return model;
+  // cascade to descendants — removing a parent removes its sub-units too
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const u of model.orgUnits) {
+      if (u.parentId && removeUnitIds.has(u.parentId) && !removeUnitIds.has(u.id)) { removeUnitIds.add(u.id); grew = true; }
+    }
+  }
+  const removedRoleIds = new Set((model.roles || []).filter(r => r.unitId && removeUnitIds.has(r.unitId)).map(r => r.id));
+  return {
+    ...model,
+    orgUnits: model.orgUnits.filter(u => !removeUnitIds.has(u.id)),
+    roles: (model.roles || []).filter(r => !(r.unitId && removeUnitIds.has(r.unitId))),
+    procedures: (model.procedures || []).filter(p => !(p.unitId && removeUnitIds.has(p.unitId))),
+    kpis: (model.kpis || []).filter(k => !(k.unitId && removeUnitIds.has(k.unitId))),
+    authorities: (model.authorities || []).filter(a => !(a.roleId && removedRoleIds.has(a.roleId))),
+  };
+}
 
 export interface BuildModelParams {
   tenantId: string;
@@ -829,6 +895,11 @@ export interface GenerateDocParams {
   // into this doc's working memory and appended to as new facts are distilled,
   // so sibling docs in the same batch cross-reference consistent names/numbers.
   sharedFacts?: string[];
+  // D4/V17 — owner-defined build criteria table + general notes, applied to EVERY
+  // doc/section in the run (unlike `guidance`, which is per-document). Rendered via
+  // criteriaLensBlock directly into the system prompt — see that function's comment.
+  buildCriteria?: BuildCriterion[];
+  buildNotes?: string;
   onProgress?: (p: GovProgress | { phase: string; current: number; total: number; label: string }) => void;
   onThought?: (t: string) => void;
   onSection?: (sections: ArtifactSection[]) => void;
@@ -868,6 +939,48 @@ function docStandards(kind?: string): string {
     : ['ISO 9001', 'EFQM', 'KAQA', 'McKinsey 7S', 'PwC Governance']);
 }
 
+// D5 (V6-AC3, in-app half) — buildOrgChartMermaid (services/diagramService.ts) is the
+// deterministic org chart used by the stage-7 chart/canvas/export, built purely from
+// model.orgUnits with NO AI call, so it's grounded and stable. The in-app "Org
+// structure" DOCUMENT, however, used to have the AI free-draft its own prose
+// description of the structure — a different, non-deterministic source of truth that
+// could (and did) drift from the real chart. This renders the SAME deterministic
+// Mermaid + a units table, so the org-structure document always matches the chart
+// exactly, everywhere, and updates automatically when the model changes — no manual
+// re-drafting. PURE (no AI, no I/O) → unit-testable.
+export function orgStructureSectionMarkdown(model: CompanyGovernanceModel): string {
+  const mermaid = buildOrgChartMermaid(model);
+  const nameOf = (id?: string) => (id ? model.orgUnits.find(u => u.id === id)?.name : undefined) || '—';
+  const rows = (model.orgUnits || []).map(u =>
+    `| ${(u.name || '—').replace(/\|/g, '/')} | ${u.parentId ? nameOf(u.parentId).replace(/\|/g, '/') : '—'} | ${(u.mandate || '—').replace(/\|/g, '/').replace(/\n+/g, ' ')} |`,
+  ).join('\n');
+  return `## الهيكل التنظيمي (من المخطط الرسمي المعتمد)
+المخطط والجدول التاليان مُشتقّان آلياً من نموذج حوكمة الشركة — نفس المصدر الذي يرسم منه مخطط مرحلة «الهيكل التنظيمي» — فلا يختلفان عنه أبداً، وأي تعديل لاحق على الهيكل ينعكس هنا تلقائياً دون إعادة صياغة يدوية.
+
+\`\`\`mermaid
+${mermaid}
+\`\`\`
+
+### جدول الوحدات التنظيمية
+| الوحدة | تتبع لـ | الغرض/الاختصاص |
+|---|---|---|
+${rows || '| — | — | — |'}`;
+}
+
+/** D5 — is this document kind the standalone org-structure doc, or does its title
+ *  otherwise call out the org structure? Used to decide whether to PIN a deterministic
+ *  section instead of letting the AI free-draft the structure. */
+export function isOrgStructureDoc(kind?: string, title?: string): boolean {
+  if (kind === 'org_structure') return true;
+  const t = (title || '');
+  // "الهيكل التنظيمي" (definite, the real catalog/UI phrasing) and "هيكل تنظيمي" (indefinite)
+  return /(ال)?هيكل\s+(ال)?تنظيمي|org(anizational)?\s*(structure|chart)/i.test(t);
+}
+
+/** Sentinel plan/section id for the D5 pinned org-structure section — used to skip AI
+ *  drafting/retrieval/critique-revision for it (see generateGovernanceDoc). */
+const ORG_STRUCTURE_PIN_ID = 'org_structure_pinned';
+
 // HIGH (industry-awareness): sector was plumbed into every generation param but
 // NEVER injected into the prompt — so the model defaulted to generic/IT examples
 // regardless of the real industry. This block forces the output into the actual
@@ -895,6 +1008,20 @@ export function perDocGuidanceLens(guidance?: string): string {
   return `
 === توجيهات خاصة بهذه الوثيقة (إلزامية — من المالك، طبّقها في كل قسم) ===
 ${g}`;
+}
+
+// D4 (V17 fix) — the owner's build-criteria table + general notes used to be smuggled
+// into the prompt as a synthetic "reference project" (see recoReference in
+// GovernanceCenter), which meant its content went through referenceProjectsBlock's
+// `.slice(0, 2500)` EXCERPT truncation and could also be pushed out of the top-3 ranked
+// slots by real reference projects — a moderately full criteria table + notes box was
+// silently cut or dropped entirely. It now gets its OWN prompt block, injected directly,
+// with its own generous cap (independent of the reference-project channel) so a large
+// table + notes box still lands whole in every bulk/section prompt.
+const CRITERIA_LENS_CAP = 6000;
+export function criteriaLensBlock(criteria?: BuildCriterion[], notes?: string): string {
+  const block = buildCriteriaLens(criteria, notes);
+  return block ? block.slice(0, CRITERIA_LENS_CAP) : '';
 }
 
 // HIGH (reference projects): the owner uploads prior real projects as a basis,
@@ -952,7 +1079,7 @@ ${facts}
 === ${coherenceMemo(model)} ===
 ${industryLens(p.sector)}${referenceProjectsBlock(p.referenceProjects, p.sector)}
 
-${docStandards(p.kind)}${perDocGuidanceLens(p.guidance)}`;
+${docStandards(p.kind)}${perDocGuidanceLens(p.guidance)}${criteriaLensBlock(p.buildCriteria, p.buildNotes)}`;
 
   const artifact: GovernanceDocument = {
     title: p.docTitle, goal: p.goal, language,
@@ -999,6 +1126,29 @@ ${docStandards(p.kind)}${perDocGuidanceLens(p.guidance)}`;
   }
   if (isAborted(signal)) return artifact;
 
+  // D5 (V6-AC3, in-app half) — pin the org-structure section to the deterministic chart
+  // instead of letting the AI free-draft it (see orgStructureSectionMarkdown's comment).
+  // Two cases: (a) the AI's own outline already planned a section about the org
+  // structure — for ANY doc kind (a full governance manual, a current-state report,
+  // etc.) — repoint THAT section at the pinned content instead of dropping it, so the
+  // rest of the doc's outline/flow is untouched; (b) this is specifically the
+  // standalone org-structure document (by kind or by a custom title naming it) and no
+  // outlined section matched — prepend one so the doc is never missing it. Only the
+  // FIRST match is repointed (keeps `id` unique across `plans` — a section id must be
+  // unique for citations/downstream lookups); an unlikely second AI-titled duplicate
+  // just stays normal AI prose, same as any other accidental topic duplication.
+  let pinnedOrgSection = false;
+  plans = plans.map(pl => {
+    if (!pinnedOrgSection && isOrgStructureDoc(undefined, pl.title)) { pinnedOrgSection = true; return { ...pl, id: ORG_STRUCTURE_PIN_ID }; }
+    return pl;
+  });
+  if (isOrgStructureDoc(p.kind, p.docTitle) && !pinnedOrgSection) {
+    plans = [
+      { id: ORG_STRUCTURE_PIN_ID, title: 'الهيكل التنظيمي (من المخطط الرسمي)', goal: 'عرض الهيكل التنظيمي المعتمد كما هو في المخطط الرسمي', query: '' },
+      ...plans,
+    ];
+  }
+
   artifact.sections = plans.map(pl => ({ id: pl.id, title: pl.title, content: '', status: 'pending' as const }));
   onSection?.(artifact.sections);
   const outlineText = plans.map((pl, i) => `${i + 1}. ${pl.title} — ${pl.goal}`).join('\n');
@@ -1011,11 +1161,21 @@ ${docStandards(p.kind)}${perDocGuidanceLens(p.guidance)}`;
   // Coherence holds via the shared outline + coherenceMemo in sys + globalFacts.
   onProgress?.({ phase: 'section', current: 0, total: plans.length, label: 'استرجاع الأدلة لكل الأقسام...' });
   const evidences = await mapPool(plans, 6, signal, async pl => {
+    if (pl.id === ORG_STRUCTURE_PIN_ID) return []; // D5: deterministic — no retrieval needed
     try { return await retrieve(`${pl.title} ${pl.query}`, chunks, evidenceK, signal); } catch { return []; }
   });
   let writtenCount = 0;
   await mapPool(plans, 3, signal, async (pl, i) => {
     if (isAborted(signal)) return;
+    // D5: pinned org-structure section — render deterministically, skip AI drafting entirely.
+    if (pl.id === ORG_STRUCTURE_PIN_ID) {
+      artifact.sections[i].content = orgStructureSectionMarkdown(model);
+      artifact.sections[i].status = 'done';
+      artifact.citations[pl.id] = [];
+      writtenCount++;
+      onSection?.([...artifact.sections]);
+      return;
+    }
     artifact.sections[i].status = 'writing';
     onSection?.([...artifact.sections]);
     onProgress?.({ phase: 'section', current: Math.min(writtenCount + 1, plans.length), total: plans.length, label: `كتابة: ${pl.title}` });
@@ -1095,18 +1255,21 @@ ${evidence}
     // section past ~#10 once the budget was spent on early ones).
     let critBudget = Math.max(40000, artifact.sections.length * 3000);
     const dg = artifact.sections.map((s, i) => {
+      if (plans[i]?.id === ORG_STRUCTURE_PIN_ID) return ''; // D5: pinned/deterministic — never critique-revise
       const remaining = artifact.sections.length - i;
       const fairShare = Math.ceil(critBudget / Math.max(1, remaining));
       const cap = Math.min(4000, Math.max(600, fairShare));
       const excerpt = s.content.slice(0, cap);
       critBudget = Math.max(0, critBudget - excerpt.length);
       return `### قسم ${i + 1}: ${s.title}\n${excerpt}`;
-    }).join('\n\n');
+    }).filter(Boolean).join('\n\n');
     const res = await generateJson<{ issues: typeof issues }>(
       `راجع المسودة: حدّد التناقضات بين الأقسام، الأرقام بلا [مصدر]، الاستشهادات الناقصة، مخالفة نموذج الشركة. لكل مشكلة: sectionIndex (من 1)، issue، fix. JSON فقط.\n\n${dg}`,
       critiqueSchema, { systemInstruction: sys, signal },
     );
-    issues = (res.issues || []).filter(it => it.sectionIndex >= 1 && it.sectionIndex <= plans.length);
+    // D5: even if the AI still names the pinned section's number, never let phase D rewrite it.
+    issues = (res.issues || []).filter(it =>
+      it.sectionIndex >= 1 && it.sectionIndex <= plans.length && plans[it.sectionIndex - 1]?.id !== ORG_STRUCTURE_PIN_ID);
   } catch { issues = []; }
 
   // ---- D: targeted revise ----
@@ -1174,6 +1337,11 @@ export interface GenerateBulkParams {
   language?: Language;
   sector?: string;                // industry lens (construction-wise, not IT)
   referenceProjects?: ReferenceProject[];  // prior real projects as a basis
+  // D4/V17 — owner-defined build criteria table + general notes, applied to every item
+  // in the bulk run. Rendered via criteriaLensBlock directly into the system prompt
+  // (its own block, its own cap — see criteriaLensBlock's comment).
+  buildCriteria?: BuildCriterion[];
+  buildNotes?: string;
   signal?: AbortSignal;
   onProgress?: (p: { phase: string; current: number; total: number; label: string }) => void;
   onThought?: (t: string) => void;
@@ -1197,6 +1365,16 @@ const SCOPE_META: Record<BulkScope, { title: string; goal: string; unit: string 
   kpis: { title: 'دليل مؤشرات الأداء الكامل', goal: 'لكل مؤشر: التعريف، المعادلة، المستهدف، الجهة المالكة، دورية القياس، مصدر البيانات', unit: 'مؤشر' },
 };
 
+// D3 — a bulk doc is truthfully "complete" only when it wasn't aborted AND every planned
+// section actually finished ('done'). Previously `complete` meant only "not aborted", so a
+// run where EVERY section failed (e.g. a quota error mid-run) still reported complete=true;
+// handleGenerateAll then saved a placeholder-only doc and told the owner it succeeded.
+// Extracted as a pure, exported predicate so the contract is unit-testable without
+// mocking the AI streaming pipeline.
+export function isBulkDocComplete(sections: { status: string }[], aborted: boolean): boolean {
+  return !aborted && sections.length > 0 && sections.every(s => s.status === 'done');
+}
+
 export async function generateBulkDoc(p: GenerateBulkParams): Promise<GovernanceDocument> {
   const { scope, model, chunks, signal, onProgress, onThought, onSection } = p;
   const language = p.language || 'ar';
@@ -1216,7 +1394,7 @@ ${facts}
 === ${coherenceMemo(model)} ===
 ${industryLens(p.sector)}${referenceProjectsBlock(p.referenceProjects, p.sector)}
 
-${frameworksDirective(SCOPE_FRAMEWORKS[scope])}${scope === 'procedures' ? BPM_PROC_DIRECTIVE : ''}`;
+${frameworksDirective(SCOPE_FRAMEWORKS[scope])}${scope === 'procedures' ? BPM_PROC_DIRECTIVE : ''}${criteriaLensBlock(p.buildCriteria, p.buildNotes)}`;
 
   // ---- deterministic outline: one section per entity ----
   type Plan = { id: string; title: string; query: string; instruction: string };
@@ -1393,7 +1571,7 @@ ${frameworksDirective(SCOPE_FRAMEWORKS[scope])}${scope === 'procedures' ? BPM_PR
     });
   }
 
-  artifact.complete = !isAborted(signal);
+  artifact.complete = isBulkDocComplete(artifact.sections, isAborted(signal));
   onProgress?.({ phase: 'done', current: plans.length, total: plans.length, label: 'اكتمل التوليد الشامل ✅' });
   onSection?.([...artifact.sections]);
   return artifact;
