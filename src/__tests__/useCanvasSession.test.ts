@@ -45,6 +45,32 @@ describe('useCanvasSession pure transitions', () => {
     expect(opened2.cache).toEqual({ m1: '<p>m1 html</p>' }); // m1's cache entry survives
   });
 
+  // Regression pin (gate-1 review) — GovernanceCenter's openArtifactInCanvas
+  // used to pass a FIXED session id ('canvas-art') for every artifact it
+  // opens (charter, gendoc, diagnostic, risk register, roadmap). Open the
+  // charter, edit, save (caches the edited html under that fixed id), close,
+  // then open the risk register — a PURE function of `model`, so its
+  // `canvasHtml` is always undefined — and open()'s undefined-html fallback
+  // ("no explicit html → rehydrate from cache[id]") would seed the risk
+  // register's doc from the CHARTER's cached html, because both opens used
+  // the same id. The fix: mint a fresh id per open (GovernanceCenter now does
+  // `uid('canvasart')`), so a later open with a DIFFERENT id — even after an
+  // unrelated doc was saved — never rehydrates from that other doc's entry.
+  it('a doc opened with a FRESH id is never seeded from another doc\'s cache entry, even right after that other doc was saved (GovernanceCenter cross-artifact bleed)', () => {
+    let state = initialCanvasSessionState<'charter' | null, undefined>();
+    state = openCanvasDoc(state, 'artifact-1', '# charter', 'charter'); // charter, first open — no prior edit
+    const { state: afterSave } = saveCanvasDoc(state, '<p>charter edited</p>'); // user edits + saves
+    state = closeCanvasDoc(afterSave);
+
+    // Now open a DIFFERENT artifact (risk register) with a FRESH id and no
+    // html — exactly GovernanceCenter's post-fix call shape for a pure,
+    // never-persisted artifact.
+    state = openCanvasDoc(state, 'artifact-2', '# risk register', null, undefined);
+
+    expect(state.doc?.html).toBeUndefined();               // NOT the charter's edited html
+    expect(state.cache['artifact-1']).toBe('<p>charter edited</p>'); // charter's entry is untouched, just not reused
+  });
+
   it('close() clears doc but preserves the cache (GovCopilot: close/reopen shows edits)', () => {
     const s0 = initialCanvasSessionState();
     const seeded = openCanvasDoc(s0, 'm1', '# v1', null, '<p>x</p>');

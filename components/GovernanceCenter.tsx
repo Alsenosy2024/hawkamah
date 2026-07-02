@@ -2057,7 +2057,18 @@ ${content.slice(0, 8000)}`;
   const openArtifactInCanvas = (art: GeneratedArtifact, kind: CanvasArtKind = null) => {
     setCanvasRec(null);
     canvasArtLibRef.current = null; canvasArtLastHtmlRef.current = '';   // new artifact/session → fresh fallback state
-    canvasArtSession.open('canvas-art', artifactToMarkdown(art), kind, art.canvasHtml, art);
+    // BUG fix (gate-1 review) — a FIXED session id here meant the hook's
+    // cache (keyed by id, meant for GovCopilot's cross-message rehydration)
+    // bled HTML across DIFFERENT artifacts: open the charter, edit, save
+    // (cache['canvas-art'] = charter html), close, then open the risk
+    // register (a pure function of `model` — canvasHtml is always undefined)
+    // → open() falls back to seeding from cache['canvas-art'], rendering the
+    // CHARTER's edited HTML inside the risk register canvas. A fresh id per
+    // open means the cache can never have a stale entry under it, so seeding
+    // only ever comes from `art.canvasHtml` — the object-carried rehydration
+    // this component always relied on (charterArt/genDoc state, diagnostic's
+    // reportData.canvasHtml, the library-fallback ref), unchanged by this hook.
+    canvasArtSession.open(uid('canvasart'), artifactToMarkdown(art), kind, art.canvasHtml, art);
   };
   const saveCanvasArtHtml = (html: string) => canvasArtSession.save(html);
   // Persist the live canvas edits onto the record so they survive reload + flow
