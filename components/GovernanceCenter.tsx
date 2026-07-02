@@ -24,7 +24,7 @@ import {
   loadReferenceProjects, saveReferenceProject, deleteReferenceProject, seedStandardsLibrary, deleteDocChunks,
   saveDiagram, loadDiagrams, deleteDiagram,
   saveGovDocument, loadGovDocuments, deleteGovDocument,
-  saveSnapshot, loadSnapshots, deleteSnapshot,
+  saveSnapshot, loadSnapshots, deleteSnapshot, compileChunkContext,
 } from '../services/governanceService';
 import { createSharedDoc, loadTenantDocComments, snapshotByteLength, mergeClientComments } from '../services/sharedDocService';
 import { artifactToMarkdown } from '../services/canvasDocument';
@@ -34,11 +34,12 @@ import {
   industryLens, referenceProjectsBlock,
   normUnitName, diffUnitTombstones, pruneRemovedUnits,
   resolveApplyOutcome, type ApplyOutcome,
-  GovernanceDocument, type BulkScope,
+  GovernanceDocument, type BulkScope, isBulkDocComplete, resolveCitationOutcome,
 } from '../services/governanceEngine';
 import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout, resolveOrgChartMermaid, staleOrgChartDiagrams, buildProvenance } from '../services/diagramService';
 import { exportGovernanceManual, exportWorkflowManual, exportJobDescriptions, exportPoliciesManual, exportArtifactsBatch, exportArtifactsZip, type BatchFormat, type BatchMode } from '../services/exportService';
 import { generateJson, generateJsonStream } from '../services/agentOrchestrator';
+import { buildRoundRobinDigest } from '../services/chunkDigest';
 import { extractPartialFields } from '../services/partialJson';
 import { GOV_DOC_CATALOG, CATALOG_CATEGORIES, recommendDocuments, type DocCatalogEntry } from '../services/governanceDocCatalog';
 import { analyzeIntegrity, maturity as computeMaturity, coverageMatrix, mergeModels, traceEntity } from '../services/governanceValidation';
@@ -286,6 +287,15 @@ const GovernanceCenter: React.FC<Props> = ({ documents, settings, language, onBa
     if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
     sectionsBuf.current = null; thoughtsBuf.current = [];
   }, []);
+  // MINOR fix — the "begin a generation run" reset was copy-pasted at five call
+  // sites (single-doc, batch, bulk, generate-all, gap-fix); one shared helper so a
+  // future addition to what must be cleared only needs to change here. Each site
+  // still sets `setGenerating(true)` itself (some bundle it with a mode-specific
+  // flag like setBatchRunning, at a slightly different point relative to an
+  // await) — only the identical five-statement tail is shared.
+  const beginGenRun = useCallback(() => {
+    setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
+  }, [resetGenBuffers]);
   useEffect(() => () => {
     if (flushTimer.current) clearTimeout(flushTimer.current);
     abortRef.current?.abort(); // abort any in-flight gen/build on unmount
@@ -487,6 +497,12 @@ ${content.slice(0, 8000)}`;
   const [modelCanvas, setModelCanvas] = useState(false);
   const [modelCanvasNodes, setModelCanvasNodes] = useState<any[]>([]);
   const [modelCanvasEdges, setModelCanvasEdges] = useState<any[]>([]);
+  // I — «افتح المحرّر» used to promise a live drag canvas ("add a unit/role, rename
+  // or delete") but only ever mounted the Mermaid-text chat editor; modelCanvasNodes/
+  // Edges were computed and never rendered. Toggle between that computed node/edge
+  // canvas (GovernanceCanvas, model-bound so edits to a role/unit/policy/procedure's
+  // real fields persist) and the existing NL chat editor.
+  const [modelCanvasView, setModelCanvasView] = useState<'canvas' | 'chat'>('canvas');
   // V29 — reflects the async persist of an AI-edited org-chart override into the model.
   const [savingOrgChart, setSavingOrgChart] = useState(false);
   // HWK-D2: in-app comment composer (replaces window.prompt); tracks which doc's box is open + its draft.
@@ -546,8 +562,14 @@ ${content.slice(0, 8000)}`;
   // D2: which backing state (if any) `canvasArt` was opened from, so edits saved
   // from the canvas (onSave) can be written back onto that SAME state and
   // survive a close/reopen — see openArtifactInCanvas / saveCanvasArtHtml.
-  const [canvasArt, setCanvasArt] = useState<GeneratedArtifact | null>(null);
-  const [canvasArtKind, setCanvasArtKind] = useState<'charter' | 'gendoc' | null>(null);
+  // J — typed to also allow GovernanceDocument (adds `citations`): openArtifactInCanvas
+  // is called with a real GovernanceDocument for the 'gendoc' kind (handleGenerate /
+  // "افتح في الكانفس"), and artifactToMarkdown reads `d.citations?.[s.id]` off
+  // whatever object it's given. Widening the STATE type makes that citations flow
+  // explicit/type-checked instead of relying on GeneratedArtifact's structural
+  // subtyping to silently carry the extra field through at runtime.
+  const [canvasArt, setCanvasArt] = useState<GeneratedArtifact | GovernanceDocument | null>(null);
+  const [canvasArtKind, setCanvasArtKind] = useState<'charter' | 'gendoc' | 'diagnostic' | null>(null);
   // D2: identity of the fallback library record for the CURRENTLY open untagged
   // artifact (risk register / roadmap), + the last html actually written to it.
   // DocumentCanvas calls onSave after EVERY smart-edit action, not just an
@@ -668,31 +690,20 @@ ${content.slice(0, 8000)}`;
   // N1 — representative digest of the REAL uploaded chunks (round-robin per document,
   // same sampling spirit as buildModel) so the current-state report is grounded in the
   // company's actual documents, not the company name. Returns { digest, docNames }.
+  // P16-N: selection now delegates to the shared buildRoundRobinDigest (also used by
+  // governanceEngine's buildModel) — this function only owns its own entry
+  // formatting/budget, so the two sampling strategies can't drift apart again.
   const buildChunkDigest = (chunks: any[], maxChars = 14000): { digest: string; docNames: string[] } => {
-    if (!chunks?.length) return { digest: '', docNames: [] };
-    const byDoc = new Map<string, any[]>();
-    for (const c of chunks) {
-      const k = c.docName || c.docId || '—';
-      (byDoc.get(k) || byDoc.set(k, []).get(k)!).push(c);
-    }
-    const docNames = Array.from(byDoc.keys());
-    const queues = Array.from(byDoc.values()).map(arr =>
-      [...arr].sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0)));
-    const lines: string[] = [];
-    let used = 0, idx = 0, drained = 0;
-    while (drained < queues.length && used < maxChars) {
-      const q = queues[idx % queues.length];
-      idx++;
-      if (!q.length) { drained++; continue; }
-      drained = 0;
-      const c = q.shift();
-      const head = c.headingPath ? `[${c.docName} › ${c.headingPath}]` : `[${c.docName}]`;
-      const body = (c.text || '').slice(0, 700);
-      const piece = `${head}\n${body}`;
-      if (used + piece.length > maxChars) break;
-      lines.push(piece); used += piece.length;
-    }
-    return { digest: lines.join('\n\n'), docNames };
+    const { docNames, picked } = buildRoundRobinDigest(chunks, {
+      maxChars,
+      formatEntry: (c: any) => {
+        const head = c.headingPath ? `[${c.docName} › ${c.headingPath}]` : `[${c.docName}]`;
+        const body = (c.text || '').slice(0, 700);
+        return `${head}\n${body}`;
+      },
+    });
+    // round-robin (interleaved) order, unlike buildModel — matches this site's prior behavior.
+    return { digest: picked.map(p => p.piece).join('\n\n'), docNames };
   };
 
   // P0-1: explicit error classifier — replaces alertMsg's keyword guessing, which routed
@@ -766,10 +777,20 @@ ${content.slice(0, 8000)}`;
   // in the canvas (the single export surface). Generate the charter, then open it.
   const genCharter = async () => {
     if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
+    // P16-C — wire the same AbortController + Stop pattern every sibling action uses:
+    // previously genCharter never created a controller, so the shared Stop button
+    // (which calls abortRef.current?.abort()) aborted nothing and the charter still
+    // opened in the canvas after "Stop" was clicked.
+    abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
     setBusy(t('توليد الميثاق', 'Generating charter'));
-    try { const art = await buildCharter(model); setCharterArt(art); openArtifactInCanvas(art, 'charter'); }
-    catch (e: any) { alertMsg(t('فشل توليد الميثاق: ', 'Charter failed: ') + (e?.message || e)); }
-    finally { setBusy(''); }
+    try {
+      const art = await buildCharter(model, ac.signal, (p) => setProgress(p as any));
+      if (ac.signal.aborted) return;
+      setCharterArt(art); openArtifactInCanvas(art, 'charter');
+    } catch (e: any) {
+      if (ac.signal.aborted || e?.message === 'ABORTED') return; // user-initiated Stop — no error toast
+      alertMsg(t('فشل توليد الميثاق: ', 'Charter failed: ') + (e?.message || e));
+    } finally { setBusy(''); setProgress(null); }
   };
   const approveModel = async () => {
     if (!model) return;
@@ -1116,7 +1137,7 @@ ${content.slice(0, 8000)}`;
   const handleGenerate = async () => {
     if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
     abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
-    setGenerating(true); setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
+    setGenerating(true); beginGenRun();
     try {
       const chunks = await loadChunks(tenantId);
       const doc = await generateGovernanceDoc({
@@ -1174,7 +1195,7 @@ ${content.slice(0, 8000)}`;
       const chunks = await loadChunks(tenantId).catch(() => [] as any[]);
       // shared cross-doc fact memory → coherent names/numbers across all docs in the batch
       const sharedFacts: string[] = [];
-      setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
+      beginGenRun();
 
       // bounded concurrency pool with retry/backoff. HWK-C3: sequential (1) for the
       // "training-studio" watch-each-build mode, otherwise parallel-but-rate-safe (3).
@@ -1199,6 +1220,19 @@ ${content.slice(0, 8000)}`;
               onProgress: (pr) => { activeLabel = d.ar; setGenProgress(pr as any); },
               onSection: (s) => { if (activeLabel === d.ar) pushSection(s); },
             });
+            // CRITICAL fix — generateGovernanceDoc never throws on a per-section
+            // failure (each failed section just gets a FAIL_CONN placeholder), so a
+            // run where EVERY section failed used to sail through to the save/
+            // "done & saved" toast below as if it succeeded. Gate on the SAME
+            // isBulkDocComplete predicate handleGenerateAll already uses — an
+            // incomplete doc throws here, which reuses the EXISTING retry/backoff
+            // ladder below instead of being dead code for this failure class.
+            if (!isBulkDocComplete(doc.sections, ac.signal.aborted)) {
+              const doneCount = doc.sections.filter(s => s.status === 'done').length;
+              throw new Error(doneCount === 0
+                ? t('فشلت كل أقسام الوثيقة', 'every section failed')
+                : t(`اكتمل ${doneCount} من ${doc.sections.length} قسمًا فقط`, `only ${doneCount}/${doc.sections.length} sections completed`));
+            }
             const rec: GovDocumentRecord = {
               id: uid('govdoc'), tenantId, kind: d.key,
               title: doc.title, goal: doc.goal, scope: `${pages}p`,
@@ -1238,9 +1272,20 @@ ${content.slice(0, 8000)}`;
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY, picked.length) }, () => worker()));
 
       await loadAll().catch(() => {});
-      if (okCount) alertMsg(seqGen
-        ? t(`اكتمل توليد ${okCount} وثيقة (بالتتابع) وحُفظت بالمكتبة مع تماسك مرجعي مشترك.`, `Generated ${okCount} document(s) sequentially, saved to library with shared coherence.`)
-        : t(`اكتمل توليد ${okCount} وثيقة (بالتوازي) وحُفظت بالمكتبة مع تماسك مرجعي مشترك.`, `Generated ${okCount} document(s) in parallel, saved to library with shared coherence.`));
+      // CRITICAL fix — always report, honestly: previously a total failure
+      // (okCount===0) fell through this `if` silently, so "every document failed"
+      // looked identical to "nothing happened" — no toast at all.
+      const modeLabel = seqGen ? t('بالتتابع', 'sequentially') : t('بالتوازي', 'in parallel');
+      const failCount = picked.length - okCount;
+      if (ac.signal.aborted) {
+        alertMsg(t(`توقّف التوليد بالدفعة — ${okCount}/${picked.length} وثيقة حُفظت.`, `Batch generation stopped — ${okCount}/${picked.length} document(s) saved.`));
+      } else if (okCount === picked.length) {
+        alertMsg(t(`اكتمل توليد ${okCount} وثيقة (${modeLabel}) وحُفظت بالمكتبة مع تماسك مرجعي مشترك.`, `Generated ${okCount} document(s) (${modeLabel}), saved to library with shared coherence.`));
+      } else if (okCount > 0) {
+        alertMsg(t(`حُفظت ${okCount} وثيقة، وفشل ${failCount} من ${picked.length} (راجع سجل التوليد أدناه).`, `Saved ${okCount} document(s); ${failCount}/${picked.length} failed (see the generation log below).`));
+      } else {
+        alertMsg(t(`فشل توليد كل الوثائق (${failCount} من ${picked.length}) — لم يُحفظ شيء بالمكتبة.`, `All ${failCount}/${picked.length} documents failed to generate — nothing was saved.`));
+      }
     } catch (e: any) {
       alertMsg(t('فشل التوليد بالدفعة: ', 'Batch generation failed: ') + (e?.message || e));
     } finally { setBatchRunning(false); setGenerating(false); }
@@ -1423,7 +1468,7 @@ ${content.slice(0, 8000)}`;
   const handleBulkGenerate = async () => {
     if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
     abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
-    setGenerating(true); setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
+    setGenerating(true); beginGenRun();
     try {
       const chunks = await loadChunks(tenantId);
       const doc = await generateBulkDoc({
@@ -1462,7 +1507,7 @@ ${content.slice(0, 8000)}`;
     if (!model) { alertMsg(t('ابنِ النموذج أولاً.', 'Build the model first.')); return; }
     abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
     setGenAllRunning(true); setGenerating(true);
-    setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
+    beginGenRun();
     setGenAllChunks(GEN_ALL_SCOPES.map(s => ({ scope: s.scope, label: t(s.ar, s.en), status: 'pending' as const })));
     // D3: three distinct, truthfully-tracked outcomes — a chunk where every section
     // failed is NOT a success (no placeholder-only doc gets saved or counted); a chunk
@@ -1486,6 +1531,11 @@ ${content.slice(0, 8000)}`;
           setGenDoc(doc); setGenDocKind('governance');
           const sections = doc.sections || [];
           const doneCount = sections.filter(s => s.status === 'done').length;
+          // MINOR fix — isBulkDocComplete is the single shared source of truth for
+          // "did this generation actually finish" (also used by handleCreateBatch's
+          // genOne); used here to note an honestly PARTIAL save instead of a note
+          // that reads identically for a full vs. partial completion.
+          const complete = isBulkDocComplete(sections, ac.signal.aborted);
           if (doneCount === 0 && sections.length > 0) {
             // every planned section failed (e.g. a quota error mid-run) — nothing usable
             // to save; don't count it toward "ok" and don't write a placeholder to the library.
@@ -1499,7 +1549,7 @@ ${content.slice(0, 8000)}`;
               ...c,
               status: saved ? 'done' : 'error',
               note: saved
-                ? t(`${doneCount} قسم`, `${doneCount} sections`)
+                ? (complete ? t(`${doneCount} قسم`, `${doneCount} sections`) : t(`${doneCount}/${sections.length} قسم — جزئي`, `${doneCount}/${sections.length} sections — partial`))
                 : t(`${doneCount} قسم — لم يُحفظ في المكتبة`, `${doneCount} sections — not saved to library`),
             } : c)));
           }
@@ -1574,12 +1624,20 @@ ${content.slice(0, 8000)}`;
       if (rd.gapReport.developmentPlan) push(t('خطة التطوير', 'Development plan'), clean(rd.gapReport.developmentPlan));
     }
     if (Array.isArray(rd.sources) && rd.sources.length) push(t('المصادر', 'Sources'), rd.sources.map((s: any) => `- ${clean(s)}`).join('\n'));
+    else if ((rd as any).citationsMissing) push(t('المصادر', 'Sources'), t('⚠️ لم يحدّد النموذج مصادر استشهاد محددة لهذا التقرير — راجع الاستشهادات يدويًا.', '⚠️ The model did not name specific cited sources for this report — review citations manually.'));
     const artifact: GeneratedArtifact = {
       title: `${t('تقرير الواقع الراهن', 'Current-state report')} — ${reportTitle}`,
       goal: t('تشخيص مرجعي دقيق لواقع حوكمة المؤسسة', 'A precise reference diagnostic of the organization\'s governance current state'),
       language, sections, createdAt: new Date(), complete: true,
+      // MAJOR fix — rehydrate a PRIOR canvas edit (persisted by saveCanvasArtHtml's
+      // 'diagnostic' branch below) instead of always rebuilding a fresh, unedited
+      // artifact from reportData on every open.
+      ...((rd as any).canvasHtml ? { canvasHtml: (rd as any).canvasHtml } : {}),
     };
-    openArtifactInCanvas(artifact);
+    // MAJOR fix — give the diagnostic a real `kind` ('diagnostic', not the null
+    // default) so saveCanvasArtHtml writes edits back onto assessments/{id}
+    // instead of falling into the generic no-dedicated-store library fallback.
+    openArtifactInCanvas(artifact, 'diagnostic');
   };
 
   // persist model edits made from the canvas
@@ -1666,7 +1724,7 @@ ${content.slice(0, 8000)}`;
   const handleGapFix = async (gap: GovGap) => {
     if (!model) return;
     abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
-    setFixingGap(gap.id); setGenerating(true); setGenDoc(null); setThoughts([]); setGenSections([]); setGenProgress(null); resetGenBuffers();
+    setFixingGap(gap.id); setGenerating(true); beginGenRun();
     gotoStage(2); setBuildTab('docs'); setGenDocKind('gapfix'); // D1: record history so Back returns to the gap
     try {
       const chunks = await loadChunks(tenantId);
@@ -1907,9 +1965,9 @@ ${content.slice(0, 8000)}`;
   // artifactToMarkdown bridge feeds DocumentCanvas — no separate exporter. We
   // clear any open library record so only one canvas overlay shows at a time.
   // D2: `kind` tags which backing React state to write saved edits back into
-  // (see saveCanvasArtHtml) — 'charter'/'gendoc' have one, the risk register /
-  // roadmap don't (they're pure functions of `model`, not stored state).
-  const openArtifactInCanvas = (art: GeneratedArtifact, kind: 'charter' | 'gendoc' | null = null) => {
+  // (see saveCanvasArtHtml) — 'charter'/'gendoc'/'diagnostic' each have one, the
+  // risk register / roadmap don't (they're pure functions of `model`, not stored state).
+  const openArtifactInCanvas = (art: GeneratedArtifact, kind: 'charter' | 'gendoc' | 'diagnostic' | null = null) => {
     setCanvasRec(null); setCanvasArt(art); setCanvasArtKind(kind);
     canvasArtLibRef.current = null; canvasArtLastHtmlRef.current = '';   // new artifact/session → fresh fallback state
   };
@@ -1935,6 +1993,22 @@ ${content.slice(0, 8000)}`;
     setCanvasArt(next);
     if (canvasArtKind === 'charter') { setCharterArt(next); return; }
     if (canvasArtKind === 'gendoc') { setGenDoc(next as GovernanceDocument); return; }
+    // MAJOR fix — the diagnostic report has a real backing store (assessments/{id},
+    // written by triggerAutoSurveyReport), unlike the risk register/roadmap; write
+    // edits back onto that SAME record's reportData.canvasHtml instead of falling
+    // through to the "no dedicated storage" library-fallback branch below, which
+    // used to mint an orphan library copy of the report on every edit session.
+    if (canvasArtKind === 'diagnostic') {
+      if (!latestDiagnostic?.id) return;
+      const updated = { ...latestDiagnostic, reportData: { ...latestDiagnostic.reportData, canvasHtml: html } };
+      try {
+        await setDoc(doc(db, 'assessments', latestDiagnostic.id), { reportData: updated.reportData }, { merge: true });
+        setLocalDiagnostic(updated);
+      } catch (e: any) {
+        alertMsg(t('فشل حفظ تعديلات الكانفس: ', 'Failed to save canvas edits: ') + (e?.message || e));
+      }
+      return;
+    }
     const decision = nextCanvasArtLibSave(html, canvasArtLibRef.current, canvasArtLastHtmlRef.current, () => uid('govdoc'));
     if (decision.status === 'skip') return;   // identical to the last saved snapshot — no-op
     const { id, createdAt } = decision.state;
@@ -2063,7 +2137,12 @@ ${content.slice(0, 8000)}`;
     if (!model || !actionInput.trim()) return;
     setProposing(true); setProposedActions([]);
     try {
-      const acts = await proposeModelActions(actionInput.trim(), model, language);
+      // CRITICAL fix — ground the NL edit in the tenant's actual ingested documents
+      // (not just unit/role/policy NAMES from the model digest), same bridge used
+      // for assessment/survey grounding elsewhere. Best-effort: an empty tenant
+      // (no docs yet) degrades to the prior model-only grounding, not a failure.
+      const chunkContext = await compileChunkContext(tenantId).catch(() => '');
+      const acts = await proposeModelActions(actionInput.trim(), model, language, undefined, chunkContext);
       setProposedActions(acts);
       if (!acts.length) alertMsg(t('لم يُقترح أي تعديل. أعد الصياغة.', 'No actions proposed. Rephrase.'));
     } catch (e: any) { alertMsg(t('فشل الاقتراح: ', 'Propose failed: ') + (e?.message || e)); }
@@ -2074,7 +2153,9 @@ ${content.slice(0, 8000)}`;
     setBusy(t('تطبيق التعديلات', 'Applying actions'));
     try {
       await saveSnapshot({ id: uid('snap'), tenantId, version: model.version || 1, at: new Date().toISOString(), reason: 'pre-apply-actions', model });
-      const res = applyActions(model, proposedActions, ADMIN_ACTOR);
+      // instruction text rides along so applied entities carry real AI-edit
+      // provenance instead of an empty provenance array (see applyActions).
+      const res = applyActions(model, proposedActions, ADMIN_ACTOR, actionInput.trim());
       reconcileUnitTombstones(model, res.model); // FE-2/D2: NL-edit deletions must tombstone too
       // saveModel owns versioning — don't pre-increment here
       await saveModel(res.model); setModel(res.model);
@@ -2317,6 +2398,11 @@ ${content.slice(0, 8000)}`;
                     'No inputs to build the current-state report — upload files or run the survey first.'));
       return;
     }
+    // MAJOR fix — this generation (up to '10–100 صفحة' in comprehensive mode) had no
+    // cancel affordance at all: no AbortSignal was passed to either the streaming or
+    // blocking calls, so the shared Stop pattern used everywhere else in this file
+    // couldn't touch it. Same abortRef pattern as every sibling action.
+    abortRef.current?.abort(); const ac = new AbortController(); abortRef.current = ac;
     setSurveyBusy(true);
     const respCount = assessmentsForSource.length;
     // N6 — interactive shaping: owner-chosen length / depth / axes feed the brief.
@@ -2414,6 +2500,7 @@ ${content.slice(0, 8000)}`;
       try {
         const cand = await generateJsonStream<any>(prompt, reportSchema, {
           temperature: 0.2,
+          signal: ac.signal,
           onText: (acc) => {
             const p = extractPartialFields(acc, ['strengths', 'weaknesses', 'recommendations'], ['totalScore']);
             setStreamingDiag({
@@ -2428,23 +2515,49 @@ ${content.slice(0, 8000)}`;
         else lastErr = new Error('AI returned an incomplete diagnostic (missing score or narrative).');
       } catch (e) { lastErr = e; }
       // Fallback: the existing blocking 3× retry ladder if streaming didn't yield a valid report.
-      if (!parsed) {
+      if (!parsed && !ac.signal.aborted) {
         for (let attempt = 0; attempt < 3 && !parsed; attempt++) {
+          if (ac.signal.aborted) break;
           try {
-            const cand = await generateJson<any>(prompt, reportSchema, { temperature: 0.2 });
+            const cand = await generateJson<any>(prompt, reportSchema, { temperature: 0.2, signal: ac.signal });
             if (typeof cand.totalScore !== 'number' || !cand.strengths || !cand.weaknesses || !cand.recommendations) {
               throw new Error('AI returned an incomplete diagnostic (missing score or narrative).');
             }
             parsed = cand;
-          } catch (e) { lastErr = e; if (attempt < 2) await new Promise(r => setTimeout(r, 800 * (attempt + 1))); }
+          } catch (e) { lastErr = e; if (attempt < 2 && !ac.signal.aborted) await new Promise(r => setTimeout(r, 800 * (attempt + 1))); }
         }
       }
+      if (ac.signal.aborted) return; // user-initiated Stop — `finally` below still resets surveyBusy/streamingDiag
       if (!parsed) throw lastErr || new Error('diagnostic failed');
 
       const clamp = (n: any) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
-      const citedSources: string[] = Array.isArray(parsed.sources) && parsed.sources.length
-        ? parsed.sources.map((s: any) => String(s)).filter(Boolean)
-        : docNames;
+      // CRITICAL fix — `sources` isn't in reportSchema's `required` list, so the
+      // model can legally omit it. This used to silently substitute EVERY uploaded
+      // doc name as if each had been verified as a citation (shown in the toast,
+      // persisted to reportData.sources / sourceProvenance.citedDocs, and exported
+      // in the «المصادر» section) — fabricated grounding evidence. Now: validate
+      // post-parse: if empty AND there were real documents to cite, retry ONCE with
+      // a stricter citation-only instruction; if still empty, mark the report
+      // `citationsMissing` and leave `sources` genuinely empty rather than
+      // pretending every uploaded doc was cited.
+      let citedSources = resolveCitationOutcome({ parsedSources: parsed.sources, docNamesCount: docNames.length }).citedSources;
+      let citationsMissing = false;
+      if (!citedSources.length && docNames.length > 0) {
+        let retryCand: any = null;
+        try {
+          const retryPrompt = `${prompt}\n\nتنبيه هام: ردّك السابق لم يتضمّن حقل sources رغم وجود ${docNames.length} مستند مرفوع. أعد التوليد بنفس الجودة، لكن الزم هذه المرة بإرجاع sources — مصفوفة بأسماء المستندات الفعلية التي استندتَ إليها فعلاً في التحليل. إن لم تكن قد استشهدتَ فعليًا بمستند بعينه، أعد مصفوفة فارغة بدلاً من إغفال الحقل.`;
+          retryCand = await generateJson<any>(retryPrompt, reportSchema, { temperature: 0.2, signal: ac.signal });
+        } catch { /* retryCand stays null — resolveCitationOutcome treats a missing retry as still-empty */ }
+        // resolveCitationOutcome (pure, unit-tested) makes the final call — it never
+        // has access to docNames itself, so it structurally cannot fall back to them.
+        const outcome = resolveCitationOutcome({ parsedSources: parsed.sources, docNamesCount: docNames.length, retrySources: retryCand?.sources });
+        citedSources = outcome.citedSources;
+        citationsMissing = outcome.citationsMissing;
+        if (retryCand && outcome.citedSources.length && typeof retryCand.totalScore === 'number' && retryCand.strengths && retryCand.weaknesses && retryCand.recommendations) {
+          parsed = retryCand; // full valid regeneration — adopt its narrative too, not just its sources
+        }
+      }
+      if (ac.signal.aborted) return; // Stop clicked mid citation-retry — don't persist a stale report
       const score = clamp(parsed.totalScore);
       // GROUNDED competency axes — straight from the model's evidence-backed output,
       // no synthetic ×0.9/×1.02 spread. Fall back to the axes covered if none returned.
@@ -2467,7 +2580,8 @@ ${content.slice(0, 8000)}`;
         responses: [],
         workplaceAnswers: null,
         // A provenance: record exactly which inputs + lenses grounded this diagnostic.
-        sourceProvenance: { docCount: docNames.length, responseCount: respCount, citedDocs: citedSources, sector: sector || '', standardsApplied: true },
+        // citedDocs is empty (never docNames) when citationsMissing — no fabricated "verified" list.
+        sourceProvenance: { docCount: docNames.length, responseCount: respCount, citedDocs: citedSources, citationsMissing, sector: sector || '', standardsApplied: true },
         reportData: {
           totalScore: score,
           technicalScore: parsed.technicalScore != null ? clamp(parsed.technicalScore) : score,
@@ -2476,6 +2590,7 @@ ${content.slice(0, 8000)}`;
           weaknesses: parsed.weaknesses,
           recommendations: parsed.recommendations,
           sources: citedSources,
+          citationsMissing,
           competencyScores,
           gapReport: {
             competencyGaps,
@@ -2487,15 +2602,33 @@ ${content.slice(0, 8000)}`;
       };
       await setDoc(doc(db, 'assessments', assessmentId), customReport);
       setLocalDiagnostic(customReport); // show immediately in the الواقع الراهن stage
-      toast.success(t(`تقرير الواقع الراهن مبني على ${docNames.length} مستند + ${respCount} رد ومُقيَّم مقابل المعايير. المصادر: ${citedSources.slice(0,4).join('، ')}${citedSources.length>4?'…':''}`,
-                      `Current-state grounded in ${docNames.length} docs + ${respCount} responses, scored vs standards.`));
+      if (citationsMissing) {
+        toast.warning(t(
+          `تقرير الواقع الراهن مبني على ${docNames.length} مستند + ${respCount} رد، لكن النموذج لم يحدّد أي مستند بعينه كمصدر استشهاد رغم إعادة المحاولة — لا تُعرض قائمة مصادر مُفترَضة؛ راجع «الاستشهادات» يدويًا قبل الاعتماد.`,
+          `The diagnostic is grounded in ${docNames.length} doc(s) + ${respCount} response(s), but the model did not name specific cited sources even after a retry — no assumed source list is shown; review citations manually before relying on this report.`,
+        ));
+      } else {
+        toast.success(t(`تقرير الواقع الراهن مبني على ${docNames.length} مستند + ${respCount} رد ومُقيَّم مقابل المعايير. المصادر: ${citedSources.slice(0,4).join('، ')}${citedSources.length>4?'…':''}`,
+                        `Current-state grounded in ${docNames.length} docs + ${respCount} responses, scored vs standards.`));
+      }
     } catch (err: any) {
-      console.error('Auto survey report failed:', err);
-      toast.error(ar ? 'تعذّر توليد تقرير الواقع الراهن — لم يُحفظ أي تقرير. أعد المحاولة.' : 'Failed to generate the diagnostic — nothing was saved. Please retry.');
+      if (ac.signal.aborted || err?.message === 'ABORTED') { /* user-initiated Stop — no error toast */ }
+      else {
+        console.error('Auto survey report failed:', err);
+        toast.error(ar ? 'تعذّر توليد تقرير الواقع الراهن — لم يُحفظ أي تقرير. أعد المحاولة.' : 'Failed to generate the diagnostic — nothing was saved. Please retry.');
+      }
     } finally {
       setSurveyBusy(false);
       setStreamingDiag(null); // clear the live preview; the final report now renders
     }
+  };
+  // MAJOR fix — dedicated cancel for the current-state report: it uses its own
+  // `surveyBusy` state (not the shared `busy`/`generating` the file-wide `stop`
+  // button targets), so it needs its own handler wired to the same abortRef.
+  const cancelSurveyReport = () => {
+    abortRef.current?.abort();
+    setSurveyBusy(false);
+    setStreamingDiag(null);
   };
 
   const ProvBadge: React.FC<{ refs: ProvenanceRef[] }> = ({ refs }) =>
@@ -3141,6 +3274,12 @@ ${content.slice(0, 8000)}`;
                 <button onClick={() => triggerAutoSurveyReport(diagFeedback)} disabled={surveyBusy || (chunkCount === 0 && !model)} className="hw-btn hw-btn-primary whitespace-nowrap">
                   {surveyBusy ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 animate-spin inline-block me-1"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>{t('يولّد التقرير…', 'Generating…')}</> : latestDiagnostic ? <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>{t('إعادة توليد التقرير', 'Regenerate report')}</> : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>{t('توليد تقرير الواقع الراهن', 'Generate diagnostic')}</>}
                 </button>
+                {/* F — no cancel affordance existed for this (up to 10–100 page) generation. */}
+                {surveyBusy && (
+                  <button onClick={cancelSurveyReport} className="hw-btn hw-btn-sm hw-btn-danger whitespace-nowrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 inline-block me-1"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>{t('إيقاف', 'Stop')}
+                  </button>
+                )}
                 {latestDiagnostic?.reportData && (
                   <button onClick={openDiagnosticInCanvas} disabled={surveyBusy} className="hw-btn hw-btn-ghost whitespace-nowrap"
                     title={t('افتح التقرير في الكانفس: حرّره وصدّره (Word / PDF / PowerPoint / Excel) بهوية الشركة', 'Open the report in the canvas: edit and export it (Word / PDF / PowerPoint / Excel) with the company identity')}>
@@ -3210,6 +3349,22 @@ ${content.slice(0, 8000)}`;
                         </div>
                       ))}
                     </div>
+                    {/* K — a persistent المصادر/Sources section on the live report view (previously
+                        only a fading toast + the canvas export carried citations), or an explicit
+                        amber notice when the model couldn't name specific sources (see item A). */}
+                    {(rd as any).citationsMissing ? (
+                      <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 text-[13px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 shrink-0 mt-0.5"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        <span>{t('لم يحدّد النموذج مصادر استشهاد محددة لهذا التقرير رغم إعادة المحاولة — لا تُعرض قائمة مصادر مُفترَضة. راجع الاستشهادات يدويًا قبل الاعتماد.', 'The model did not name specific cited sources for this report even after a retry — no assumed source list is shown. Review citations manually before relying on this report.')}</span>
+                      </div>
+                    ) : Array.isArray(rd.sources) && rd.sources.length > 0 && (
+                      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
+                        <div className="font-black text-slate-700 dark:text-slate-200 text-sm mb-2 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>{t('المصادر', 'Sources')}</div>
+                        <ul className="text-[12px] text-slate-600 dark:text-slate-300 list-disc ps-4 space-y-0.5">
+                          {rd.sources.map((s: any, i: number) => <li key={i}>{String(s)}</li>)}
+                        </ul>
+                      </div>
+                    )}
                     {rd.gapReport && (
                       <details open className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
                         <summary className="font-black text-slate-700 dark:text-slate-200 text-sm cursor-pointer flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="14"/><line x1="6" y1="20" x2="6" y2="4"/><polyline points="6 4 12 14 18 10"/></svg>{t('تقرير الفجوات وخطة التطوير', 'Gap report & development plan')}</summary>
@@ -3325,14 +3480,44 @@ ${content.slice(0, 8000)}`;
                     </div>
                   </div>
                   {modelCanvas && (
-                    <div className="mt-3">
-                      <DiagramChatEditor
-                        language={language}
-                        initialMermaid={resolveOrgChartMermaid(model)}
-                        title={t('الهيكل التنظيمي', 'Org structure')}
-                        onSave={persistOrgChartOverride}
-                        saving={savingOrgChart}
-                      />
+                    <div className="mt-3 space-y-2">
+                      {/* I — real toggle between the live node/edge canvas (add/rename/delete
+                          nodes, edit a bound unit/role/policy/procedure's real fields via the
+                          properties panel) and the NL/Mermaid chat editor — the button above
+                          used to promise the former but only ever mounted the latter. */}
+                      <div className="flex items-center gap-2">
+                        <div className="flex gap-1 bg-slate-200 dark:bg-slate-700 rounded-xl p-1 w-fit">
+                          <button onClick={() => setModelCanvasView('canvas')} className={`px-3 py-1 rounded-lg text-xs font-bold ${modelCanvasView === 'canvas' ? 'bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 shadow' : 'text-slate-600 dark:text-slate-300'}`}>{t('المحرّر الحي', 'Live editor')}</button>
+                          <button onClick={() => setModelCanvasView('chat')} className={`px-3 py-1 rounded-lg text-xs font-bold ${modelCanvasView === 'chat' ? 'bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 shadow' : 'text-slate-600 dark:text-slate-300'}`}>{t('بالكلام', 'Chat')}</button>
+                        </div>
+                        {modelCanvasView === 'canvas' && (
+                          <button onClick={handleAutoLayout} className="hw-btn hw-btn-xs hw-btn-ghost">
+                            {t('ترتيب تلقائي', 'Auto layout')}
+                          </button>
+                        )}
+                      </div>
+                      {modelCanvasView === 'canvas' ? (
+                        <GovernanceCanvas
+                          language={language}
+                          initialNodes={modelCanvasNodes}
+                          initialEdges={modelCanvasEdges}
+                          model={model}
+                          onModelChange={handleModelCanvasChange}
+                          onSave={(nodes, edges, mermaid) => {
+                            setModelCanvasNodes(nodes); setModelCanvasEdges(edges);
+                            persistOrgChartOverride(mermaid);
+                          }}
+                          saving={savingOrgChart}
+                        />
+                      ) : (
+                        <DiagramChatEditor
+                          language={language}
+                          initialMermaid={resolveOrgChartMermaid(model)}
+                          title={t('الهيكل التنظيمي', 'Org structure')}
+                          onSave={persistOrgChartOverride}
+                          saving={savingOrgChart}
+                        />
+                      )}
                     </div>
                   )}
                 </div>
@@ -3340,7 +3525,7 @@ ${content.slice(0, 8000)}`;
 
               {model && model.orgUnits.length > 0 && (
                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
-                  <div className="font-black text-slate-700 dark:text-slate-200 text-sm mb-3 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>{t('شجرة الوحدات التنظيمية', 'Org-unit tree')} <span className="text-slate-400">({model.orgUnits.length})</span>{!modelCanvas && (<button onClick={openModelCanvas} title={t('حرِّر الهيكل في المحرّر الحي: أضِف وحدة/دور، أعد التسمية أو احذف', 'Edit the structure in the live canvas: add a unit/role, rename or delete')} className="hw-btn hw-btn-xs hw-btn-ghost ms-auto shrink-0 font-bold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>{t('تحرير / إضافة', 'Edit / add')}</button>)}</div>
+                  <div className="font-black text-slate-700 dark:text-slate-200 text-sm mb-3 flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>{t('شجرة الوحدات التنظيمية', 'Org-unit tree')} <span className="text-slate-400">({model.orgUnits.length})</span>{!modelCanvas && (<button onClick={openModelCanvas} title={t('حرِّر الهيكل في المحرّر الحي: عدّل بيانات وحدة/دور/سياسة/إجراء من لوحة الخصائص، أو عدّل المخطط نصيًا بالكلام', 'Edit the structure in the live editor: edit a unit/role/policy/procedure\'s real fields from the properties panel, or edit the chart in natural language')} className="hw-btn hw-btn-xs hw-btn-ghost ms-auto shrink-0 font-bold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 inline-block me-1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>{t('تحرير / إضافة', 'Edit / add')}</button>)}</div>
                   <OrgUnitTree units={model.orgUnits} ar={ar}
                     lockedUnitIds={lockedOrgUnitIds(model)}
                     onRename={renameOrgUnit} onAddChild={addOrgUnit} onDelete={deleteOrgUnit} />

@@ -16,7 +16,8 @@ import { streamChat, generateJson } from './agentOrchestrator';
 import { retrieve, chunksToProvenance, matchProjects } from './governanceService';
 import { GOV_DOC_CATALOG, frameworksDirective } from './governanceDocCatalog';
 import { standardsLens, buildCriteriaLens, type BuildCriterion } from './governanceFrameworks';
-import { buildOrgChartMermaid } from './diagramService';
+import { resolveOrgChartMermaid } from './diagramService';
+import { buildRoundRobinDigest } from './chunkDigest';
 import type {
   CompanyGovernanceModel, DocChunk, KnowledgeNode, ReferenceProject,
   GovOrgUnit, GovRole, GovPolicy, GovProcedure, GovGap, GovProgress, ProvenanceRef,
@@ -434,46 +435,27 @@ export async function buildModel(p: BuildModelParams): Promise<CompanyGovernance
   // chunks are doc-ordered, so the cut drops the last ~90% of files entirely.
   // Instead: round-robin across documents so every file contributes evidence,
   // and lift the budget to use the model's large context window.
+  // P16-N: selection itself now lives in the shared buildRoundRobinDigest (also
+  // used by GovernanceCenter's current-state report digest) — this function only
+  // owns its own entry formatting (numbered-by-original-index, for evidence[]
+  // citations) and budget, and restores original document order for readability.
   const DIGEST_BUDGET = 240000;
   const PER_CHUNK = 1400;
-  const digest = (() => {
-    // entry text keyed by the chunk's ORIGINAL index (so evidence[] citations stay valid).
-    const entry = (c: DocChunk, i: number) => `[${i}] (${c.docName} › ${c.headingPath})\n${c.text.slice(0, PER_CHUNK)}`;
-    const flat = chunks.map((c, i) => ({ i, c }));
-    const full = flat.map(({ c, i }) => entry(c, i)).join('\n\n');
-    if (full.length <= DIGEST_BUDGET) return full;
-    // Over budget → interleave by document so coverage spans the whole corpus.
-    const byDoc = new Map<string, { i: number; c: DocChunk }[]>();
-    for (const e of flat) {
-      const k = e.c.docName || '—';
-      (byDoc.get(k) || byDoc.set(k, []).get(k)!).push(e);
-    }
-    const queues = [...byDoc.values()];
-    const picked: { i: number; c: DocChunk }[] = [];
-    let used = 0, active = true;
-    while (active) {
-      active = false;
-      for (const q of queues) {
-        const e = q.shift();
-        if (!e) continue;
-        active = true;
-        const len = entry(e.c, e.i).length + 2;
-        if (used + len > DIGEST_BUDGET) { active = false; break; }
-        picked.push(e); used += len;
-      }
-    }
-    // restore original order for readability, keep original indices for citations.
-    picked.sort((a, b) => a.i - b.i);
-    return picked.map(({ c, i }) => entry(c, i)).join('\n\n');
-  })();
+  const entry = (c: DocChunk, i: number) => `[${i}] (${c.docName} › ${c.headingPath})\n${c.text.slice(0, PER_CHUNK)}`;
+  const { docNames: digestDocNames, picked: digestPicked } = buildRoundRobinDigest(chunks, { maxChars: DIGEST_BUDGET, formatEntry: entry });
+  const digest = [...digestPicked]
+    .sort((a, b) => a.index - b.index) // restore original order; entry()'s [i] citation stays valid regardless
+    .map(p => p.piece)
+    .join('\n\n');
 
   onProgress?.({ phase: 'build_digest', current: 1, total: BUILD_STEPS, label: `ملخص الأدلة جاهز: ${chunks.length} مقطع` });
 
   // CRITICAL #2 (cap surface): at very large scale the digest may not fit every chunk
   // even after round-robin. Make that visible instead of silently under-citing.
-  const totalDocs = new Set(chunks.map(c => c.docName || '—')).size;
-  const citedDocs = new Set((digest.match(/›/g) ? digest.split('\n\n') : [])
-    .map(s => (s.match(/\(([^›]+) ›/) || [])[1]).filter(Boolean)).size;
+  // P16-N: derived directly from the selection (`digestPicked`/`digestDocNames`)
+  // rather than reverse-parsing the rendered digest text with a regex.
+  const totalDocs = digestDocNames.length;
+  const citedDocs = new Set(digestPicked.map(p => p.chunk.docName || '—')).size;
   if (citedDocs && citedDocs < totalDocs) {
     // N9: surface coverage as an explicit percentage. Below 80% it is a real
     // accuracy risk (the model never saw a fifth of the corpus) → escalate to a
@@ -939,17 +921,19 @@ function docStandards(kind?: string): string {
     : ['ISO 9001', 'EFQM', 'KAQA', 'McKinsey 7S', 'PwC Governance']);
 }
 
-// D5 (V6-AC3, in-app half) — buildOrgChartMermaid (services/diagramService.ts) is the
-// deterministic org chart used by the stage-7 chart/canvas/export, built purely from
-// model.orgUnits with NO AI call, so it's grounded and stable. The in-app "Org
-// structure" DOCUMENT, however, used to have the AI free-draft its own prose
-// description of the structure — a different, non-deterministic source of truth that
-// could (and did) drift from the real chart. This renders the SAME deterministic
-// Mermaid + a units table, so the org-structure document always matches the chart
-// exactly, everywhere, and updates automatically when the model changes — no manual
-// re-drafting. PURE (no AI, no I/O) → unit-testable.
+// D5 (V6-AC3, in-app half) — resolveOrgChartMermaid (services/diagramService.ts) is the
+// chart used by the stage-7 chart/canvas/export: the user's manual override when one
+// is saved (model.orgChartMermaid), otherwise the deterministic chart built purely
+// from model.orgUnits with NO AI call. The in-app "Org structure" DOCUMENT, however,
+// used to call buildOrgChartMermaid directly — always the raw deterministic chart,
+// ignoring any override — so a manual edit made in the live editor silently vanished
+// from every generated document while still showing correctly on-screen. This renders
+// the SAME resolved Mermaid (override-aware) + a units table, so the org-structure
+// document always matches the chart exactly, everywhere, and updates automatically
+// when the model or the override changes — no manual re-drafting. PURE (no AI, no
+// I/O) → unit-testable.
 export function orgStructureSectionMarkdown(model: CompanyGovernanceModel): string {
-  const mermaid = buildOrgChartMermaid(model);
+  const mermaid = resolveOrgChartMermaid(model);
   const nameOf = (id?: string) => (id ? model.orgUnits.find(u => u.id === id)?.name : undefined) || '—';
   const rows = (model.orgUnits || []).map(u =>
     `| ${(u.name || '—').replace(/\|/g, '/')} | ${u.parentId ? nameOf(u.parentId).replace(/\|/g, '/') : '—'} | ${(u.mandate || '—').replace(/\|/g, '/').replace(/\n+/g, ' ')} |`,
@@ -1104,6 +1088,16 @@ ${docStandards(p.kind)}${perDocGuidanceLens(p.guidance)}${criteriaLensBlock(p.bu
   const modelEntityCount = (model.orgUnits?.length || 0) + (model.roles?.length || 0) + (model.policies?.length || 0);
   if (modelEntityCount === 0) {
     throw new Error('النموذج فارغ — ابنِ النموذج أولاً من مرحلة الهيكل التنظيمي قبل توليد الوثائق');
+  }
+  // MAJOR fix — the model-empty guard above never checked the CHUNK bank: a
+  // document can be "fully cited" against zero real evidence with no warning at
+  // all (every section prompt just silently falls back to "(لا توجد أدلة
+  // مسترجعة…)"). Generation still proceeds (the model alone is a legitimate,
+  // if weaker, basis) but the UI must be told so it can warn instead of implying
+  // document-grounded citations exist. Surfaced via the SAME onProgress channel
+  // the UI already renders (see GovernanceCenter's busy-banner `progress.label`).
+  if (!chunks.length) {
+    onProgress?.({ phase: 'outline', current: 0, total: 1, label: '⚠️ لا توجد مستندات مفهرسة — سيُبنى المحتوى على نموذج الحوكمة فقط دون أدلة مستندية داعمة.' });
   }
 
   // ---- A: outline ----
@@ -1375,6 +1369,38 @@ export function isBulkDocComplete(sections: { status: string }[], aborted: boole
   return !aborted && sections.length > 0 && sections.every(s => s.status === 'done');
 }
 
+// CRITICAL fix (current-state report) — `sources` isn't in the report schema's
+// `required` list, so the model can legally return no citations. The current-state
+// report generator used to silently substitute EVERY uploaded document name as the
+// "cited sources" whenever `sources` came back missing/empty — fabricated grounding
+// evidence shown in a toast, persisted to reportData, and exported in the report.
+// This is the pure DECISION extracted from that flow: given the model's raw
+// `sources` field (and, if a stricter re-ask was attempted, its `sources` too),
+// decide the final cited-sources list and whether to flag `citationsMissing`.
+// Deliberately never has access to the real document NAMES (only a count) — so it
+// is structurally unable to reintroduce the "fall back to docNames" bug the way the
+// original inline `: docNames` fallback did.
+export function resolveCitationOutcome(input: {
+  /** Raw `sources` field from the model's primary generation attempt. */
+  parsedSources: unknown;
+  /** How many real documents were available to cite (0 = nothing to cite from). */
+  docNamesCount: number;
+  /** Raw `sources` field from a stricter citation-only retry, if one was attempted
+   *  (only attempted when parsedSources was empty and docNamesCount > 0). */
+  retrySources?: unknown;
+}): { citedSources: string[]; citationsMissing: boolean } {
+  const norm = (s: unknown): string[] => Array.isArray(s) ? s.map(x => String(x)).filter(Boolean) : [];
+  const initial = norm(input.parsedSources);
+  // Sources present, or nothing was ever uploaded to cite in the first place (a
+  // report grounded purely in survey/interview responses legitimately has none).
+  if (initial.length || input.docNamesCount === 0) return { citedSources: initial, citationsMissing: false };
+  const retry = norm(input.retrySources);
+  if (retry.length) return { citedSources: retry, citationsMissing: false };
+  // Documents existed, the model never named any of them even after a stricter
+  // retry — surface that honestly instead of assuming every doc was cited.
+  return { citedSources: [], citationsMissing: true };
+}
+
 export async function generateBulkDoc(p: GenerateBulkParams): Promise<GovernanceDocument> {
   const { scope, model, chunks, signal, onProgress, onThought, onSection } = p;
   const language = p.language || 'ar';
@@ -1462,6 +1488,12 @@ ${frameworksDirective(SCOPE_FRAMEWORKS[scope])}${scope === 'procedures' ? BPM_PR
     artifact.complete = true;
     onProgress?.({ phase: 'done', current: 0, total: 0, label: `لا توجد عناصر من نوع "${meta.unit}" في النموذج بعد.` });
     return artifact;
+  }
+  // MAJOR fix (mirrors generateGovernanceDoc) — warn, don't silently proceed, when
+  // the chunk bank is empty: bulk generation still works from the model alone, but
+  // the UI must show that no real document evidence backed the "citations".
+  if (!chunks.length) {
+    onProgress?.({ phase: 'outline', current: 0, total: plans.length, label: '⚠️ لا توجد مستندات مفهرسة — سيُبنى المحتوى على نموذج الحوكمة فقط دون أدلة مستندية داعمة.' });
   }
 
   // ---- write each entity fully (retrieve + cite) — ج1: bounded-concurrency pool ----
