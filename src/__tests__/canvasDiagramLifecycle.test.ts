@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 // of what's under test here touches pptx export.
 vi.mock('pptxgenjs', () => ({ default: class {} }));
 
-import { prepareCanvasDoc, hasPendingDiagrams, stripDiagramEditAffordance } from '../../components/DocumentCanvas';
+import { prepareCanvasDoc, hasPendingDiagrams, countPendingDiagrams, stripDiagramEditAffordance } from '../../components/DocumentCanvas';
 
 // ===========================================================================
 //  D1 — export/save/share during diagram injection must never bake in a
@@ -104,6 +104,48 @@ describe('hasPendingDiagrams — the pure gate export/save/share await on (D1b)'
   it('handles empty/undefined input without throwing', () => {
     expect(hasPendingDiagrams('')).toBe(false);
     expect(hasPendingDiagrams(undefined as unknown as string)).toBe(false);
+  });
+});
+
+// ===========================================================================
+//  MAJOR fix — waitForDiagrams' wait budget scales with how many diagrams are
+//  ACTUALLY pending (a fixed 12s could expire while N sequential diagrams, each
+//  capped at 9s, are still queued). countPendingDiagrams is the pure count the
+//  hook sizes that budget from; locked in here since waitForDiagrams itself is
+//  only reachable through the live iframe (not unit-testable in isolation).
+// ===========================================================================
+describe('countPendingDiagrams — sizes waitForDiagrams’ scaled wait budget', () => {
+  it('counts zero for a diagram-free document', () => {
+    const plainMd = ['# عنوان', 'فقرة بدون أي مخطط.'].join('\n');
+    const { html } = prepareCanvasDoc(plainMd, { title: '', subtitle: 's', lang: 'ar' });
+    expect(countPendingDiagrams(html)).toBe(0);
+  });
+
+  it('counts exactly one for a single pending diagram', () => {
+    const { html } = prepareCanvasDoc(MD, { title: '', subtitle: 's', lang: 'ar' });
+    expect(countPendingDiagrams(html)).toBe(1);
+  });
+
+  it('counts N for N still-pending placeholders', () => {
+    const mdWithTwo = [
+      '# عنوان الوثيقة', '', '## القسم الأول',
+      '```mermaid', MERMAID_SRC, '```', '',
+      '## القسم الثاني',
+      '```mermaid', MERMAID_SRC, '```',
+    ].join('\n');
+    const { html } = prepareCanvasDoc(mdWithTwo, { title: '', subtitle: 's', lang: 'ar' });
+    expect(countPendingDiagrams(html)).toBe(2);
+  });
+
+  it('drops to zero once every placeholder is resolved (attribute removed)', () => {
+    const { html } = prepareCanvasDoc(MD, { title: '', subtitle: 's', lang: 'ar' });
+    const resolved = html.replace(/\s*data-dgm-pending="1"/g, '');
+    expect(countPendingDiagrams(resolved)).toBe(0);
+  });
+
+  it('handles empty/undefined input without throwing', () => {
+    expect(countPendingDiagrams('')).toBe(0);
+    expect(countPendingDiagrams(undefined as unknown as string)).toBe(0);
   });
 });
 

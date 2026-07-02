@@ -52,6 +52,14 @@ export function hasPendingDiagrams(html: string): boolean {
   return /\bdata-dgm-pending\s*=\s*"1"/i.test(html || '');
 }
 
+// MAJOR fix — how many diagram placeholders are STILL unresolved right now (pure,
+// no DOM). waitForDiagrams uses this to size its wait budget: a fixed deadline
+// can't account for how much work is actually left when renderPendingDiagrams
+// processes N diagrams sequentially (each individually capped at 9s below).
+export function countPendingDiagrams(html: string): number {
+  return (html || '').match(/\bdata-dgm-pending\s*=\s*"1"/gi)?.length || 0;
+}
+
 // ── prepare: markdown/spec → canvas HTML, Mermaid swapped for placeholders ──
 // We DON'T block first paint on Mermaid (it's the slow part and a single bad/
 // huge diagram used to hang the whole canvas → "nothing shows / ~15 min"). The
@@ -170,6 +178,9 @@ const IcClose = () => <svg width="17" height="17" viewBox="0 0 24 24" fill="none
 const IcSpark = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2c.8 5.5 4.5 9.2 10 10-5.5.8-9.2 4.5-10 10-.8-5.5-4.5-9.2-10-10 5.5-.8 9.2-4.5 10-10z" /></svg>;
 const IcSpin = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.2-8.5" /></svg>;
 const IcWarn = () => <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>;
+// MAJOR fix — compact warning icon for the diagrams-incomplete toast pill (IcWarn
+// above is sized for the full-panel error state, too large for an inline pill).
+const IcWarnSmall = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>;
 const IcRetry = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6M1 20v-6h6" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>;
 // ── smart-edit toolbar icons (V11) ──
 const IcShorten = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M4 12h10M4 17h7" /></svg>;
@@ -314,6 +325,12 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
   // to wait on an in-flight diagram render (waitForDiagrams below); near-instant
   // waits never flash it.
   const [diagramsWaitNotice, setDiagramsWaitNotice] = useState(false);
+  // MAJOR fix — shown when waitForDiagrams' (now diagram-count-scaled) deadline
+  // STILL expired with a placeholder unresolved: the export/save/share proceeded
+  // anyway (never blocking the user indefinitely on a stuck render), but the
+  // reader must know a placeholder may have been baked in instead of silently
+  // shipping it.
+  const [diagramsIncompleteWarning, setDiagramsIncompleteWarning] = useState(false);
   // D3 — in-place diagram regenerate / natural-language edit. The hover/click
   // affordance itself lives INSIDE the iframe (diagramEditAffordanceHtml, native
   // CSS :hover — no cross-frame hover tracking needed); a single delegated click
@@ -659,29 +676,52 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
   // (every diagram either rendered or fell back to its labelled source —
   // renderPendingDiagrams always clears [data-dgm-pending] either way), so a
   // still-injecting diagram can never get baked into a PDF/DOCX/share snapshot.
-  // Bounded (12s) so a stuck/aborted render pass can never hang export forever;
-  // shows a brief bilingual notice ONLY if the wait is actually noticeable.
-  const waitForDiagrams = useCallback(async (): Promise<void> => {
-    const readNow = () => hasPendingDiagrams(iframeRef.current?.contentDocument?.documentElement?.outerHTML || '');
-    if (!readNow()) return;
+  // MAJOR fix — the wait budget now SCALES with how many diagrams are actually
+  // still pending (a base allowance + each diagram's own 9s render cap plus a
+  // margin), instead of a fixed 12s that N sequential diagrams could exceed;
+  // still capped so a stuck/aborted render pass can never hang export forever.
+  // Shows a brief bilingual "waiting" notice ONLY if the wait is noticeable, and
+  // returns whether every placeholder actually resolved before the deadline —
+  // callers use that to warn instead of exporting a placeholder silently.
+  const waitForDiagrams = useCallback(async (): Promise<boolean> => {
+    const currentHtml = () => iframeRef.current?.contentDocument?.documentElement?.outerHTML || '';
+    if (!hasPendingDiagrams(currentHtml())) return true;
     const noticeTimer = window.setTimeout(() => setDiagramsWaitNotice(true), 150);
     try {
-      const deadline = Date.now() + 12000;
-      while (Date.now() < deadline && readNow()) {
+      const pendingCount = countPendingDiagrams(currentHtml());
+      const deadline = Date.now() + Math.min(90000, 12000 + pendingCount * 9500);
+      let stillPending = true;
+      while (Date.now() < deadline) {
+        stillPending = hasPendingDiagrams(currentHtml());
+        if (!stillPending) break;
         await new Promise(resolve => window.setTimeout(resolve, 120));
       }
+      return !stillPending;
     } finally {
       window.clearTimeout(noticeTimer);
       setDiagramsWaitNotice(false);
     }
   }, []);
 
+  // MAJOR fix — the shared "wait, then warn if still unresolved" wrapper every
+  // export/save/share path below uses instead of calling waitForDiagrams()
+  // directly, so a still-pending diagram is never baked in without telling the
+  // reader (a bilingual toast, not a silent success).
+  const warnDiagramsIncomplete = useCallback(() => {
+    setDiagramsIncompleteWarning(true);
+    window.setTimeout(() => setDiagramsIncompleteWarning(false), 5000);
+  }, []);
+  const waitForDiagramsOrWarn = useCallback(async (): Promise<void> => {
+    const resolved = await waitForDiagrams();
+    if (!resolved) warnDiagramsIncomplete();
+  }, [waitForDiagrams, warnDiagramsIncomplete]);
+
   // Export PDF: print the live document HTML in a dedicated hidden iframe. The
   // browser's own print engine shapes Arabic correctly and renders the woff2
   // brand font + colored backgrounds (print-color-adjust:exact) — a real,
   // selectable, vector PDF via "Save as PDF".
   const exportPdf = useCallback(async () => {
-    await waitForDiagrams();   // D1 — never print a still-pending placeholder box
+    await waitForDiagramsOrWarn();   // D1 — never print a still-pending placeholder box silently
     const html = liveHtml();
     const frame = document.createElement('iframe');
     frame.setAttribute('aria-hidden', 'true');
@@ -704,7 +744,7 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     if (fonts?.ready?.then) fonts.ready.then(fire).catch(fire);
     else if (d.readyState === 'complete') fire();
     else frame.onload = fire;
-  }, [liveHtml, waitForDiagrams]);
+  }, [liveHtml, waitForDiagramsOrWarn]);
 
   // WYSIWYG export (PRD V12): Word / PowerPoint / Excel are built from the LIVE
   // edited canvas — we serialize its HTML back to Markdown and feed the shared
@@ -716,7 +756,7 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     if (kind === 'pdf') { await exportPdf(); return; }
     setExporting(kind);
     try {
-      await waitForDiagrams();   // D1 — never export a still-pending placeholder box
+      await waitForDiagramsOrWarn();   // D1 — never export a still-pending placeholder box silently
       const md = canvasHtmlToMarkdown(liveHtml());
       const company = (brand || '').split(/[·|]/)[0].trim() || undefined;
       if (kind === 'docx') await exportMessageDocx(md, docTitle, { language, companyName: company });
@@ -727,7 +767,7 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     } finally {
       setExporting('');
     }
-  }, [liveHtml, exportPdf, waitForDiagrams, brand, docTitle, language]);
+  }, [liveHtml, exportPdf, waitForDiagramsOrWarn, brand, docTitle, language]);
 
   // ── V11: floating smart-edit toolbar — act on the live selection IN PLACE ──
   // The edits land in the same designMode document the canvas exports, and we
@@ -737,9 +777,9 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
   const persist = useCallback(async () => {
     const save = onSave;
     if (!save) return;
-    await waitForDiagrams();
+    await waitForDiagramsOrWarn();
     save(liveHtml());
-  }, [onSave, liveHtml, waitForDiagrams]);
+  }, [onSave, liveHtml, waitForDiagramsOrWarn]);
 
   // D3 — shared by "إعادة توليد" (regenerate, same code) and the NL editor's save
   // (new code): re-render the diagram's SVG through the SAME repair pipeline every
@@ -861,11 +901,11 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
   const handleSave = useCallback(async () => {
     const save = onSave;
     if (!save) return;
-    await waitForDiagrams();   // D1 — never save a still-pending placeholder box
+    await waitForDiagramsOrWarn();   // D1 — never save a still-pending placeholder box silently
     save(liveHtml());
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
-  }, [onSave, liveHtml, waitForDiagrams]);
+  }, [onSave, liveHtml, waitForDiagramsOrWarn]);
 
   // V14 — mint a /?doc= share from the LIVE canvas HTML (the host persists the
   // snapshot and returns the URL). Surfaces SNAPSHOT_TOO_LARGE / failures inline.
@@ -873,7 +913,7 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     if (!onShare || shareBusy) return;
     setShareBusy(true); setShareErr(''); setShareUrl(''); setShareCopied(false);
     try {
-      await waitForDiagrams();   // D1 — never share a still-pending placeholder box
+      await waitForDiagramsOrWarn();   // D1 — never share a still-pending placeholder box silently
       const { url } = await onShare(liveHtml(), {
         accessCode: shareCode.trim() || undefined,
         allowComments: shareAllowComments,
@@ -890,7 +930,7 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
     } finally {
       setShareBusy(false);
     }
-  }, [onShare, shareBusy, liveHtml, waitForDiagrams, shareCode, shareAllowComments, ar]);
+  }, [onShare, shareBusy, liveHtml, waitForDiagramsOrWarn, shareCode, shareAllowComments, ar]);
 
   // Esc closes the canvas (when a close handler exists and no modal is open).
   useEffect(() => {
@@ -1259,6 +1299,22 @@ const DocumentCanvas = React.forwardRef<DocumentCanvasHandle, DocumentCanvasProp
         <div className="fixed bottom-6 inset-x-0 z-[10002] flex justify-center pointer-events-none" dir={ar ? 'rtl' : 'ltr'}>
           <div className="pointer-events-auto flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/90 text-white text-[12.5px] font-semibold shadow-2xl dc-pop">
             <IcSpin />{t('بانتظار اكتمال المخططات…', 'Waiting for diagrams…')}
+          </div>
+        </div>
+      )}
+
+      {/* MAJOR fix — the diagram-count-scaled wait STILL expired with a placeholder
+          unresolved: export/save/share proceeded anyway (never trapping the user),
+          but this warns them the result may carry a "جارٍ رسم المخطط…" placeholder
+          instead of shipping it silently. */}
+      {diagramsIncompleteWarning && (
+        <div className="fixed bottom-6 inset-x-0 z-[10002] flex justify-center pointer-events-none" dir={ar ? 'rtl' : 'ltr'}>
+          <div className="pointer-events-auto flex items-center gap-2 px-4 py-2.5 rounded-full bg-amber-600 text-white text-[12.5px] font-semibold shadow-2xl dc-pop">
+            <IcWarnSmall />
+            {t(
+              'تعذّر إكمال رسم بعض المخططات في الوقت المتاح — قد يحتوي الملف على عنصر نائب. أعد المحاولة إن لزم.',
+              'Some diagrams did not finish rendering in time — the result may contain a placeholder. Retry if needed.',
+            )}
           </div>
         </div>
       )}

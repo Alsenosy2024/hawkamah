@@ -20,10 +20,14 @@
 // ===========================================================================
 
 import { isMermaidBlock } from './mermaidDetect';
+import { escapeHtmlBidi } from './markdownAst';
 
 export type Lang = 'ar' | 'en';
 export type ChartKind = 'donut' | 'bar';
 export type KpiTone = 'neutral' | 'good' | 'warn';
+// A resolved [مصدر N] → real source, threaded from ArtifactLike.citations through
+// artifactToMarkdown → markdownToDocSpec → buildCanvasHtml (see SrcRef below).
+export type CiteMap = Map<number, { doc: string; heading?: string }>;
 
 export interface KpiItem { label: string; value: string | number; hint?: string; tone?: KpiTone }
 export interface ChartBlock { type: 'chart'; chart: ChartKind; title?: string; labels: string[]; values: number[] }
@@ -42,6 +46,12 @@ export type DocBlock =
   | { type: 'mermaid'; code: string }
   | { type: 'code'; code: string; lang?: string };
 
+// A per-document citation entry: [مصدر N] → the real source it stands for.
+// Carried on DocSpec (see markdownToDocSpec's ```srcrefs``` fence) so inline()
+// can resolve the marker into a styled, hoverable chip instead of inert text,
+// and buildCanvasHtml can append a real «المصادر» references section.
+export interface SrcRef { num: number; doc: string; heading?: string }
+
 export interface DocSpec {
   title: string;
   subtitle?: string;
@@ -50,6 +60,7 @@ export interface DocSpec {
   footer?: string;
   accent?: string;
   brand?: string;       // small brand line on the cover (defaults to AILIGENT)
+  srcRefs?: SrcRef[];
   blocks: DocBlock[];
 }
 
@@ -85,9 +96,19 @@ export function esc(s: unknown): string {
 }
 
 // Inline Markdown → HTML (escaped first): **bold** *italic* `code` [text](url).
-// Citation markers like [مصدر N] are left as muted inline text.
-export function inline(src: string): string {
-  let s = esc(src);
+// Citation markers like [مصدر N] resolve to a styled chip when `citeMap` carries
+// a match (see SrcRef), otherwise stay muted inline text.
+//
+// CRITICAL fix — escapeHtmlBidi (not plain esc()) wraps every comparison/numeric
+// token (≥ 90%, ≤ 5%, < 1.0…) in an LTR bidi isolate: the operators ≥ ≤ < > are
+// Unicode-mirrored inside RTL text, which silently FLIPS a KPI threshold's meaning
+// (≥ renders as ≤). This is the SAME fix already applied to the DOCX/PPTX/HTML
+// exporters (services/markdownAst.ts / services/exportService.ts) — reused here so
+// the canvas (and its "matches canvas" PDF export) renders thresholds correctly
+// too, instead of only Word/PowerPoint. HTML tags never contain '*', so the
+// markdown-emphasis regexes below still match correctly around the injected spans.
+export function inline(src: string, citeMap?: CiteMap): string {
+  let s = escapeHtmlBidi(src);
   s = s.replace(/`([^`]+)`/g, (_m, c) => `<code>${c}</code>`);
   // D4 — ![alt](url) BEFORE the link regex below: a data: URI (a rasterized
   // diagram/figure) never matches that regex (it only accepts http(s)/relative/
@@ -103,8 +124,20 @@ export function inline(src: string): string {
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
-  // muted citation chips so a final document stays clean but evidence is kept
-  s = s.replace(/\[\s*(?:مصدر|sources?|src|ref)\s*[\d\s،,و]+\]/gi, (m) => `<span class="cite">${m}</span>`);
+  // Citation chips: [مصدر N] stays a muted inert marker unless `citeMap` resolves
+  // at least one of its numbers to a real source, in which case it gets the
+  // "resolved" style + a hover title (doc › heading) — the same evidence a
+  // reader gets from the chat's clickable citation chips (components/Markdown.tsx),
+  // minus the click (this document is static markup, no scripts). The ORIGINAL
+  // matched text (brackets, numbers, separators) is kept verbatim inside the span
+  // so canvasHtmlToMarkdown's round-trip recovers the exact [مصدر N] marker.
+  s = s.replace(/\[\s*(?:مصدر|sources?|src|ref)\s*[\d\s،,و]+\]/gi, (m) => {
+    const nums = citeMap && citeMap.size ? (m.match(/\d+/g) || []).map(Number) : [];
+    const resolved = nums.map(n => citeMap!.get(n)).filter((r): r is { doc: string; heading?: string } => !!r);
+    if (!resolved.length) return `<span class="cite">${m}</span>`;
+    const title = esc(resolved.map(r => (r.heading ? `${r.doc} › ${r.heading}` : r.doc)).join(' · '));
+    return `<span class="cite cite-ok" title="${title}">${m}</span>`;
+  });
   return s;
 }
 
@@ -173,17 +206,17 @@ function kpis(items: KpiItem[]): string {
   return `<div class="kpis">${cells}</div>`;
 }
 
-function table(b: { headers: string[]; rows: string[][]; tags?: { col: number } }): string {
+function table(b: { headers: string[]; rows: string[][]; tags?: { col: number } }, citeMap?: CiteMap): string {
   const headers = b.headers || [];
   const tagCol = b.tags?.col;
-  const thead = '<thead><tr>' + headers.map(h => `<th>${inline(h)}</th>`).join('') + '</tr></thead>';
+  const thead = '<thead><tr>' + headers.map(h => `<th>${inline(h, citeMap)}</th>`).join('') + '</tr></thead>';
   const body = (b.rows || []).map(row => {
     const tds = row.map((cell, ci) => {
       if (ci === tagCol) {
         const warn = WARN_WORDS.some(w => String(cell).includes(w));
-        return `<td><span class="tag ${warn ? 'warn' : 'ok'}">${inline(cell)}</span></td>`;
+        return `<td><span class="tag ${warn ? 'warn' : 'ok'}">${inline(cell, citeMap)}</span></td>`;
       }
-      return `<td${isNumeric(cell) ? ' class="num"' : ''}>${inline(cell)}</td>`;
+      return `<td${isNumeric(cell) ? ' class="num"' : ''}>${inline(cell, citeMap)}</td>`;
     }).join('');
     return `<tr>${tds}</tr>`;
   }).join('');
@@ -201,23 +234,23 @@ function figure(b: { src?: string; svg?: string; alt?: string; caption?: string 
     + `</figure>`;
 }
 
-function renderBlock(b: DocBlock): string {
+function renderBlock(b: DocBlock, citeMap?: CiteMap): string {
   switch (b.type) {
-    case 'subheading': return `<h3 class="h3">${inline(b.text)}</h3>`;
-    case 'paragraph': return `<p class="lead">${inline(b.text)}</p>`;
-    case 'callout': return `<div class="callout">${inline(b.text)}</div>`;
+    case 'subheading': return `<h3 class="h3">${inline(b.text, citeMap)}</h3>`;
+    case 'paragraph': return `<p class="lead">${inline(b.text, citeMap)}</p>`;
+    case 'callout': return `<div class="callout">${inline(b.text, citeMap)}</div>`;
     case 'list': {
       const tag = b.ordered ? 'ol' : 'ul';
-      return `<${tag}>` + (b.items || []).map(x => `<li>${inline(x)}</li>`).join('') + `</${tag}>`;
+      return `<${tag}>` + (b.items || []).map(x => `<li>${inline(x, citeMap)}</li>`).join('') + `</${tag}>`;
     }
     case 'kpis': return kpis(b.items);
     case 'columns': {
-      const left = b.left ? renderBlock(b.left) : '';
-      const right = b.right ? renderBlock(b.right) : '';
+      const left = b.left ? renderBlock(b.left, citeMap) : '';
+      const right = b.right ? renderBlock(b.right, citeMap) : '';
       return `<div class="grid2">${left}${right}</div>`;
     }
     case 'chart': return chart(b);
-    case 'table': return table(b);
+    case 'table': return table(b, citeMap);
     case 'figure': return figure(b);
     case 'mermaid': // fallback only — caller normally converts mermaid → figure
       return `<pre class="codeblk" dir="ltr">${esc(b.code)}</pre>`;
@@ -243,6 +276,7 @@ function css(accent: string): string {
     `a{color:${ACCENT_DEEP};text-decoration:none;border-bottom:1px solid ${a}55;}`,
     `code{background:#eef4f6;border-radius:6px;padding:1px 6px;font-family:'SFMono-Regular',Consolas,monospace;font-size:.86em;color:#0c5563;}`,
     `.cite{color:#7c9aa3;font-size:.82em;font-weight:600;}`,
+    `.cite.cite-ok{color:${ACCENT_DEEP};background:#e7f6f8;border-radius:6px;padding:0 6px;cursor:help;}`,
     // cover
     `.cover{min-height:1040px;display:flex;flex-direction:column;justify-content:space-between;padding:58px 54px;color:#fff;position:relative;overflow:hidden;`,
     `background:radial-gradient(125% 140% at 100% 0%,#2bc4d6 0%,${a} 44%,#0b6f86 100%);}`,
@@ -375,6 +409,28 @@ export function buildCanvasHtml(spec: DocSpec): string {
   const lead = allSections.length && !allSections[0].title && allSections[0].blocks.length ? allSections[0] : null;
   const sections = lead ? allSections.slice(1) : allSections;
 
+  // MAJOR fix — a document carrying srcRefs (threaded from ArtifactLike.citations
+  // via artifactToMarkdown/markdownToDocSpec) gets its [مصدر N] markers resolved to
+  // real chips (see inline()) AND a trailing «المصادر» references section listing
+  // every mapped source — otherwise the markers are inert and the evidence behind
+  // them is lost the moment a document opens in the canvas. Appended as a REGULAR
+  // numbered section (flows through the TOC + pages like any other), so it also
+  // survives the canvasHtmlToMarkdown round-trip (a generic heading+list section)
+  // and rides into every export format.
+  const citeMap: CiteMap | undefined = spec.srcRefs?.length
+    ? new Map(spec.srcRefs.map(r => [r.num, { doc: r.doc, heading: r.heading }]))
+    : undefined;
+  if (spec.srcRefs?.length) {
+    sections.push({
+      title: rtl ? 'المصادر' : 'Sources',
+      blocks: [{
+        type: 'list',
+        ordered: true,
+        items: spec.srcRefs.map(r => (r.heading ? `${r.doc} › ${r.heading}` : r.doc)),
+      }],
+    });
+  }
+
   const cover =
     `<section class="page cover" contenteditable="true">`
     + `<span class="pattern" contenteditable="false"></span>`
@@ -388,7 +444,7 @@ export function buildCanvasHtml(spec: DocSpec): string {
     + `<div class="foot">${esc(footer)}</div></section>`;
 
   const foreword = lead
-    ? `<section class="page"><div class="body" contenteditable="true">${lead.blocks.map(renderBlock).join('')}</div></section>`
+    ? `<section class="page"><div class="body" contenteditable="true">${lead.blocks.map(b => renderBlock(b, citeMap)).join('')}</div></section>`
     : '';
 
   const tocItems = sections
@@ -407,7 +463,7 @@ export function buildCanvasHtml(spec: DocSpec): string {
     const head = s.title
       ? `<h2 class="h2"><span class="n" contenteditable="false">${pad2(i + 1)}</span> ${esc(s.title)}</h2>`
       : '';
-    const inner = s.blocks.map(renderBlock).join('');
+    const inner = s.blocks.map(b => renderBlock(b, citeMap)).join('');
     pages += `<section class="page"><div class="body" contenteditable="true">${head}${inner}</div></section>`;
   });
 
@@ -442,29 +498,93 @@ export interface MdToSpecOptions {
   footer?: string;
   accent?: string;
   brand?: string;
+  srcRefs?: SrcRef[];   // pre-resolved citation map (overrides any ```srcrefs``` fence)
+}
+
+// CRITICAL fix — bidi-control characters (LRM U+200E, RLM U+200F, ALM U+061C, the
+// LRE/RLE/PDF/LRO/RLO embedding controls U+202A-U+202E, and the LRI/RLI/FSI/PDI
+// isolates U+2066-U+2069) a producer may prefix a line with to force its visual
+// direction — e.g. services/governanceArtifacts.ts's bullet builders emit
+// `${RLM}- text`. Sitting BEFORE the Markdown prefix (-, #, |, >, a digit) hides
+// it from every `^`-anchored block-type regex below, so the line falls through to
+// a garbled paragraph instead of a real bullet/heading/table/quote. Stripped ONLY
+// from the FRONT of each line, right before block-type detection AND before
+// extracting that block's content — never touched mid-line, where a control
+// character may be an intentional bidi cue inside the text itself.
+const BIDI_CONTROLS_RE = /^[\u200E\u200F\u061C\u202A-\u202E\u2066-\u2069]+/;
+const stripLeadingBidi = (s: string): string => s.replace(BIDI_CONTROLS_RE, '');
+
+// MAJOR fix — the backend's own auto-generated table of contents (generation.py's
+// _stitch: "## الفهرس" / "## Table of Contents" followed by a numbered list of
+// [Title](#anchor) links) duplicates the canvas's own TOC page. Its links never
+// render anyway — inline()'s link regex only matches http(s)/relative/mailto URLs,
+// never a bare #fragment — so left alone it becomes a garbled extra page of raw
+// "[Title](#anchor)" text. Detected by heading title AND shape (not title alone)
+// to avoid dropping a legitimately-named section that isn't actually a TOC.
+const TOC_HEADING_RE = /^(الفهرس|جدول المحتويات|table of contents)$/i;
+const ANCHOR_LINK_ITEM_RE = /^\[[^\]]+\]\(#[^)\s]+\)\s*$/;
+
+function isAnchorLinkList(items: string[]): boolean {
+  if (!items.length) return false;
+  const anchorLike = items.filter(it => ANCHOR_LINK_ITEM_RE.test(it.trim()));
+  return anchorLike.length >= Math.ceil(items.length * 0.6);
+}
+
+function dropBackendToc(blocks: DocBlock[]): DocBlock[] {
+  const out: DocBlock[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.type === 'heading' && TOC_HEADING_RE.test((b.text || '').trim())) {
+      let j = i + 1;
+      const body: DocBlock[] = [];
+      while (j < blocks.length && blocks[j].type !== 'heading') { body.push(blocks[j]); j++; }
+      const allItems = body.flatMap(x => (x.type === 'list' ? x.items : []));
+      if (body.every(x => x.type === 'list') && isAnchorLinkList(allItems)) { i = j - 1; continue; }
+    }
+    out.push(b);
+  }
+  return out;
 }
 
 export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSpec {
   const lines = (md || '').replace(/\r\n/g, '\n').split('\n');
   const blocks: DocBlock[] = [];
+  const parsedSrcRefs: SrcRef[] = [];
   let title = opts.title || '';
   let i = 0;
 
   while (i < lines.length) {
-    const line = lines[i];
+    const line = stripLeadingBidi(lines[i]);
 
     // fenced code block
     const fence = line.match(/^```(.*)$/);
     if (fence) {
       const lang = fence[1].trim().toLowerCase();
       const buf: string[] = []; i++;
-      while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+      while (i < lines.length && !/^```/.test(stripLeadingBidi(lines[i]))) { buf.push(lines[i]); i++; }
       i++; // closing fence
       const code = buf.join('\n');
       if (!code.trim()) continue;
       // Recognize a diagram by content too (models often mis-tag the fence) and
       // skip a ```docspec/```canvas block (it drives the spec, never shown as code).
       if (lang === 'docspec' || lang === 'canvas') continue;
+      // MAJOR fix — the artifactToMarkdown citation bridge (see there): a trailing
+      // JSON block mapping every [مصدر N] marker to its real document/heading.
+      // Parsed out here (never shown as a code block) and carried on the spec so
+      // buildCanvasHtml can resolve the markers and append a references section.
+      if (lang === 'srcrefs') {
+        try {
+          const parsed = JSON.parse(code);
+          if (Array.isArray(parsed)) {
+            for (const r of parsed) {
+              if (r && typeof r.num === 'number' && typeof r.doc === 'string') {
+                parsedSrcRefs.push({ num: r.num, doc: r.doc, heading: typeof r.heading === 'string' ? r.heading : undefined });
+              }
+            }
+          }
+        } catch { /* malformed — markers stay inert, never fail the whole document */ }
+        continue;
+      }
       if (isMermaidBlock(lang, code)) blocks.push({ type: 'mermaid', code });
       else blocks.push({ type: 'code', code, lang });
       continue;
@@ -485,11 +605,11 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
     }
 
     // table (header row + separator row)
-    if (line.includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes('-')) {
+    if (line.includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(stripLeadingBidi(lines[i + 1])) && lines[i + 1].includes('-')) {
       const headers = splitRow(line);
       i += 2;
       const rows: string[][] = [];
-      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) { rows.push(splitRow(lines[i])); i++; }
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) { rows.push(splitRow(stripLeadingBidi(lines[i]))); i++; }
       const tagCol = detectTagCol(headers, rows);
       blocks.push({ type: 'table', headers, rows, ...(tagCol != null ? { tags: { col: tagCol } } : {}) });
       continue;
@@ -514,7 +634,7 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
     // blockquote → callout
     if (/^\s*>\s?/.test(line)) {
       const buf: string[] = [];
-      while (i < lines.length && /^\s*>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
+      while (i < lines.length && /^\s*>\s?/.test(stripLeadingBidi(lines[i]))) { buf.push(stripLeadingBidi(lines[i]).replace(/^\s*>\s?/, '')); i++; }
       blocks.push({ type: 'callout', text: buf.join(' ') });
       continue;
     }
@@ -522,7 +642,7 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
     // ordered list
     if (/^\s*\d+[.)]\s+/.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+[.)]\s+/, '')); i++; }
+      while (i < lines.length && /^\s*\d+[.)]\s+/.test(stripLeadingBidi(lines[i]))) { items.push(stripLeadingBidi(lines[i]).replace(/^\s*\d+[.)]\s+/, '')); i++; }
       blocks.push({ type: 'list', ordered: true, items });
       continue;
     }
@@ -530,7 +650,7 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
     // unordered list
     if (/^\s*[-*•]\s+/.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*[-*•]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*•]\s+/, '')); i++; }
+      while (i < lines.length && /^\s*[-*•]\s+/.test(stripLeadingBidi(lines[i]))) { items.push(stripLeadingBidi(lines[i]).replace(/^\s*[-*•]\s+/, '')); i++; }
       blocks.push({ type: 'list', ordered: false, items });
       continue;
     }
@@ -541,14 +661,16 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
     // paragraph (gather consecutive non-structural lines)
     const buf: string[] = [];
     while (
-      i < lines.length && lines[i].trim()
-      && !/^(#{1,6}\s|```|\s*[-*•]\s|\s*\d+[.)]\s|\s*>\s)/.test(lines[i])
-      && !/^\s*([-*_])\1{2,}\s*$/.test(lines[i])
-      && !(lines[i].includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]))
-    ) { buf.push(lines[i]); i++; }
+      i < lines.length && stripLeadingBidi(lines[i]).trim()
+      && !/^(#{1,6}\s|```|\s*[-*•]\s|\s*\d+[.)]\s|\s*>\s)/.test(stripLeadingBidi(lines[i]))
+      && !/^\s*([-*_])\1{2,}\s*$/.test(stripLeadingBidi(lines[i]))
+      && !(lines[i].includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(stripLeadingBidi(lines[i + 1])))
+    ) { buf.push(stripLeadingBidi(lines[i])); i++; }
     if (buf.length) blocks.push({ type: 'paragraph', text: buf.join(' ') });
     else i++;
   }
+
+  const srcRefs = opts.srcRefs?.length ? opts.srcRefs : (parsedSrcRefs.length ? parsedSrcRefs : undefined);
 
   return {
     title: title || opts.title || (opts.lang === 'en' ? 'Document' : 'وثيقة'),
@@ -558,7 +680,8 @@ export function markdownToDocSpec(md: string, opts: MdToSpecOptions = {}): DocSp
     footer: opts.footer,
     accent: opts.accent,
     brand: opts.brand,
-    blocks,
+    srcRefs,
+    blocks: dropBackendToc(blocks),
   };
 }
 
@@ -599,21 +722,56 @@ export function extractDocSpec(md: string, opts: MdToSpecOptions = {}): DocSpec 
 export interface ArtifactLike {
   title?: string;
   executiveSummary?: string;
-  sections?: { title?: string; content?: string }[];
+  sections?: { id?: string; title?: string; content?: string }[];
   diagrams?: { title?: string; png?: string }[];
+  // MAJOR fix — per-section provenance (sectionId → refs, e.g. GovDocumentRecord/
+  // GovernanceDocument.citations), each ref's [مصدر N] number LOCAL to that
+  // section (matching the order GovernanceCenter's own preview list resolves them
+  // in). Without this the markers survive into the canvas as inert, unresolvable
+  // text — see artifactToMarkdown below for how it's threaded through.
+  citations?: Record<string, { docName?: string; label: string }[]>;
+}
+
+// Rewrite the LOCAL numbers inside every `[مصدر N]` / `[مصدر 1، 2]` marker using
+// `map` (local → global) — see artifactToMarkdown: once every section's content
+// flattens into one markdown document, per-section-local numbering (each section
+// started its own citations at 1) would collide, so every marker is renumbered
+// into one global sequence before the srcrefs block is emitted.
+function remapCitationMarkers(text: string, map: Map<number, number>): string {
+  return text.replace(/\[\s*(?:مصدر|sources?|src|ref)\s*[\d\s،,و]+\]/gi, (m) =>
+    m.replace(/\d+/g, (d) => String(map.get(Number(d)) ?? d)));
 }
 
 export function artifactToMarkdown(d: ArtifactLike): string {
   const parts: string[] = [];
   if (d.title && d.title.trim()) parts.push(`# ${d.title.trim()}`);
   if (d.executiveSummary && d.executiveSummary.trim()) parts.push(d.executiveSummary.trim());
+  // MAJOR fix — global citation renumbering (see remapCitationMarkers) so every
+  // [مصدر N] marker stays resolvable once the per-section citation maps flatten
+  // into one document-wide srcRefs list.
+  const srcRefs: SrcRef[] = [];
   for (const s of d.sections || []) {
     if (s?.title && s.title.trim()) parts.push(`## ${s.title.trim()}`);
-    if (s?.content && s.content.trim()) parts.push(s.content.trim());
+    let content = s?.content && s.content.trim() ? s.content.trim() : '';
+    const refs = (s?.id && d.citations?.[s.id]) || [];
+    if (content && refs.length) {
+      const localToGlobal = new Map<number, number>();
+      refs.forEach((r, idx) => {
+        const global = srcRefs.length + 1;
+        localToGlobal.set(idx + 1, global);
+        srcRefs.push({ num: global, doc: r.docName || '', heading: r.label });
+      });
+      content = remapCitationMarkers(content, localToGlobal);
+    }
+    if (content) parts.push(content);
   }
   for (const dg of d.diagrams || []) {
     if (dg?.png) parts.push(`![${(dg.title || 'diagram').replace(/[[\]]/g, '')}](${dg.png})`);
   }
+  // Rides as a trailing fenced block — markdownToDocSpec parses it back into
+  // DocSpec.srcRefs (never shown as a code block) so inline() can resolve the
+  // markers and buildCanvasHtml can append the «المصادر» references section.
+  if (srcRefs.length) parts.push('```srcrefs\n' + JSON.stringify(srcRefs) + '\n```');
   return parts.join('\n\n').trim() + '\n';
 }
 
