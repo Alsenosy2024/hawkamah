@@ -3,6 +3,29 @@
 // exactly, so exported files look identical to what the user sees — no raw '#',
 // '**', '*', '`', '|', '---', '•' or '1.' markers ever leak into a document.
 // RTL/Arabic content is preserved verbatim — this only structures text.
+//
+// NOTE (P17/MAJOR-modularity) — this parser, components/Markdown.tsx (chat) and
+// services/canvasDocument.ts's markdownToDocSpec (canvas) are three INDEPENDENT
+// implementations of overlapping-but-not-identical Markdown grammars. A full
+// unification was judged too risky for one lane; services/markdownShared.ts
+// holds only the primitives already provably byte-identical across all three
+// (or two of the three — see its own comments for exactly which). Everything
+// else is deliberately separate:
+//   - components/Markdown.tsx renders straight to React elements (not an AST),
+//     handles [مصدر N] citation chips, and lazy-loads live Mermaid diagrams —
+//     none of which apply to an exported file or the canvas.
+//   - services/canvasDocument.ts's markdownToDocSpec targets a richer DocBlock
+//     grammar (kpis/columns/charts/figures), drops a backend-generated TOC,
+//     and resolves a trailing ```srcrefs``` citation-map fence — none of which
+//     this parser needs, and groups a whole list/blockquote run into ONE
+//     block (this parser emits one `bullet`/`quote` block per source line).
+//   - THIS parser is the only one with `isTableDivider`'s stricter per-column
+//     check (`:?-{2,}:?` on every cell) instead of the simpler
+//     `isTableDividerLine` regex — kept separate to avoid a behavior change
+//     on malformed divider rows (see markdownShared.ts).
+// Before "helpfully" merging any of these, re-read this list — the difference
+// is very likely intentional, not drift.
+import { stripLeadingBidi, isHrLine, splitTableRow } from './markdownShared';
 
 export type InlineRun = { text: string; bold: boolean; italic?: boolean; code?: boolean };
 
@@ -46,16 +69,14 @@ export function parseInline(text: string): InlineRun[] {
   return runs.length ? runs : [{ text: src, bold: false }];
 }
 
+// markdownAst-specific: a stricter PER-COLUMN divider check (every cell must
+// individually match `:?-{2,}:?`) — see the NOTE at the top of this file for
+// why it stays separate from markdownShared.ts's simpler regex version.
 const isTableDivider = (line: string): boolean => {
   if (!line.includes('|') || !line.includes('-')) return false;
   const cols = line.split('|').map(c => c.trim()).filter((c, i, a) => i > 0 && i < a.length - 1);
   return cols.length > 0 && cols.every(c => /^:?-{2,}:?$/.test(c) || c === '');
 };
-
-const splitRow = (line: string): string[] =>
-  line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
-
-const isHr = (line: string): boolean => /^\s*([-*_])\1{2,}\s*$/.test(line);
 
 /**
  * Parse a full Markdown string into a flat block list. Recognizes:
@@ -69,14 +90,23 @@ export function parseMarkdown(md: string): MdBlock[] {
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
-    const trimmed = raw.trim();
+    // P17/MAJOR fix — strip a LEADING bidi-control run (RLM etc. — see
+    // services/markdownShared.ts) before any block-type check or content
+    // extraction, same defense services/canvasDocument.ts has had since PR#92.
+    // Without it, an RLM-prefixed bullet/heading/table/quote from any producer
+    // (e.g. services/governanceArtifacts.ts's `${RLM}- text` builders) fell
+    // through every `^`-anchored check below into one garbled paragraph in
+    // every docx/pdf/xlsx export. Only the FRONT of the line is touched —
+    // never mid-text, and never inside a fenced code block's CONTENT (only
+    // its fence-boundary checks, mirroring markdownShared.ts's own contract).
+    const trimmed = stripLeadingBidi(raw).trim();
 
     // Fenced code block — collect until the closing fence; never leak ``` markers.
     if (/^```/.test(trimmed)) {
       const lang = trimmed.replace(/^`+/, '').trim().toLowerCase() || undefined;
       const buf: string[] = [];
       i++;
-      for (; i < lines.length && !/^```/.test(lines[i].trim()); i++) buf.push(lines[i]);
+      for (; i < lines.length && !/^```/.test(stripLeadingBidi(lines[i]).trim()); i++) buf.push(lines[i]);
       blocks.push({ type: 'code', text: buf.join('\n'), lang });
       continue;
     }
@@ -87,16 +117,17 @@ export function parseMarkdown(md: string): MdBlock[] {
     }
 
     // Horizontal rule → a real rule block (never literal --- / *** / ___).
-    if (isHr(trimmed)) { blocks.push({ type: 'rule' }); continue; }
+    if (isHrLine(trimmed)) { blocks.push({ type: 'rule' }); continue; }
 
     // Table: a pipe row immediately followed by a divider row.
-    if (trimmed.includes('|') && i + 1 < lines.length && isTableDivider(lines[i + 1].trim())) {
-      const headers = splitRow(trimmed);
+    if (trimmed.includes('|') && i + 1 < lines.length && isTableDivider(stripLeadingBidi(lines[i + 1]).trim())) {
+      const headers = splitTableRow(trimmed);
       const rows: string[][] = [];
       let j = i + 2;
       for (; j < lines.length && lines[j].includes('|') && lines[j].trim(); j++) {
-        if (isTableDivider(lines[j].trim())) continue;
-        rows.push(splitRow(lines[j].trim()));
+        const rowLine = stripLeadingBidi(lines[j]).trim();
+        if (isTableDivider(rowLine)) continue;
+        rows.push(splitTableRow(rowLine));
       }
       if (headers.length) { blocks.push({ type: 'table', headers, rows }); i = j - 1; continue; }
     }
@@ -113,7 +144,7 @@ export function parseMarkdown(md: string): MdBlock[] {
     // Blockquote
     if (/^>\s?/.test(trimmed)) {
       const buf: string[] = [];
-      for (; i < lines.length && /^\s*>\s?/.test(lines[i]); i++) buf.push(lines[i].replace(/^\s*>\s?/, ''));
+      for (; i < lines.length && /^\s*>\s?/.test(stripLeadingBidi(lines[i])); i++) buf.push(stripLeadingBidi(lines[i]).replace(/^\s*>\s?/, ''));
       i--;
       const text = buf.join(' ').trim();
       blocks.push({ type: 'quote', runs: parseInline(text), text });

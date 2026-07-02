@@ -22,6 +22,10 @@ const EditableDiagram = React.lazy(() => import('./EditableDiagram'));
 // Tiny, dependency-free detector (does NOT import mermaid) so we can recognize a
 // diagram by content even when the model tags the fence wrong / omits the language.
 import { isMermaidBlock } from '../services/mermaidDetect';
+// P17/MAJOR-modularity: primitives byte-identical across this parser and its
+// siblings (services/canvasDocument.ts, services/markdownAst.ts) — see
+// services/markdownShared.ts for which pieces qualified and why.
+import { isHrLine, splitTableRow as splitRow, isTableDividerLine, ORDERED_LIST_RE, UNORDERED_LIST_RE, PARAGRAPH_STOP_RE } from '../services/markdownShared';
 
 // HWK-A4: React.Suspense catches the lazy chunk's loading promise but NOT a
 // render throw from MermaidView (e.g. invalid LLM-generated mermaid syntax). An
@@ -123,8 +127,6 @@ function renderInline(src: string, keyBase: string, ctx: CiteCtx): React.ReactNo
   return out;
 }
 
-const splitRow = (line: string): string[] =>
-  line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
 
 const Markdown: React.FC<Props> = ({ text, rtl = true, className = '', citations, onCite, onMermaidEdit }) => {
   const ctx: CiteCtx = { citations, onCite };
@@ -174,10 +176,10 @@ const Markdown: React.FC<Props> = ({ text, rtl = true, className = '', citations
     }
 
     // horizontal rule
-    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { blocks.push(<hr key={k++} className="my-3 border-[var(--hw-border)]" />); i++; continue; }
+    if (isHrLine(line)) { blocks.push(<hr key={k++} className="my-3 border-[var(--hw-border)]" />); i++; continue; }
 
     // table (header row + separator row)
-    if (line.includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes('-')) {
+    if (line.includes('|') && i + 1 < lines.length && isTableDividerLine(lines[i + 1]) && lines[i + 1].includes('-')) {
       const header = splitRow(line);
       i += 2;
       const rows: string[][] = [];
@@ -225,17 +227,17 @@ const Markdown: React.FC<Props> = ({ text, rtl = true, className = '', citations
     }
 
     // ordered list
-    if (/^\s*\d+[.)]\s+/.test(line)) {
+    if (ORDERED_LIST_RE.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+[.)]\s+/, '')); i++; }
+      while (i < lines.length && ORDERED_LIST_RE.test(lines[i])) { items.push(lines[i].replace(ORDERED_LIST_RE, '')); i++; }
       blocks.push(<ol key={k++} className={`my-1.5 ms-5 list-decimal space-y-1 ${align}`}>{items.map((it, x) => <li key={x} className="leading-relaxed">{renderInline(it, `ol${k}-${x}`, ctx)}</li>)}</ol>);
       continue;
     }
 
     // unordered list
-    if (/^\s*[-*•]\s+/.test(line)) {
+    if (UNORDERED_LIST_RE.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\s*[-*•]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*•]\s+/, '')); i++; }
+      while (i < lines.length && UNORDERED_LIST_RE.test(lines[i])) { items.push(lines[i].replace(UNORDERED_LIST_RE, '')); i++; }
       blocks.push(<ul key={k++} className={`my-1.5 ms-5 list-disc space-y-1 ${align}`}>{items.map((it, x) => <li key={x} className="leading-relaxed">{renderInline(it, `ul${k}-${x}`, ctx)}</li>)}</ul>);
       continue;
     }
@@ -245,7 +247,7 @@ const Markdown: React.FC<Props> = ({ text, rtl = true, className = '', citations
 
     // paragraph (gather consecutive non-structural lines)
     const buf: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|\s*[-*•]\s|\s*\d+[.)]\s|\s*>\s)/.test(lines[i]) && !/^\s*([-*_])\1{2,}\s*$/.test(lines[i]) && !(lines[i].includes('|') && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]))) {
+    while (i < lines.length && lines[i].trim() && !PARAGRAPH_STOP_RE.test(lines[i]) && !isHrLine(lines[i]) && !(lines[i].includes('|') && i + 1 < lines.length && isTableDividerLine(lines[i + 1]))) {
       buf.push(lines[i]); i++;
     }
     if (buf.length) blocks.push(<p key={k++} className={`my-1.5 leading-relaxed ${align}`}>{renderInline(buf.join(' '), `p${k}`, ctx)}</p>);

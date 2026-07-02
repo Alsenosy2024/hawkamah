@@ -37,6 +37,7 @@ import DocumentCanvas from './DocumentCanvas';
 import { looksLikeDocument, canvasHtmlToMarkdown } from '../services/canvasDocument';
 import { replaceMermaidFence } from '../services/mermaidDetect';
 import { createSharedDoc } from '../services/sharedDocService';
+import { useCanvasSession } from '../hooks/useCanvasSession';
 // Copilot avatar art — a bundled SVG line-icon (robot/chatbot face). Imported as
 // an asset (Vite gives us its hashed URL) and painted via CSS mask so it inherits
 // the live --hw-brand teal in both RTL and dark mode (see RobotAvatar below).
@@ -378,15 +379,6 @@ const GovCopilot: React.FC<Props> = (props) => {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
-  // Document canvas — the open doc (by message id) + in-session edited-HTML cache
-  // so reopening a document shows the user's edits.
-  // NOTE (P12/MINOR-modularity, out of this PR's scope): this open/track/persist
-  // "canvas session" state machine duplicates GovernanceCenter's
-  // openArtifactInCanvas/saveCanvasArtHtml (a richer strategy — Firestore-backed,
-  // not just localStorage). Left as-is here; unifying the two into a shared
-  // useCanvasSession hook is a separate modularity lane, not a GovCopilot-only fix.
-  const [canvasDoc, setCanvasDoc] = useState<{ id: string; md: string } | null>(null);
-  const canvasEditsRef = useRef<Record<string, string>>({});
   const abortRef = useRef<AbortController | null>(null);
   // ── V5 + V16 + V27: conversational build wizard (now OPT-IN) ──
   // Before a long autonomous build the copilot can propose an editable plan
@@ -441,10 +433,15 @@ const GovCopilot: React.FC<Props> = (props) => {
   const lsDraftKey = (tid: string) => `gc_draft:${tid}`;
   // V14: persist in-canvas edits (by message id) so reopening a document — even
   // after a reload — shows the user's edits. Mirrors the conversation persistence.
+  // P17/MAJOR-modularity: the open/track/persist "canvas session" state machine
+  // (doc identity, edited-HTML cache, reopen rehydration) is now shared with
+  // GovernanceCenter's openArtifactInCanvas/saveCanvasArtHtml via
+  // hooks/useCanvasSession.ts — GovCopilot keeps its OWN localStorage backend,
+  // injected here as the persist callback; only the mechanics moved.
   const lsCanvasKey = (tid: string) => `gc_canvas_edits:${tid}`;
-  const persistCanvasEdits = (tid: string) => {
-    try { localStorage.setItem(lsCanvasKey(tid), JSON.stringify(canvasEditsRef.current)); } catch { /* quota — ignore */ }
-  };
+  const canvasSession = useCanvasSession<null>((_id, _html, _kind, _meta, cache) => {
+    if (tenantId) { try { localStorage.setItem(lsCanvasKey(tenantId), JSON.stringify(cache)); } catch { /* quota — ignore */ } }
+  });
   const hydrateDraftMsgs = (arr: any[]): Msg[] => (arr || []).map((m: any): Msg => ({
     id: m.id || nid(),
     sender: m.sender === 'user' ? 'user' : 'agent',
@@ -534,7 +531,7 @@ const GovCopilot: React.FC<Props> = (props) => {
   useEffect(() => {
     if (!open || !tenantId) return;
     // V14: rehydrate persisted in-canvas edits so reopening a document shows them.
-    try { const raw = localStorage.getItem(lsCanvasKey(tenantId)); if (raw) canvasEditsRef.current = JSON.parse(raw) || {}; } catch { /* ignore */ }
+    try { const raw = localStorage.getItem(lsCanvasKey(tenantId)); if (raw) canvasSession.hydrateCache(JSON.parse(raw) || {}); } catch { /* ignore */ }
     if (!convIdRef.current && !msgs.length) {
       // HWK-A3: a refresh mid-generation left a draft mirror → restore it (works even when
       // the backend history is off). Not suppressing autosave, so the recovered run is then
@@ -1068,7 +1065,7 @@ const GovCopilot: React.FC<Props> = (props) => {
   // document canvas, its saved HTML is serialized back to Markdown through the
   // same bridge DocumentCanvas uses; otherwise we fall back to the raw markdown.
   const effectiveExportMd = (id: string | undefined, md: string): string => {
-    const html = id ? canvasEditsRef.current[id] : undefined;
+    const html = id ? canvasSession.getCachedHtml(id) : undefined;
     if (html) {
       try { const conv = canvasHtmlToMarkdown(html); if (conv && conv.trim()) return conv; }
       catch { /* fall back to the raw markdown below */ }
@@ -1289,7 +1286,7 @@ const GovCopilot: React.FC<Props> = (props) => {
   // Open a generated document AS a templated multi-page document in the canvas
   // (cover → TOC → numbered sections, KPI cards, charts, premium tables). The
   // canvas is the brand document surface — view, edit in place, export a real PDF.
-  const openCanvas = (id: string, md: string) => { setFull(false); setCanvasDoc({ id, md }); };
+  const openCanvas = (id: string, md: string) => { setFull(false); canvasSession.open(id, md); };
 
   // Primary "open as document" action for document-grade answers. Rendered above
   // the quick-export row so the canvas is the default way to read/edit/print a doc.
@@ -1328,20 +1325,21 @@ const GovCopilot: React.FC<Props> = (props) => {
     : `gc-shell ${animCls} ${busyCls} fixed top-3 bottom-3 end-3 z-40 w-[min(94vw,440px)] rounded-[28px] flex flex-col overflow-hidden`;
   const shellStyle = { '--gc-fx': ar ? '-24px' : '24px' } as React.CSSProperties;
   const bodyWrap = full ? 'mx-auto w-full max-w-3xl' : '';
+  const canvasDoc = canvasSession.doc;
 
   return (
     <>
     {canvasDoc && (
       <DocumentCanvas
         markdown={canvasDoc.md}
-        initialHtml={canvasEditsRef.current[canvasDoc.id]}
+        initialHtml={canvasSession.getCachedHtml(canvasDoc.id)}
         language={language || 'ar'}
         rootClass="dc-docked"
         brand={model?.companyName ? `${model.companyName} · AILIGENT` : 'AILIGENT'}
         subtitle={stageLabel}
         date={t('بتاريخ ', 'Dated ') + new Date().toLocaleDateString(ar ? 'ar-EG' : 'en-GB')}
-        onClose={() => setCanvasDoc(null)}
-        onSave={html => { canvasEditsRef.current[canvasDoc.id] = html; if (tenantId) persistCanvasEdits(tenantId); }}
+        onClose={() => canvasSession.close()}
+        onSave={html => canvasSession.save(html)}
         onShare={tenantId ? async (html, opts) => {
           // V14/V20 — mint a /?doc= client share from the live canvas HTML. The
           // message id is the stable doc id so the owner can correlate comments.
@@ -1353,7 +1351,7 @@ const GovCopilot: React.FC<Props> = (props) => {
           return { url };
         } : undefined}
         onAskAi={sel => {
-          setCanvasDoc(null);
+          canvasSession.close();
           setInput(prev => `${prev ? prev + '\n' : ''}${t('بخصوص هذا المقطع: «', 'Regarding this passage: «')}${sel}»\n`);
         }}
       />
