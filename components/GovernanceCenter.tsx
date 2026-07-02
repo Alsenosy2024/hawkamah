@@ -33,6 +33,7 @@ import {
   buildModel, generateGovernanceDoc, generateBulkDoc, generateGapFix, editArtifact,
   industryLens, referenceProjectsBlock,
   normUnitName, diffUnitTombstones, pruneRemovedUnits,
+  resolveApplyOutcome, type ApplyOutcome,
   GovernanceDocument, type BulkScope,
 } from '../services/governanceEngine';
 import { generateMermaid, mermaidToFlow, modelToFlow, diagramsToImages, autoLayout, resolveOrgChartMermaid, staleOrgChartDiagrams } from '../services/diagramService';
@@ -1791,7 +1792,18 @@ ${content.slice(0, 8000)}`;
   // HWK-D5: apply the reviewer's comments → a new numbered version. Freeze the CURRENT doc as a
   // prior version (preserves history + its comments), AI-revise the content by applying the comments
   // (HWK-D5 follow-up), bump the live doc to v+1, clear the addressed comments, and set it back to
-  // in_review to re-share. If the AI revision fails, fall back to a content-unchanged bump.
+  // in_review to re-share.
+  // P9 — the AI-apply step used to be trusted blind: as long as editArtifact didn't
+  // throw, EVERY open comment got stamped 'implemented' and the version bumped,
+  // even when editArtifact silently no-op'd every section (unmatched instruction,
+  // empty model output, a heading-rename request that was structurally impossible
+  // to apply — see editArtifact's old title hard-pin). That's how a production doc
+  // reached v18 with the exact text of v1. Now resolveApplyOutcome verifies, PER
+  // COMMENT, whether the text it complains about actually changed before trusting
+  // it: no verified change anywhere → no bump, no frozen snapshot, no canvasHtml
+  // wipe, every comment stays open; a partial apply bumps but only the comments
+  // that verifiably landed get marked 'implemented' — the rest stay open with an
+  // honest per-comment note.
   const newDocVersion = async (d: GovDocumentRecord): Promise<GovDocumentRecord> => {
     const now = new Date().toISOString();
     // D1 — include client/reviewer feedback from a /?doc= share so the AI-apply
@@ -1802,9 +1814,10 @@ ${content.slice(0, 8000)}`;
     // (mergeClientComments dedupes by id, and the record's own copy always wins).
     const allComments = mergeClientComments(d.comments, clientComments[d.id]);
     const openComments = allComments.filter(c => c.status !== 'implemented');   // legacy (no status) = open
-    const nextVersion = (d.version || 1) + 1;
-    const prior: GovDocumentRecord = { ...d, id: uid('govdoc'), title: `${d.title} — ${t('نسخة', 'v')}${d.version || 1}`, updatedAt: now };
-    let sections = d.sections, executiveSummary = d.executiveSummary, diagrams = d.diagrams, revised = false;
+    const beforeSections = d.sections;
+    let sections = d.sections, executiveSummary = d.executiveSummary, diagrams = d.diagrams;
+    let outcome: ApplyOutcome | null = null;
+    let failureNote = '';
     if (model && openComments.length) {
       setBusy(t('تطبيق التعليقات وتنقيح النسخة…', 'Applying comments & revising…'));
       try {
@@ -1826,32 +1839,58 @@ ${content.slice(0, 8000)}`;
         );
         const chunks = await loadChunks(tenantId).catch(() => [] as DocChunk[]);
         const out = await editArtifact({ artifact, instruction, model, chunks, language: ar ? 'ar' : 'en', sector, referenceProjects: refProjects });
-        sections = out.sections; executiveSummary = out.executiveSummary; diagrams = out.diagrams || d.diagrams; revised = true;
+        outcome = resolveApplyOutcome(beforeSections, out.sections, openComments);
+        if (outcome.bump) { sections = out.sections; executiveSummary = out.executiveSummary; diagrams = out.diagrams || d.diagrams; }
       } catch (e: any) {
-        alertMsg(t('تعذّر التنقيح التلقائي؛ صدر إصدار جديد بالمحتوى الحالي.', 'Auto-revision failed; released a new version with the current content.') + (e?.message ? ` (${e.message})` : ''));
+        failureNote = e?.message ? ` (${e.message})` : '';
       } finally { setBusy(''); }
     }
-    // V21: on a successful apply, mark the open comments `implemented` and KEEP
-    // them on the new version as a per-comment history (status + appliedInVersion
-    // + appliedAt + changeSummary). Revert = the frozen "— vN" snapshot above.
+    if (!outcome?.bump) {
+      // Nothing verifiably changed — a thrown error, an editArtifact no-op on
+      // every target, or no open comments to begin with. A content-identical
+      // "new version" is meaningless (exactly how the doc reached v18 with zero
+      // real edits): don't bump, don't freeze a snapshot, don't touch
+      // canvasHtml, keep every comment open so the owner can retry or edit by hand.
+      if (openComments.length) {
+        alertMsg(t(
+          `لم يتمكن الذكاء الاصطناعي من تطبيق التعليقات — لم يتغيّر المحتوى، وبقيت ${openComments.length} تعليقاً مفتوحة.${failureNote}`,
+          `The AI couldn't apply the comments — the content didn't change, and ${openComments.length} comment(s) remain open.${failureNote}`,
+        ));
+      }
+      return d;
+    }
+    const nextVersion = (d.version || 1) + 1;
+    const prior: GovDocumentRecord = { ...d, id: uid('govdoc'), title: `${d.title} — ${t('نسخة', 'v')}${d.version || 1}`, updatedAt: now };
+    // V21: on a verified apply, mark ONLY the comments that actually landed
+    // `implemented` and KEEP them on the new version as a per-comment history
+    // (status + appliedInVersion + appliedAt + changeSummary). Comments that
+    // didn't verifiably land stay open with an honest note instead of being
+    // stamped "applied" alongside everything else. Revert = the frozen "— vN"
+    // snapshot above.
+    const appliedIds = new Set(outcome.appliedIds);
     const appliedSummary = t('طُبّقت بالذكاء الاصطناعي في هذا الإصدار.', 'AI-applied in this version.');
-    const nextComments: GovComment[] = revised
-      ? allComments.map(c => c.status === 'implemented' ? c : { ...c, status: 'implemented', appliedInVersion: nextVersion, appliedAt: now, changeSummary: appliedSummary })
-      : allComments;
+    const stillOpenSummary = t(`تعذّر تطبيقه تلقائياً في v${nextVersion} — ما زال مفتوحاً.`, `Couldn't be auto-applied in v${nextVersion} — still open.`);
+    const nextComments: GovComment[] = allComments.map(c => {
+      if (c.status === 'implemented') return c;
+      return appliedIds.has(c.id)
+        ? { ...c, status: 'implemented', appliedInVersion: nextVersion, appliedAt: now, changeSummary: appliedSummary }
+        : { ...c, changeSummary: stillOpenSummary };
+    });
     const next: GovDocumentRecord = { ...d, version: nextVersion, status: 'in_review', comments: nextComments, sections, executiveSummary, diagrams, updatedAt: now };
     // The revised content replaces any previously-saved canvas HTML, so the canvas
     // rebuilds from the new sections instead of showing the stale edited snapshot.
-    if (revised) delete (next as { canvasHtml?: string }).canvasHtml;
+    delete (next as { canvasHtml?: string }).canvasHtml;
     await saveGovDocument(prior);
     await saveGovDocument(next);
     if (model) {
-      const m = appendAudit(model, auth.currentUser?.email || ADMIN_ACTOR, 'doc_version', `${d.title} → v${next.version} (${revised ? t('نُقِّحت بـ', 'revised from') : t('طبّق', 'applied')} ${openComments.length} ${t('تعليق', 'comments')})`);
+      const m = appendAudit(model, auth.currentUser?.email || ADMIN_ACTOR, 'doc_version', `${d.title} → v${next.version} (${t('طُبِّق', 'applied')} ${outcome.appliedIds.length}/${openComments.length} ${t('تعليق', 'comments')})`);
       await saveModel(m); setModel(m);
     }
     await loadAll();
-    alertMsg(revised
-      ? t(`أُصدرت النسخة v${next.version} بعد تطبيق التعليقات بالذكاء الاصطناعي وأُعيدت للمراجعة؛ حُفظت النسخة السابقة.`, `Released v${next.version} with the comments AI-applied and re-shared; the prior version is kept.`)
-      : t(`أُصدرت النسخة v${next.version} وأُعيدت للمراجعة؛ حُفظت النسخة السابقة.`, `Released v${next.version} and re-shared; the prior version is kept.`));
+    alertMsg(t(
+      `أُصدرت النسخة v${next.version}: طُبِّق ${outcome.appliedIds.length} من ${openComments.length} تعليقاً بالذكاء الاصطناعي${outcome.stillOpenIds.length ? `، وبقي ${outcome.stillOpenIds.length} مفتوحاً` : ''}؛ حُفظت النسخة السابقة.`,
+      `Released v${next.version}: AI-applied ${outcome.appliedIds.length} of ${openComments.length} comment(s)${outcome.stillOpenIds.length ? `, ${outcome.stillOpenIds.length} still open` : ''}; the prior version is kept.`,
+    ));
     return next;
   };
 

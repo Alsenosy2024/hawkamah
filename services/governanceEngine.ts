@@ -21,7 +21,7 @@ import type {
   CompanyGovernanceModel, DocChunk, KnowledgeNode, ReferenceProject,
   GovOrgUnit, GovRole, GovPolicy, GovProcedure, GovGap, GovProgress, ProvenanceRef,
   GovKpi, GovAuthority, GovCommittee, GovMeeting,
-  GeneratedArtifact, ArtifactSection, Language,
+  GeneratedArtifact, ArtifactSection, Language, GovComment,
 } from '../types';
 
 let _idc = 0;
@@ -1735,7 +1735,7 @@ export interface EditArtifactParams {
 }
 
 // Arabic-aware normalizer for fuzzy section matching (strip tashkeel/tatweel, fold variants).
-function normalizeAr(s: string): string {
+export function normalizeAr(s: string): string {
   return (s || '')
     .toLowerCase()
     .replace(/[ً-ْٰـ]/g, '')
@@ -1744,8 +1744,16 @@ function normalizeAr(s: string): string {
     .replace(/\s+/g, ' ').trim();
 }
 
-function pickEditTargets(sections: ArtifactSection[], instruction: string): number[] {
+export function pickEditTargets(sections: ArtifactSection[], instruction: string): number[] {
   const instrKey = normalizeAr(instruction);
+  // A client highlight (anchor quote) embedded in the instruction as "..." can be
+  // TRUNCATED mid-word — a text-selection cutting a TOC/heading quote short (e.g.
+  // "سجل المخاط" ⊂ "سجل المخاطر") — so it never matches a title verbatim and can
+  // fall under the word-overlap threshold below (a single-word title truncated
+  // below the ≥3-char cutoff misses entirely). Extract quoted spans and check
+  // them as a prefix/suffix of each title, independent of the overlap heuristic.
+  const quotes = Array.from(instruction.matchAll(/"([^"]{2,})"/g))
+    .map(m => normalizeAr(m[1])).filter(Boolean);
   const hits: number[] = [];
   sections.forEach((s, i) => {
     const title = normalizeAr(s.title);
@@ -1753,11 +1761,32 @@ function pickEditTargets(sections: ArtifactSection[], instruction: string): numb
     // section title mentioned in the instruction, or strong word overlap
     const words = title.split(/\s+/).filter(w => w.length >= 3);
     const overlap = words.filter(w => instrKey.includes(w)).length;
-    if (instrKey.includes(title) || overlap >= Math.max(1, Math.ceil(words.length / 2))) hits.push(i);
+    const truncatedQuoteMatch = quotes.some(q => q.length >= 3 && (title.startsWith(q) || q.startsWith(title)));
+    if (instrKey.includes(title) || overlap >= Math.max(1, Math.ceil(words.length / 2)) || truncatedQuoteMatch) hits.push(i);
   });
   // No explicit target → treat as a global revision (all done sections).
   if (!hits.length) return sections.map((_, i) => i).filter(i => sections[i].content.trim());
   return hits;
+}
+
+// Extracts the "## <heading>" line a rewritten section is asked to lead with,
+// so a requested rename (see editArtifact) can be detected and written back
+// onto the section's `title`. Only recognizes a heading on the very FIRST
+// line (no `m` flag) — a later "##" further down the body is a subsection,
+// not the section's own heading, and must not be mistaken for a rename.
+export function parseLeadingHeading(text: string): string | undefined {
+  const m = (text || '').trimStart().match(/^#{1,6}[ \t]+(.+)/);
+  if (!m) return undefined;
+  return m[1].replace(/^["'«»“”‘’]+|["'«»“”‘’]+$/g, '').trim() || undefined;
+}
+
+// Decides whether the model's rewritten section output actually renamed the
+// heading — the parsed heading text if it's a genuine rename (differs from the
+// section's title going in), undefined if the model kept the same heading (or
+// omitted one entirely), in which case the caller leaves `title` untouched.
+export function resolveSectionTitle(originalTitle: string, modelOutput: string): string | undefined {
+  const heading = parseLeadingHeading(modelOutput);
+  return (heading && normalizeAr(heading) !== normalizeAr(originalTitle)) ? heading : undefined;
 }
 
 export async function editArtifact(p: EditArtifactParams): Promise<GeneratedArtifact> {
@@ -1773,7 +1802,7 @@ export async function editArtifact(p: EditArtifactParams): Promise<GeneratedArti
 
   const sys = `أنت مستشار حوكمة يحرّر وثيقة قائمة. عدّل المحتوى وفق تعليمات المستخدم مع:
 - الالتزام التام بحقائق النموذج (لا تخترع أرقاماً أو كيانات غير موجودة).
-- الحفاظ على نفس المسميات والأسلوب وتنسيق Markdown وعناوين ## .
+- الحفاظ على نفس الأسلوب وتنسيق Markdown. عنوان القسم (## ) يبقى كما هو، إلا إذا طلبت تعليمات التعديل صراحةً تغييره أو حذف/إضافة كلمة منه أو إعادة تسميته — عندها استخدم العنوان الجديد المعدَّل فعلاً.
 - تطبيق التعديل المطلوب فقط دون حذف محتوى صحيح غير مقصود بالتعديل.
 
 === نموذج حوكمة الشركة (مصدر الحقيقة) ===
@@ -1790,6 +1819,7 @@ ${industryLens(p.sector)}${referenceProjectsBlock(p.referenceProjects, p.sector)
     if (isAborted(signal)) { return next; }
     const i = targets[t];
     const sec = next.sections[i];
+    const originalTitle = sec.title;
     sec.status = 'writing';
     onSection?.([...next.sections]);
     onProgress?.({ phase: 'section', current: t + 1, total: targets.length, label: `تحرير: ${sec.title}` });
@@ -1813,7 +1843,10 @@ ${sec.content || '(فارغ)'}
 الأدلة المسترجعة (استشهد عند الحاجة بصيغة [مصدر N]):
 ${evidence}
 
-أعد كتابة هذا القسم كاملاً بعد تطبيق التعديل. ابدأ بعنوان ## "${sec.title}". أعد النص الكامل المعدّل فقط.`;
+أعد كتابة هذا القسم كاملاً بعد تطبيق التعديل، وابدأ بسطر عنوان "## <العنوان>":
+- إن طلبت تعليمات التعديل أعلاه صراحةً تغيير/حذف كلمة من/إعادة تسمية عنوان هذا القسم تحديداً، اجعل عنوان السطر الأول هو العنوان الجديد المعدَّل فعلياً (وليس العنوان القديم).
+- خلاف ذلك اجعل عنوان السطر الأول كما هو دون تغيير: "${originalTitle}".
+أعد النص الكامل المعدّل فقط (سطر العنوان ثم بقية القسم، بلا تعليقات إضافية).`;
 
     let content = '';
     try {
@@ -1824,8 +1857,20 @@ ${evidence}
           onAnswer: a => { content += a; next.sections[i].content = content; onSection?.([...next.sections]); },
         },
       );
-      next.sections[i].content = content.trim() || sec.content;   // never blank a section
-      next.sections[i].status = content.trim() ? 'done' : 'failed';
+      const finalContent = content.trim();
+      if (finalContent) {
+        // Structural fix (root cause): the prompt used to hard-pin the OLD title,
+        // making a heading rename (very common — clients highlight TOC entries /
+        // section headings) structurally impossible to apply. resolveSectionTitle
+        // detects a real rename in the model's output and it gets written back
+        // onto the section record — content keeps embedding its own "## heading"
+        // line, same as every other section (generateGovernanceDoc/generateGapFix
+        // never strip it either), so the round-trip stays exactly consistent.
+        const renamed = resolveSectionTitle(originalTitle, finalContent);
+        if (renamed) next.sections[i].title = renamed;
+      }
+      next.sections[i].content = finalContent || sec.content;   // never blank a section
+      next.sections[i].status = finalContent ? 'done' : 'failed';
     } catch {
       next.sections[i].content = sec.content;     // keep original on failure
       next.sections[i].status = 'failed';
@@ -1836,4 +1881,79 @@ ${evidence}
   next.complete = !isAborted(signal);
   onProgress?.({ phase: 'done', current: targets.length, total: targets.length, label: 'اكتمل التحرير ✅' });
   return next;
+}
+
+// ---------------------------------------------------------------------------
+// P9 — truthful AI comment-apply. editArtifact can silently no-op a section
+// (unmatched instruction, empty model output, a thrown error all keep the
+// original content with status 'failed') while still returning a normal
+// artifact — so a caller that trusts "it didn't throw" as "it worked" can
+// stamp every open comment 'implemented' and bump the doc version with ZERO
+// actual textual change (exactly how a production doc reached v18 with the
+// text of v1 — see GovernanceCenter's newDocVersion). commentWasApplied /
+// resolveApplyOutcome let the caller verify, per comment, whether the text it
+// complains about actually changed before trusting the AI's silence-as-success.
+// ---------------------------------------------------------------------------
+
+// A section "changed" iff its title or content differs from its prior version.
+// A section editArtifact marked 'failed' is NEVER counted as changed — it
+// already reverts failed-section content to the original on error/empty
+// output, but this guards the invariant explicitly rather than depending on
+// that revert never regressing.
+function sectionChanged(before: ArtifactSection | undefined, after: ArtifactSection | undefined): boolean {
+  if (!before || !after || after.status === 'failed') return false;
+  return normalizeAr(before.title) !== normalizeAr(after.title) || before.content.trim() !== after.content.trim();
+}
+
+// True iff `comment` verifiably landed in `afterSections` relative to
+// `beforeSections` (same index alignment editArtifact always preserves —
+// it only rewrites in place, never adds/removes/reorders sections).
+//  - Anchored comment (has anchor.quote): applied iff the normalized quote no
+//    longer appears, verbatim, in ANY section that carried it before the edit.
+//    A quote not found anywhere in `beforeSections` is unresolvable (stale
+//    anchor) → treated as NOT applied (no evidence either way; truthful-by-
+//    default means we never claim success without proof).
+//  - Unanchored comment (free-text/global note): applied iff ANY section's
+//    title or content changed at all.
+export function commentWasApplied(
+  comment: GovComment,
+  beforeSections: ArtifactSection[],
+  afterSections: ArtifactSection[],
+): boolean {
+  const quote = comment.anchor?.quote?.trim();
+  if (quote) {
+    const nq = normalizeAr(quote);
+    if (!nq) return false;
+    const carriers = beforeSections
+      .map((s, i) => (normalizeAr(`${s.title} ${s.content}`).includes(nq) ? i : -1))
+      .filter(i => i >= 0);
+    if (!carriers.length) return false;
+    return carriers.every(i => {
+      const after = afterSections[i];
+      if (!after || after.status === 'failed') return false;
+      return !normalizeAr(`${after.title} ${after.content}`).includes(nq);
+    });
+  }
+  return beforeSections.some((s, i) => sectionChanged(s, afterSections[i]));
+}
+
+export interface ApplyOutcome {
+  bump: boolean;            // true iff ≥1 comment verifiably applied → worth a new version
+  appliedIds: string[];
+  stillOpenIds: string[];
+}
+
+// PURE decision the caller (newDocVersion) uses to decide whether to bump the
+// document version, and which comments get stamped 'implemented' vs stay open.
+export function resolveApplyOutcome(
+  beforeSections: ArtifactSection[],
+  afterSections: ArtifactSection[],
+  comments: GovComment[],
+): ApplyOutcome {
+  const appliedIds: string[] = [];
+  const stillOpenIds: string[] = [];
+  for (const c of comments) {
+    (commentWasApplied(c, beforeSections, afterSections) ? appliedIds : stillOpenIds).push(c.id);
+  }
+  return { bump: appliedIds.length > 0, appliedIds, stillOpenIds };
 }
