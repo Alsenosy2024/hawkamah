@@ -5,13 +5,18 @@
 // read-only canvas (brand fonts + diagrams baked in, full export), and may leave
 // comments. An optional access code gates a "visual reviewer" (V20), who can also
 // record a structured visual-review check. The token is read from the world-
-// readable `survey_tokens` collection (no rules change). Comments are written to
-// the create-only `doc_comments` collection — until that rule is deployed the post
+// readable `survey_tokens` collection (no rules change). D1: a code-gated share's
+// html is AES-GCM encrypted client-side (see sharedDocService) — the code entered
+// here derives the decryption key, so an incorrect code simply fails to decrypt
+// (unlockSharedDocHtml throws WRONG_CODE) rather than being checked against a
+// stored hash. Legacy pre-D1 shares (plaintext html + accessCodeHash) are still
+// served transparently by the same unlock call. Comments are written to the
+// create-only `doc_comments` collection — until that rule is deployed the post
 // fails gracefully with a clear "comments not enabled yet" message.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import DocumentCanvas, { type DocumentCanvasHandle } from './DocumentCanvas';
 import {
-  getSharedDoc, verifyAccessCode, postDocComment,
+  getSharedDoc, unlockSharedDocHtml, sharedDocIsGated, postDocComment,
 } from '../services/sharedDocService';
 import type { SharedDocToken, DocComment, VisualReviewCheck, GovCommentAnchor } from '../types';
 
@@ -21,6 +26,7 @@ type Phase = 'loading' | 'invalid' | 'locked' | 'ready';
 
 const SharedDocScreen: React.FC<Props> = ({ token }) => {
   const [tok, setTok] = useState<SharedDocToken | null>(null);
+  const [html, setHtml] = useState('');       // resolved plaintext (decrypted when gated)
   const [phase, setPhase] = useState<Phase>('loading');
   const [code, setCode] = useState('');
   const [codeErr, setCodeErr] = useState('');
@@ -46,11 +52,19 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
   useEffect(() => {
     let alive = true;
     getSharedDoc(token)
-      .then(r => {
+      .then(async r => {
         if (!alive) return;
         if (!r) { setPhase('invalid'); return; }
         setTok(r);
-        setPhase(r.accessCodeHash ? 'locked' : 'ready');
+        if (sharedDocIsGated(r)) { setPhase('locked'); return; }
+        // Open share — no code, resolve the (plaintext) html straight away.
+        try {
+          const h = await unlockSharedDocHtml(r, '');
+          if (!alive) return;
+          setHtml(h); setPhase('ready');
+        } catch {
+          if (alive) setPhase('invalid');
+        }
       })
       .catch(() => { if (alive) setPhase('invalid'); });
     return () => { alive = false; };
@@ -60,10 +74,12 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
     if (!tok) return;
     setUnlocking(true); setCodeErr('');
     try {
-      if (await verifyAccessCode(tok, code.trim())) setPhase('ready');
-      else setCodeErr(t('رمز الدخول غير صحيح.', 'Incorrect access code.'));
-    } catch {
-      setCodeErr(t('تعذّر التحقق. حاول مرة أخرى.', 'Verification failed. Try again.'));
+      const h = await unlockSharedDocHtml(tok, code.trim());
+      setHtml(h); setPhase('ready');
+    } catch (e: unknown) {
+      setCodeErr(String((e as Error)?.message) === 'WRONG_CODE'
+        ? t('رمز الدخول غير صحيح.', 'Incorrect access code.')
+        : t('تعذّر التحقق. حاول مرة أخرى.', 'Verification failed. Try again.'));
     } finally {
       setUnlocking(false);
     }
@@ -164,7 +180,7 @@ const SharedDocScreen: React.FC<Props> = ({ token }) => {
       <DocumentCanvas
         ref={canvasApiRef}
         markdown=""
-        initialHtml={d.html}
+        initialHtml={html}
         title={d.docTitle}
         language="ar"
         readOnly
