@@ -931,7 +931,23 @@ const GovCopilot: React.FC<Props> = (props) => {
             if (ev.type === 'sources') { const d = [...new Set(ev.items.map(s => s.doc).filter(Boolean))]; const refs = toCiteRefs(ev.items); patch(m => ({ ...m, sources: d.length ? d : m.sources, srcRefs: refs.length ? refs : m.srcRefs })); }
             else if (ev.type === 'delta') { patch(m => ({ ...m, thinking: false, text: m.text + ev.text })); scrollDown(); }
             else if (ev.type === 'done') { patch(m => ({ ...m, thinking: false, streaming: false })); }
-            else if (ev.type === 'error') { patch(m => ({ ...m, thinking: false, streaming: false, text: m.text || t('تعذّر الرد. أعد المحاولة.', 'Failed. Retry.') })); }
+            else if (ev.type === 'error') {
+              // P12 — the backend's /ask SSE can now fail mid-stream (a terminal
+              // 'error' frame — see askStream), after tokens already rendered
+              // into m.text via 'delta' above. Mirrors runGeneration's outer
+              // catch: mark it interrupted with a same-turn retry instead of
+              // silently leaving the partial answer looking finished.
+              patch(m => {
+                const hadText = !!m.text.trim();
+                return {
+                  ...m,
+                  thinking: false, streaming: false,
+                  text: m.text || t('تعذّر الرد. أعد المحاولة.', 'Failed. Retry.'),
+                  interrupted: hadText,
+                  onRetry: hadText ? () => { runGeneration(q, att, opts).catch(() => {}); } : undefined,
+                };
+              });
+            }
           };
           // P5/D2 — send the same real-company grounding on /ask too (forward-
           // compatible; see copilotClient.askStream's doc comment on today's

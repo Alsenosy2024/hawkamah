@@ -250,6 +250,17 @@ export async function askStream(
       if (ev.type === 'sources') cb.onSources?.(ev.sources || []);
       else if (ev.type === 'delta') { full += ev.text || ''; cb.onAnswer?.(ev.text || ''); }
       else if (ev.type === 'done') { full = ev.text || full; cb.onDone?.(full); }
+      // P12 — /ask's SSE now emits a terminal {"type":"error","message":"..."}
+      // frame on a mid-stream failure (same protocol as /draft/stream's
+      // 'error' frame). This event type previously had no branch here, so it
+      // was silently dropped: no onError call, and since the stream closes
+      // without a 'done' frame either, the caller was left stuck "thinking"
+      // forever with a partial answer and no sign anything went wrong.
+      // Throwing propagates to the try/catch below, which calls cb.onError
+      // (the partial text already accumulated in `full`/via onAnswer is left
+      // untouched) and re-throws so the caller's own error handling
+      // (GovCopilot.runGeneration's catch) also runs.
+      else if (ev.type === 'error') throw new Error(ev.message || 'copilot /ask stream error');
     });
   } catch (e) {
     cb.onError?.(e);
