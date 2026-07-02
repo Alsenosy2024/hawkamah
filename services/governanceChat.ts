@@ -497,7 +497,7 @@ const EXPLICIT_BUILD_RE =
 // build command when it co-occurs with an actual construction verb in the same
 // message — never as a bare noun.
 const STRUCTURE_NOUN_RE = /الهيكل\s*التنظيمي/i;
-const STRUCTURE_BUILD_VERB_RE = /(ابنِ|ابن|ابني|اعمل|إعمل|أنشئ|انشئ|أنشِئ|صمّم|صمم|جهّز|جهز|design|build|create)/i;
+const STRUCTURE_BUILD_VERB_RE = /(ابنِ|ابن|ابني|اعمل|إعمل|أنشئ|انشئ|أنشِئ|صمّم|صمم|جهّز|جهز|ولّد|ولد|design|build|create|generate)/i;
 
 /** True when the message is an explicit "build" command (a wizard trigger that
  *  complements the generic long-form detector). */
@@ -519,7 +519,7 @@ export function isExplicitBuild(text?: string | null): boolean {
 const CREATION_VERB_RE =
   /(اكتب|أكتب|اكتبلي|انشئ|أنشئ|أنشِئ|جهّز|جهز|صمّم|صمم|أعدّ|اعدّ|اعد|حرّر|حرر|صِغ|صغ|write|create|draft|generate|prepare|design)/i;
 const DOC_NOUN_RE =
-  /(دليل|سياسة|لائحة|إجراء|اجراء|عملية|وثيقة|مستند|تقرير|خطة|خطّة|عقد|اتفاقية|محضر|خطاب|ميثاق|مصفوفة|قالب|استمارة|نموذج|مذكرة|استراتيج|manual|policy|regulation|procedure|report|plan|contract|agreement|document|template|charter|proposal|strategy)/i;
+  /(دليل|سياسة|لائحة|إجراء|اجراء|عملية|عمليات|وثيقة|مستند|تقرير|خطة|خطّة|عقد|اتفاقية|محضر|خطاب|ميثاق|مصفوفة|قالب|استمارة|نموذج|مذكرة|استراتيج|manual|policy|regulation|procedure|report|plan|contract|agreement|document|template|charter|proposal|strategy|matrix|memo|minutes|letter|presentation|process)/i;
 // Any question mark, or an interrogative opener, rules a message out — a real
 // creation command is an imperative, not a question.
 const QUESTION_LIKE_RE =
@@ -531,6 +531,36 @@ export function isDocCreationRequest(text?: string | null): boolean {
   const s = (text || '').trim();
   if (!s || QUESTION_LIKE_RE.test(s)) return false;
   return CREATION_VERB_RE.test(s) && DOC_NOUN_RE.test(s);
+}
+
+// P5 addendum (D3/D4a boundary) — confirmed repro: «هل عندنا سياسة لتضارب
+// المصالح؟» ("Do we have a conflict-of-interest policy?") used to match the old
+// GovCopilot.tsx LONG_RE purely via the bare noun «سياسة», with NO verb and NO
+// authoring intent — a plain yes/no question — which routed the WHOLE turn into
+// the 7-8 min /draft branch instead of a quick grounded /ask answer (this drove
+// GovCopilot.runGeneration's draftStream-vs-ask branch directly, independent of
+// the wizard). CONTINUATION_RE is kept as its OWN, separate signal: "كمّل" /
+// "أطول" / "continue" / "longer" extend an ALREADY-open document in an ongoing
+// conversation, so — unlike a fresh authoring command — they legitimately don't
+// need to restate a document noun (context supplies it).
+const CONTINUATION_RE = /(كمّل|كمل|أكمل|اكمل|استمر|تابع|واصل|أطول|continue|expand|longer)/i;
+
+/**
+ * True for a genuine LONG-FORM/document request — as opposed to a plain
+ * QUESTION that merely mentions a governance noun. Any of: an explicit
+ * page/length count (parseTargetPages), a continuation/expansion command
+ * (CONTINUATION_RE), or a genuine document-creation command
+ * (isDocCreationRequest — verb + noun, not a question). A BARE governance noun
+ * with none of those — exactly the shape of an ordinary question — is not
+ * enough on its own. Replaces the old GovCopilot.tsx `LONG_RE`, which matched
+ * on bare nouns alone.
+ */
+export function isLongFormRequest(text?: string | null): boolean {
+  const s = (text || '').trim();
+  if (!s) return false;
+  if (parseTargetPages(s) !== undefined) return true;
+  if (CONTINUATION_RE.test(s)) return true;
+  return isDocCreationRequest(s);
 }
 
 // P5/D3 — does this document-creation request need CURRENT/EXTERNAL facts (→
