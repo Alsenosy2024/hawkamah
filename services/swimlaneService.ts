@@ -139,11 +139,44 @@ function pruneSpec(s: SwimlaneSpec): SwimlaneSpec {
   return { ...s, nodes, edges };
 }
 
+/**
+ * Compact, ACCURATE "مبني على: …" provenance line for the diagram gallery — exactly the
+ * model sections serialized into modelDigest() above (units/roles/procedures/authorities;
+ * this service never sees policies/kpis). Mirrors diagramService.buildProvenance for the
+ * Mermaid-generated kinds; kept separate so each reports only what it actually consumed.
+ */
+export function buildProvenance(model: CompanyGovernanceModel, ar = true): string {
+  const n = {
+    units: model.orgUnits?.length || 0,
+    roles: model.roles?.length || 0,
+    procedures: (model.procedures || []).length,
+    authorities: (model.authorities || []).length,
+  };
+  const parts: string[] = [];
+  if (n.units) parts.push(ar ? `${n.units} وحدة تنظيمية` : `${n.units} org units`);
+  if (n.roles) parts.push(ar ? `${n.roles} دور` : `${n.roles} roles`);
+  if (n.procedures) parts.push(ar ? `${n.procedures} إجراء` : `${n.procedures} procedures`);
+  if (n.authorities) parts.push(ar ? `${n.authorities} صلاحية` : `${n.authorities} authorities`);
+  return parts.join(ar ? '، ' : ', ');
+}
+
 export async function generateSwimlane(
   model: CompanyGovernanceModel,
-  opts: { language?: 'ar' | 'en'; focus?: string; signal?: AbortSignal } = {},
+  opts: { language?: 'ar' | 'en'; focus?: string; signal?: AbortSignal; onProgress?: (info: { attempt: number; maxTries: number }) => void } = {},
 ): Promise<SwimlaneSpec> {
   const ar = opts.language !== 'en';
+  // PRD P18 — a swimlane needs a real routing chain to draw from: either an authority
+  // chain (approve/execute/recommend/inform) or at least one procedure to linearize.
+  // With neither, deterministicSwimlane below degrades to an empty start→end stub and
+  // an AI call above it would be grounded in nothing — skip it and tell the caller what
+  // to add first (mirrors buildOrgChartMermaid's deterministic empty-state in
+  // diagramService.ts). Thrown so every caller surfaces it as an honest message instead
+  // of silently saving a near-empty diagram.
+  if (!(model.authorities || []).length && !(model.procedures || []).length) {
+    throw new Error(`INSUFFICIENT_DATA: ${ar
+      ? 'لا توجد بيانات كافية لهذا المخطط — أضف إجراءات أو صلاحيات أولاً.'
+      : 'Not enough data for this diagram — add procedures or authorities first.'}`);
+  }
   const sys = [
     'You are a senior governance analyst that designs precise cross-functional SWIMLANE flow diagrams (RACI-style approval routing).',
     'Each lane is an org role or unit. Each node sits in the lane of WHO performs it.',
@@ -166,6 +199,7 @@ export async function generateSwimlane(
   const MAX_TRIES = 3;
   let lastErr = '';
   for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+    opts.onProgress?.({ attempt: attempt + 1, maxTries: MAX_TRIES });
     const repair = attempt === 0 ? '' :
       `\n\nYour previous spec was INVALID: ${lastErr}\nFix it: every node.lane must exist in lanes; every edge.from/to must exist in nodes.`;
     try {
